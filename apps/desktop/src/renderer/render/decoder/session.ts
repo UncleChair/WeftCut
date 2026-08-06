@@ -21,7 +21,8 @@ export interface SourceHandleInit {
   /// own. The preview pool keys by `layerId` and ignores it.
   handleKey?: string;
   mediaId: string;
-  /// `weftcut-media://` URL of the source's 1080p master proxy.
+  /// `weftcut-media://` URL of the decode target the WebCodecs path opens —
+  /// preview's resolved target, or the export master proxy in export mode.
   proxyAssetUrl: string;
   /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
   /// applied to ANY decode target for this media — the original trivially,
@@ -51,7 +52,7 @@ export interface SourceHandleInit {
   /// Ignored by the WebCodecs path, which decodes `proxyAssetUrl` instead.
   sourcePath?: string;
   /// Bench-only: native pool size (slot count) for an `engine: 'ffmpeg'`
-  /// handle. Decode-bench Stage 3 varies this to sweep pipeline depth; the
+  /// handle. `decodeBench.ts` varies this to sweep pipeline depth; the
   /// product default (3) applies when unset — production handles never set
   /// it. Ignored by the WebCodecs path.
   poolSize?: number;
@@ -68,7 +69,7 @@ export interface SourceHandleInit {
   /// FFmpeg native-decode component DLLs loaded on this machine. Gates the
   /// FFmpeg HW lane (`FfmpegSource`/`pickInitialLane`).
   componentAvailable?: boolean;
-  /// Bench-only lane pin, forwarded to `FfmpegSource` (decode-bench Stage 3).
+  /// Bench-only lane pin, forwarded to `FfmpegSource`.
   forceLane?: import("./decodeEngine").FfmpegLane;
   /// Export-only: route this handle through the native `NativeExportSourceHandle`
   /// (decode the ORIGINAL via the main-process napi `NativeDecode` session over
@@ -119,8 +120,8 @@ export interface FrameSelection {
 /// requestFrameAt/onFirstFrame stay here: a synchronous, pre-staged source
 /// (export) satisfies them as documented no-ops (Null Object). The trailing
 /// members are honestly optional — an engine that cannot provide a value simply
-/// omits the method (WebCodecs has decodeQueueSize/decodedFrameCount, FfmpegSource
-/// does not; onFatalError is FfmpegSource-only, WebCodecs self-heals internally).
+/// omits the method (WebCodecs has decodeQueueSize, FfmpegSource does not;
+/// onFatalError is FfmpegSource-only, WebCodecs self-heals internally).
 export interface DecodeSession {
   readonly mediaId: string;
   readonly ring: FrameStore;

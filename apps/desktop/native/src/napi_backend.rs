@@ -158,8 +158,8 @@ impl Backend {
     /// any `invoke`. Runs inside napi's tokio runtime so `tokio::spawn` has a runtime.
     #[napi]
     pub async fn init(&self) -> napi::Result<()> {
-        // S3: warm up ffmpeg-sidecar (resolve / auto-download the binary) off
-        // the init path so the first media job doesn't pay the download.
+        // Resolve / auto-download the ffmpeg binary here so the first media job
+        // doesn't pay the download.
         #[cfg(any(feature = "jobs", feature = "export"))]
         tokio::spawn(async {
             match crate::ffmpeg::bootstrap().await {
@@ -184,11 +184,10 @@ impl Backend {
     /// Push a decrypted cloud API key into the in-memory speech config, stored
     /// as `BackendConfig::ApiKey` under the backend tag. Called by Electron main
     /// after reading safeStorage; never a renderer-invoke arm (key material
-    /// stays off the renderer). Signature is a stable TS wire contract — TS
-    /// `main/keys.ts` calls it after safeStorage-decrypting `cloud_keys.json`,
-    /// so it (and the on-disk file format) is unchanged, which is what keeps
-    /// existing OpenAI users resolving. The local-config counterpart is
-    /// `set_local_backend`.
+    /// stays off the renderer). Signature and the `cloud_keys.json` on-disk
+    /// format are a TS wire contract (`main/keys.ts` safeStorage-decrypts the
+    /// file and calls this) — do not change either. The local-config
+    /// counterpart is `set_local_backend`.
     #[napi]
     pub fn set_cloud_key(&self, provider: String, key: String) {
         self.speech_config
@@ -198,7 +197,7 @@ impl Backend {
     }
 
     /// Remove a backend's config entry from the cache (key cleared in Settings).
-    /// Signature unchanged for the same wire-contract reason as `set_cloud_key`.
+    /// Signature is a TS wire contract, same as `set_cloud_key`.
     #[napi]
     pub fn clear_cloud_key(&self, provider: String) {
         self.speech_config
@@ -208,14 +207,11 @@ impl Backend {
     }
 
     /// Push a local engine's (non-secret) config into the in-memory speech
-    /// config as `BackendConfig::Local` under the backend tag. The local-engine
-    /// counterpart to `set_cloud_key` (ADR 0036 "Config splits by secrecy"):
-    /// the API key is secret (safeStorage), but a local engine's binary/model
-    /// paths are not, so they come from the TS-owned `speech_config.json` store.
-    /// Electron main (`speech-config.ts`) calls this on startup and on every
-    /// Settings change so the resolver sees a complete `speech_config` snapshot
-    /// before the first `transcribe_clip`. Always compiled (feature-independent)
-    /// so main can push local config regardless of the addon's feature set.
+    /// config as `BackendConfig::Local` under the backend tag — the local-config
+    /// counterpart to `set_cloud_key`; see ADR 0036 / `speech::config` for the
+    /// split-by-secrecy rule. Electron main (`speech-config.ts`) calls this on
+    /// startup and on every Settings change so the resolver sees a complete
+    /// `speech_config` snapshot before the first `transcribe_clip`.
     ///
     /// `tokens` is a TRAILING optional (FunASR's sherpa-onnx `tokens.txt`, part
     /// of the model bundle) so it is backward-compatible — whisper.cpp callers
@@ -362,9 +358,8 @@ impl Backend {
     /// SOURCE-ABSOLUTE time; the TS host clips it to the layer's
     /// `[src_in_us, src_out_us]` window and maps the interior shot boundaries to
     /// timeline time before it splits (and drops markers). This is the SAME
-    /// content-addressed cache + params the `analyze_clip` tool uses, so
-    /// `opts_json` mirrors `AnalyzeClipArgs`'s defaults (sensitivity 0.4,
-    /// min_shot_us 500000, all passes) — an agent's prior `analyze_clip` at the
+    /// content-addressed cache + params the `analyze_clip` tool uses (`opts_json`
+    /// defaults per `parse_shot_opts`) — an agent's prior `analyze_clip` at the
     /// same params is a cache HIT here, and vice-versa. NO actor write: the
     /// split / marker writes are the TS actor's.
     #[napi]
@@ -457,9 +452,9 @@ impl Backend {
 #[cfg(feature = "export")]
 #[napi]
 impl Backend {
-    /// Stream one raw encoded frame to the active 10-bit video sink over native
-    /// IPC (PoC: the Electron-native alternative to the loopback WebSocket).
-    /// Binary in, no JSON — bypasses the `invoke` dispatcher.
+    /// Stream one raw (packed rawvideo) frame to the active video sink over
+    /// native IPC. Binary in, no JSON — bypasses the `invoke` dispatcher.
+    /// See docs/export-ipc-transport.md.
     #[napi]
     pub async fn export_video_sink_write(
         &self,
@@ -475,7 +470,8 @@ impl Backend {
     }
 }
 
-// synthesize_speech compute is `speech`-gated for the same reason — its own block.
+// A feature-gated `#[napi] impl` must be a WHOLE block: a method-level `#[cfg]`
+// still emits the generated `_c_callback`, which then fails to resolve (E0425).
 #[cfg(feature = "speech")]
 #[napi]
 impl Backend {
@@ -551,6 +547,14 @@ impl Backend {
 // is `napi::Error`. The plain-Rust dispatch surface below speaks
 // `std::result::Result<_, String>`, so spell it out fully to dodge that alias.
 impl Backend {
+    /// Convenience variant that takes a typed `Arc<VecEventSink>` and upcasts it
+    /// for `new_for_test`, so a test can keep its own handle on the sink to
+    /// assert on emitted events.
+    #[cfg(test)]
+    pub fn new_for_test_with_sink(sink: Arc<crate::events::VecEventSink>) -> Self {
+        Self::new_for_test(sink as Arc<dyn EventSink>)
+    }
+
     /// Plain (non-napi) constructor for tests: roots config + cache in an
     /// instance-unique temp dir and runs the identical store/tracing setup as
     /// the napi `new`. No `ThreadsafeFunction` / napi env required.
@@ -558,13 +562,6 @@ impl Backend {
     /// Each call appends a process-wide monotonic counter to the temp-dir name
     /// (`weftcut-test-<pid>-<n>`) so two backends in one test binary — e.g. a
     /// save-in-A / open-in-B round-trip — never share a config + cache root.
-    /// Convenience variant that accepts a typed `Arc<VecEventSink>` and retains
-    /// a clone for the caller (used by tests that need to assert on emitted events).
-    #[cfg(test)]
-    pub fn new_for_test_with_sink(sink: Arc<crate::events::VecEventSink>) -> Self {
-        Self::new_for_test(sink as Arc<dyn EventSink>)
-    }
-
     #[cfg(test)]
     pub fn new_for_test(events: Arc<dyn EventSink>) -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -580,11 +577,14 @@ impl Backend {
         // here. Every project mutation, history op, project-summary read, and
         // project_open/save persistence op routes to the TS state actor (the sole
         // writer) in Electron main; their Rust fallback arms were deleted with the
-        // actor. The kept set mirrors the router's 'rust' allowlist (PURE_NATIVE ∪
+        // actor. The kept set covers the router's 'rust' allowlist (PURE_NATIVE ∪
         // PERSISTENCE ∪ SLICE_INJECTED_READS — the latter take their state slice as
-        // a call argument); the hybrid compute halves are dispatched via dedicated
-        // napi methods (probe_media / parse_subtitles / synthesize_speech_compute /
-        // …), not this match.
+        // a call argument) PLUS the channels Electron main forwards straight to
+        // `invoke` without consulting the router: SINGLE_MEDIA_CHANNELS
+        // (state/single-media-forward.ts) and the settings_get_speech_backends arm
+        // special-cased in main/index.ts. The hybrid compute halves are dispatched
+        // via dedicated napi methods (probe_media / parse_subtitles /
+        // synthesize_speech_compute / …), not this match.
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             // ---- prefs / settings / logs / agent ----

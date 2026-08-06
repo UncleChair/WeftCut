@@ -10,12 +10,8 @@ import {
 
 beforeEach(() => resetFfmpegCapabilitySession());
 
-// Task 19 → issue #10 ticket 03: the HW-lane codec allow-list, now LANE-AWARE.
-// This entry point is the renderer's probe-KICK union over the per-lane sets in
-// shared/hwLaneEligibility.ts (tested per lane in hwLaneEligibility.test.ts):
-// true when ANY lane could host the format. Main's `resolveHwLane` applies the
-// same per-lane predicate, so a union-admitted format that no advertised lane
-// admits still resolves software without probing.
+// Pins the probe-kick union over the per-lane sets in
+// shared/hwLaneEligibility.ts (tested per lane in hwLaneEligibility.test.ts).
 describe("hwEligibleCodec (probe-kick union over the per-lane sets)", () => {
   it("admits 8-bit H.264 / HEVC / VP9 (every lane)", () => {
     expect(hwEligibleCodec("h264", "yuv420p")).toBe(true);

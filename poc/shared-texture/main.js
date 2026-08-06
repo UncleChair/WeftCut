@@ -127,9 +127,8 @@ async function streamVideo(win) {
 //
 // Import + send each pool texture exactly ONCE, then overwrite its content over
 // time WITHOUT re-import/re-send, and have the renderer pull getVideoFrame() on
-// its own timer. The binary question: does a persistent import reflect the
-// producer's later writes (PASS — zero per-frame texture IPC is possible), or
-// does it freeze at the first frame (FAIL — per-frame re-import is mandatory)?
+// its own timer. The hypothesis being tested is stated once, in the "Result 4"
+// banner in native/src/lib.rs.
 //
 // import-count and send-count are tracked here; on PASS they MUST equal poolSize
 // (one-time, not per-frame), which is the other half of the proof.
@@ -249,12 +248,12 @@ async function persistVideo(win) {
 // `texture_external` + `textureSampleBaseClampToEdge`, honor BT.601?
 //
 // We decode ONE frame of a SATURATED, BT.601-tagged clip via the existing
-// zero-copy NV12 path, import it tagged BT.601, and ingest the SAME content three
+// zero-copy NV12 path, import it tagged BT.601, and ingest the SAME content four
 // ways in the renderer — (1) 2D drawImage, (2) copyExternalImageToTexture,
-// (3) importExternalTexture — reading back the center-patch RGB of each and
-// comparing to the known source color. As a control we ALSO import the same frame
-// tagged BT.709 (deliberately wrong tag) to confirm the matrix is what moves the
-// numbers.
+// (3) importExternalTexture, (4) createImageBitmap — reading back the center-patch
+// RGB of each and comparing to the known source color. As a control we ALSO import
+// the same frame tagged BT.709 (deliberately wrong tag) to confirm the matrix is
+// what moves the numbers.
 //
 // `colorSpaceFor`/`STREAM_COLOR_SPACE` hardcode bt709; this mode drives 601/709
 // explicitly via the textureInfo.colorSpace below — that is the whole point.
@@ -324,11 +323,10 @@ async function colorTest(win) {
 // ---------------------------------------------------------------------------
 // Result 6 — native NV12→BGRA convert (color-correct zero-copy) (POC_BGRA=1).
 //
-// Result 5 proved feeding raw NV12 into WebGPU mis-colors BT.601 sources
-// ([58,217,38] vs the [20,220,40] that 2D drawImage produces). The fix under
-// test here: convert NV12→BGRA in NATIVE (a D3D11 pixel shader on ffmpeg's
-// device, BT.601 limited-range matrix, no primaries remap) and share an
-// already-RGB BGRA texture. Then WebGPU has no YUV→RGB to mishandle.
+// The fix under test: convert NV12→BGRA in NATIVE (a D3D11 pixel shader on
+// ffmpeg's device, limited-range matrix, no primaries remap) and share an
+// already-RGB BGRA texture, so WebGPU has no YUV→RGB to mishandle. The mis-color
+// this fixes, with numbers, is documented in native/src/convert.rs.
 //
 // Two textures from the SAME solid clip, in the SAME run:
 //   - refDraw      = 2D drawImage of the RAW NV12 frame (601-tagged) — WeftCut's
@@ -747,7 +745,9 @@ app.whenReady().then(() => {
   })
 
   // Result 5 — renderer color paths. The renderer reports, per import tag (601 /
-  // 709), the measured center-patch RGB for each of the three ingestion paths.
+  // 709), the measured center-patch RGB for each of the four ingestion paths
+  // (drawImage, copyExternalImageToTexture, importExternalTexture,
+  // createImageBitmap).
   // EXPECTED (correct, BT.601 honored): RGB ~ (20,220,40); WRONG (709 matrix on
   // the 601-tagged YUV): RGB ~ (5,190,35) — the green channel is the discriminator
   // (~218 correct vs ~190 wrong). Tolerance ±12 per channel absorbs H.264 + 4:2:0

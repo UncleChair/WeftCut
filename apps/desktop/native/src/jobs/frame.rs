@@ -51,9 +51,8 @@ pub async fn extract(cache: &CacheLayout, media: &MediaItem, t_us: TimeUs) -> Re
     // -ss BEFORE -i is the fast seek (decode-from-keyframe-then-walk-to-time).
     // Accuracy is keyframe-bounded but for a thumbnail-grade extract that's
     // fine and ~10x faster than putting -ss after -i.
-    // -frames:v 1 grabs exactly one frame. -update 1 + -f image2 forces ffmpeg
-    // to overwrite a single output (otherwise it complains about the lack
-    // of a `%d` pattern).
+    // -update 1 + -f image2 forces ffmpeg to overwrite a single output
+    // (otherwise it complains about the lack of a `%d` pattern).
     let output = Command::new(ffmpeg_path())
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the frame temp; see

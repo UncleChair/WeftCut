@@ -2,7 +2,6 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-// analyzeColor() shells `cargo run --bin media_conformance` — engine-agnostic; reused as-is.
 import { analyzeColor } from '../lib/analyze.mjs'
 import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 

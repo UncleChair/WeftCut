@@ -421,14 +421,10 @@ describe("PacketPump", () => {
   });
 
   it("a MOVING target while far behind never re-seeks or flushes — the playback livelock", async () => {
-    // THE regression this guards. The original latch was keyed on the target
-    // (`seekResolvedForTargetUs`), so it only ever protected a STATIONARY
-    // playhead. Under playback the target moves every frame, so every pass saw a
-    // fresh target, re-fired the far-forward arm, reset the decoder, flushed the
-    // ring, and re-seeked the SAME key a whole GOP back — discarding the prefix
-    // it had just decoded, forever. Measured on 3 concurrent 1080p clips: 254
-    // ring flushes in 20 s, two rings that never held a single frame while their
-    // decoders ran at 40 fps.
+    // THE regression this guards: a target that moves every frame must not
+    // re-fire the far-forward arm, reset the decoder and re-seek the SAME key
+    // pass after pass. Why the latch is keyed on the key packet rather than the
+    // target: `seekedKeyTimestamp` in PacketPump.ts.
     const sink = new SequentialSink(0.033, 60);
     const ring = new FakeRing();
     const dec = makeFakeDecoder();

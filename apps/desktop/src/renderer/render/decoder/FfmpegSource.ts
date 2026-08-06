@@ -99,9 +99,8 @@ export class FfmpegSource implements PreviewDecodeSession {
   private disposeP: Promise<void> | null = null;
   private lastUseMs = 0;
   private lastTargetUs: number | null = null;
-  /// Set once the current transport's `onEof` fires; gates further
-  /// `requestFrameAt` IPC (the old handle gated on eof internally — the
-  /// extracted transports no longer do, so this is now the sole gate). Reset
+  /// Set once the current transport's `onEof` fires; the sole eof gate on
+  /// further `requestFrameAt` IPC — transports do not gate internally. Reset
   /// on every fresh `openLane` since a new transport can produce frames again.
   private eof = false;
   private onFirstFrameCb: (() => void) | null = null;
@@ -266,9 +265,10 @@ export class FfmpegSource implements PreviewDecodeSession {
         }
         if (!budgetExceeded && !reservationMismatch) markHwUnusable(this.mediaId, reason);
         this.budgetSpill = budgetExceeded;
-        // Console too, matching onTransportError: an OPEN-time fall to software
-        // was previously visible only as a LogBus lane-trail row, so a bench
-        // DRIFT cell could name the fact but not the cause.
+        // Console too, matching onTransportError: bench harnesses read the PAGE
+        // console, so an OPEN-time fall to software must carry its CAUSE there —
+        // a LogBus lane-trail row alone lets a bench DRIFT cell name the fact
+        // but not the cause.
         console.warn(
           `[weftcut/decode] decoder hardware-lane error: ${reason} — falling back to software at open (media ${this.mediaId})`,
         );
@@ -316,10 +316,9 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// Open a transport for `lane`, wiring frames into the ring and errors into
   /// the recovery path. Used by initial ready AND the in-place fallback.
   ///
-  /// `transition` is passed only by the two in-place HW→SW fallbacks, and only
-  /// so the lane trail can name what was left and why: the hardware open that
-  /// preceded them may have THROWN, in which case nothing recorded "hardware"
-  /// and the trail would otherwise read this as a first open.
+  /// `transition` is passed only by the two in-place HW→SW fallbacks, so the
+  /// lane trail can name what was left and why — see `noteLaneOpen`'s
+  /// explicit-`from` rule for why the trail cannot infer it on its own.
   private async openLane(
     lane: FfmpegLane,
     transition?: { from: FfmpegLane; reason: string },
@@ -367,7 +366,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// accel — decode happens on the GPU/OS media engine but frames ship as CPU
   /// NV12 over the SAME previewSw transport; the Windows shared-texture lane
   /// (d3d11va) rides the GPU transport. A forced lane (bench) has no hwPlan and
-  /// falls to the GPU transport (its historical behavior).
+  /// falls to the GPU transport.
   private makeHardwareTransport(): DecodeTransport {
     const hw = this.hwPlan;
     if (hw && isCopyBackHwLane(hw.lane)) {
@@ -423,8 +422,9 @@ export class FfmpegSource implements PreviewDecodeSession {
   ///
   /// Deliberately does NOT re-open the Windows shared-texture lane: its pixels
   /// never cross IPC, so the divisor cannot shrink anything there, and closing
-  /// + re-opening a d3d11va session would spend a scarce HW session slot (the
-  /// budget is 3) for no gain — and risk losing it to another clip mid-swap.
+  /// + re-opening a d3d11va session would spend a scarce HW session slot
+  /// (`PREVIEW_GPU_MAX_SESSIONS`) for no gain — and risk losing it to another
+  /// clip mid-swap.
   /// The value is still recorded, so a later HW→SW fallback opens with it.
   setPlaybackScaleDiv(div: number): void {
     if (div === this.scaleDiv) return;
@@ -491,8 +491,7 @@ export class FfmpegSource implements PreviewDecodeSession {
     // frames, which `setAnchor` can never evict (front-only). Drop them, or the
     // painter holds a wrong-region frame until playback grinds all the way back
     // up to the cached span — measured at 12 s of frozen picture. This mirrors
-    // the WebCodecs lane, where `PacketPump.decideReset`'s backward arm flushes;
-    // the ffmpeg lane had no equivalent.
+    // the WebCodecs lane, where `PacketPump.decideReset`'s backward arm flushes.
     if (this.ring.strandedAheadOf(tUs)) {
       this.ring.flush();
       // EOF is not terminal for a backward seek: the native session re-arms
@@ -515,9 +514,8 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
     if (this.eof) return; // eof seen on the current transport — its own IPC is done,
     // but the anchor above must still advance so the ring keeps evicting stale frames.
-    // Backpressure. Until this line `isLookaheadFull` was consulted only by the
-    // WebCodecs pump, so on this lane the ring's byte ceiling bounded what was
-    // RETAINED and never what the decoder produced. It cannot starve the lane:
+    // Backpressure — the ring's byte ceiling bounds what the decoder PRODUCES
+    // on this lane, not only what it retains. It cannot starve the lane:
     // the byte arm is floored at `MIN_LOOKAHEAD_FRAMES` ahead and the time arm
     // wants a full second — deeper than the native pump's own 500 ms horizon, so
     // steady playback never reaches here and the native cursor sets the pace.

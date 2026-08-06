@@ -59,7 +59,7 @@ describe("anchorPivot", () => {
 
   it("mirrors a flip in place instead of moving the box", () => {
     // flip_h ⇒ the sprite renders at negative scale_x. The box must still
-    // occupy [x, x+w]; the pre-anchor behaviour put it at [x-w, x].
+    // occupy [x, x+w].
     const r = anchorPivot({ ...base, effScaleX: -1 });
     const xs = worldCorners(r, base.texW, base.texH, -1, 1).map(([cx]) => cx);
     expect(Math.min(...xs)).toBe(100);
@@ -90,9 +90,7 @@ describe("anchorPivot", () => {
     }
   });
 
-  // Regression: the renderer used to coalesce an absent anchor to 0 while the
-  // on-canvas box coalesced it to 0.5, so a rotated layer spun around its
-  // top-left while its box spun around its center. One default, one module.
+  // An absent anchor coalesces to DEFAULT_ANCHOR, not to 0 — see `anchorOr`.
   it("coalesces an absent anchor to the stored default, not to zero", () => {
     for (const absent of [undefined, Number.NaN]) {
       expect(

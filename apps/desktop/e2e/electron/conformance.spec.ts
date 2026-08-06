@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-// analyze() shells `cargo run --bin media_conformance` — engine-agnostic; reused as-is.
 import { analyze } from '../lib/analyze.mjs'
 import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 

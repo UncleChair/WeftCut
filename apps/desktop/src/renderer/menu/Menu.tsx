@@ -61,12 +61,8 @@ interface MenuItemProps {
   disabled?: boolean;
   /// Renders a check glyph; useful for radio-style preset rows.
   checked?: boolean;
-  /// When set, the item picks up its accelerator hint from
-  /// `ACTION_DEFS[actionId]` and renders it right-aligned. This is a
-  /// pure display aid — the handler still comes from `onSelect`. The
-  /// global keydown dispatcher (`useShortcuts`) reaches the same
-  /// handler via the action id, so the accelerator label and bound
-  /// key cannot drift.
+  /// When set, the item renders that action's accelerator right-aligned.
+  /// Display-only — the handler still comes from `onSelect`.
   actionId?: ActionId;
 }
 

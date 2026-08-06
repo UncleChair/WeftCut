@@ -1,4 +1,4 @@
-// Lazy decodability probe (Piece B). Confirms THIS machine's WebCodecs can
+// Lazy decodability probe. Confirms THIS machine's WebCodecs can
 // decode a source by actually configuring a decoder and decoding one key
 // packet, racing the outcome against the decoder's error callback AND a
 // deadline — because an unsupported codec does not always fire a clean error

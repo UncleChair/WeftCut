@@ -1,6 +1,4 @@
-// The audio-units display mode (ADR 0038): what it formats, what it parses back, and
-// the round trip that makes numeric entry a real path to sample precision — one of
-// only two, since a drag cannot reach 0.042 px.
+// The audio-units display mode (ADR 0038): format, parse, round trip.
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AUDIO_UNITS_ORDER,

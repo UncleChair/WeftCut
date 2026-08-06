@@ -13,8 +13,7 @@ pub trait EventSink: Send + Sync {
 }
 
 /// Production sink: serialize `{event, payload}` to a JSON string and call the
-/// JS callback non-blocking. Match the TSFN generic arity to the PoC's
-/// `subscribe_and_fire`.
+/// JS callback non-blocking.
 pub struct TsfnEventSink {
     tsfn: ThreadsafeFunction<String>,
 }

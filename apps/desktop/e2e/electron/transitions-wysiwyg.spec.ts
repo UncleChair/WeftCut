@@ -10,17 +10,10 @@
 // export share the two-input transition node; see
 // src/renderer/render/transitions/).
 //
-// Geometry pinned here mirrors transitionSources.ts (direction = MOTION
-// direction, screen space):
-//   - Crossfade midpoint (progress 0.5): every pixel ≈ mix(RED, BLUE, 0.5).
-//   - Wipe left  (dir (-1,0)): swept t = 1 - x; t <= p shows incoming, so at
-//     p = 0.5 the RIGHT half is BLUE, left half RED, boundary at x = 0.5.
-//   - Wipe right (dir (1,0), preview spot-check): mirrored — LEFT half BLUE.
-//   - Slide left: incoming sampled at x - (1-p); out-of-range ⇒ transparent ⇒
-//     outgoing shows through. Same half/half geometry as Wipe left at p=0.5
-//     (incoming's left edge at center).
-// Probe points sit ≥ 40 px away from the boundary column, safely past codec
-// chroma bleed.
+// Sampled geometry mirrors transitionSources.ts (direction = MOTION direction,
+// screen space); each VARIANTS entry derives its own p = 0.5 expectation. Probe
+// points sit ≥ 40 px away from the boundary column, safely past codec chroma
+// bleed.
 //
 // Tolerance: ±40/channel. Preview readback is near-exact (±2); the export
 // leg absorbs H.264 4:2:0 round-trip loss plus a worst-case 601↔709 matrix
@@ -28,8 +21,6 @@
 // header). 40 stays far below the 127-count RED↔MIX↔BLUE spacing, so a
 // wrong-kind / wrong-direction / wrong-progress render cannot pass.
 //
-// Local-only like the other export gates: the export leg needs the real
-// GPU/WebCodecs encode path, absent on headless CI (WEFTCUT_E2E_NO_EXPORT).
 // Failure artifacts: every sampled frame (preview PNG + decoded export PNG)
 // is written to the test's Playwright output dir (test-results/…), so a red
 // run always leaves the actual pixels next to the failing assertion.

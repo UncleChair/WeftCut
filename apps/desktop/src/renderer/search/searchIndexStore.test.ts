@@ -5,7 +5,7 @@ import type { ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { useSearchIndexStore, wireSearchIndex } from "./searchIndexStore";
 
-// Reuse the Task 5/6 fixtureSummary() shape — copied in (one media m1, one
+// Same fixture shape as buildEntries.test.ts — copied in (one media m1, one
 // track t1 with clip l1). Varies media label per test via a parameter.
 function fixtureSummary(label = "beach.mp4"): ProjectSummary {
   return {

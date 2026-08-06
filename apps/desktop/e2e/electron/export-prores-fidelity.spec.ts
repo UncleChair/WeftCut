@@ -37,12 +37,9 @@ const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
 const CHART_PRORES = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
 
-// Component presence (same level-0 probe as export-native-wedges.spec.ts):
-// without the built addon the app cannot open native sessions, so the gates
-// skip rather than fail. The Standard engine's software lane ships on all
-// three desktop platforms (issue #5 block B; macOS's ffmpeg-lgpl libs are
-// built from source by fetch-ffmpeg-lgpl.mjs), so the gate resolves the
-// per-OS addon filename and admits Windows + Linux + macOS (arm64).
+// Component presence — same level-0 probe as export-native-wedges.spec.ts,
+// where the per-OS rationale lives: without the built addon the app cannot
+// open native sessions, so the gates skip rather than fail.
 const ADDON_FILE = (
   {
     win32: 'index.win32-x64-msvc.node',
@@ -223,16 +220,9 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
   // generation; the webcodecs leg re-encodes through the full proxy first, so
   // its output must sit strictly farther from the source.
   test('native pin beats the proxy path on SSIM to source (differential)', async ({}, testInfo) => {
-    // Linux re-enabled (issue #9, 2026-07-23): the historical proxy-leg
-    // off-by-one tail alignment did NOT reproduce on current main — ten
-    // sequential runs plus a wider matrix (24/25/50/60, 30000/1001,
-    // 60000/1001, non-zero start PTS, B-frame + edit-list input, mid-frame
-    // range end) all passed with byte-identical measurements. The likely
-    // fixes landed between the historical failure and the validation run:
-    // the REORDER_MARGIN lead-in (56f09adf) and the ExportFrameStore
-    // duration-eviction/identity rework. (The macOS proxy-leg wedge — the
-    // prefer-software decoder withholding each fed window's tail frames
-    // until more input — was the same REORDER_MARGIN fix.)
+    // No per-OS skip: both legs must run on every platform
+    // (docs/notes/linux-lite-export-off-by-one-tail.md carries the
+    // tail-alignment investigation that once argued for one).
     // Two full exports + analysis. The webcodecs leg additionally blocks on
     // the import-time auto-enqueued full ProRes proxy transcode (blind-spot
     // route), so it gets the same 400s driveExport budget as the slow wedge

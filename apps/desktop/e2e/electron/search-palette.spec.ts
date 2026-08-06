@@ -52,11 +52,8 @@ test('media search reopens and reveals the singleton Media Pool Panel', async ()
   test.skip(!fs.existsSync(MEDIA_PATH), `media fixture missing: ${MEDIA_PATH}`)
   test.setTimeout(60_000)
 
-  // Fresh userData: a reused profile's persisted locale in app_settings.json
-  // would beat the launch-time --lang and render the View menu in a non-English
-  // language, sinking the text filters below.
-  // This spec also closes a dock Panel, which must not leak into the shared
-  // profile's autosaved layout.
+  // The driver's throwaway userData keeps --lang authoritative — the View-menu
+  // text filters below need English — and isolates this spec's dock-Panel close.
   const { app, page } = await launchApp()
   try {
     const parent = tmpDir('weftcut-palette-')

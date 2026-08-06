@@ -124,8 +124,6 @@ export function KeyframeCurveGraph({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       teardownRef.current = null;
-      // One commit for the whole gesture → one undo step. Preview holds until
-      // the committed track arrives (clear effect), so no flicker on release.
       if (nextInterp) onSetInterp(owner, nextInterp);
     };
     teardownRef.current = up;

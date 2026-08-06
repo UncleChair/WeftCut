@@ -20,9 +20,7 @@ use crate::state::MediaItem;
 const QUICK_PROXY_HEIGHT_CAP: u32 = 720;
 
 /// `source_gop_secs` is the source's largest keyframe interval in seconds, or
-/// `None` if unknown. A long-GOP source is NOT remuxed (which would carry the
-/// long GOP through and scrub badly) — it's transcoded to a short GOP so this
-/// preview proxy is scrub-friendly.
+/// `None` if unknown; `can_remux` owns what that implies.
 pub async fn run(
     cache: &CacheLayout,
     media: &MediaItem,

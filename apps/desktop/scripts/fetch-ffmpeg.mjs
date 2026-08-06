@@ -2,7 +2,6 @@
 // Sources: Windows = gyan.dev essentials; Linux = BtbN/FFmpeg-Builds (GitHub CDN);
 // macOS = martin-riedl.de (arm64).
 // Used locally and in CI to populate extraResources before packaging.
-// CI may inline equivalent commands; this script mirrors them for local use.
 //
 // LICENSING (project licensing model, docs/licensing.md): these are the GPL
 // SIDECAR binaries — run strictly as subprocesses, so they never affect
@@ -92,8 +91,8 @@ const probeBin = join(dest, `ffprobe${ext}`)
 
 /** Run the fetched ffmpeg once, capture its `ffmpeg version …` +
  *  `configuration: …` lines, gate the banner, and write manifest.json +
- *  SOURCE-OFFER.txt beside the binaries. Idempotent — also heals trees fetched
- *  before compliance staging existed (local dev dirs, restored CI caches). */
+ *  SOURCE-OFFER.txt beside the binaries. Idempotent — back-fills a tree that
+ *  has binaries but no manifest. */
 function stageCompliance() {
   const manifestPath = join(dest, 'manifest.json')
   if (existsSync(manifestPath)) {
@@ -149,7 +148,6 @@ function downloadWithRetry(url, outPath, label, expectedSha256) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) {
       console.log(`Retry ${attempt}/${MAX_ATTEMPTS} for ${label}...`)
-      // Remove partial file from previous attempt
       rmSync(outPath, { force: true })
     }
     try {
@@ -158,7 +156,6 @@ function downloadWithRetry(url, outPath, label, expectedSha256) {
       if (attempt === MAX_ATTEMPTS) throw new Error(`curl failed after ${MAX_ATTEMPTS} attempts for ${label}: ${err.message}`)
       continue
     }
-    // Validate size
     let size = 0
     try { size = statSync(outPath).size } catch (_) { /* file may not exist */ }
     if (size < MIN_ARCHIVE_BYTES) {
@@ -167,7 +164,8 @@ function downloadWithRetry(url, outPath, label, expectedSha256) {
       console.warn(`Warning: ${msg} — will retry`)
       continue
     }
-    // Verify checksum when a hash is pinned (Windows only — see FFMPEG_WIN_SHA256)
+    // Verify checksum when a hash is pinned (Windows + macOS pin a hash;
+    // Linux's rolling n7.1 asset does not)
     if (expectedSha256) {
       const got = createHash('sha256').update(readFileSync(outPath)).digest('hex')
       if (got !== expectedSha256) {
@@ -217,7 +215,6 @@ function main() {
 
     mkdirSync(extractDir, { recursive: true })
 
-    // Extract ffmpeg.exe if not already present
     if (!existsSync(bin)) {
       console.log('Extracting ffmpeg.exe...')
       const innerPath = `ffmpeg-${FFMPEG_VERSION}-essentials_build/bin/ffmpeg.exe`
@@ -228,7 +225,6 @@ function main() {
       console.log(`ffmpeg installed: ${bin}`)
     }
 
-    // Extract ffprobe.exe if not already present
     if (!existsSync(probeBin)) {
       console.log('Extracting ffprobe.exe...')
       const innerProbePath = `ffmpeg-${FFMPEG_VERSION}-essentials_build/bin/ffprobe.exe`

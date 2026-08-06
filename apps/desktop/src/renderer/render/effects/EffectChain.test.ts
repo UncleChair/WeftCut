@@ -15,7 +15,7 @@ const blur = (id: string, strength: number): EffectView => ({
   id, kind: "blur", enabled: true, params: { strength: { mode: "Static", value: strength } },
 });
 
-// Uniform layout per ChromaKeyFilter.ts:67-68.
+// Uniform layout per ChromaKeyFilter's chromaUniforms UniformGroup.
 function uKey(filter: unknown): Float32Array {
   return (filter as { resources: { chromaUniforms: { uniforms: { uKey: Float32Array } } } })
     .resources.chromaUniforms.uniforms.uKey;

@@ -60,7 +60,7 @@ export function KeyframeField({
   // writes the draft, so a slider drag and a sibling number field stay in sync.
   const [draft, setDraft] = useState<number | null>(null);
   // Closure-stable timer slot for the slider debounce (mirrors the inspector's
-  // useDebouncedCommit; ref-free to avoid an extra import).
+  // useDebouncedCommit).
   const slot = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A new bound param/layer must not inherit the previous field's draft.
   useEffect(() => setDraft(null), [layerId, paramKey]);

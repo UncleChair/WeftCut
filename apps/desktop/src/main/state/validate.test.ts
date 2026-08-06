@@ -63,10 +63,10 @@ describe('validate', () => {
   })
 
   it('uses the longest-reaching prior layer for the next overlap check', () => {
-    // A=[0,1s), B=[0.5s,0.8s) (contained, ends earlier). C=[0.9s,1.2s) overlaps A (reaches 1s), must reject.
+    // A=[0,1s) with B=[0.5s,0.8s) contained in it: a plain overlap reject — the A/B
+    // pair trips LayerOverlap before C=[0.9s,1.2s) is ever reached.
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [colorLayer('a', 0, 1_000_000), colorLayer('b', 500_000, 800_000), colorLayer('c', 900_000, 1_200_000)]
-    // (b inside a already overlaps a → LayerOverlap fires first; assert it rejects)
     expectRule(p, 'LayerOverlap')
   })
 
@@ -122,8 +122,7 @@ describe('validate', () => {
 
 describe('validate — frame-grid backstop', () => {
   it('rejects an off-grid t_start_us / t_end_us with the offending field, time, rate and the value to retry with', () => {
-    // 2_999_999 µs is 1 µs below frame 90 at 30/1 — the exact shape the trim
-    // source-duration clamp used to persist.
+    // 2_999_999 µs is 1 µs below frame 90 at 30/1.
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [colorLayer('a', 2_999_999, 4_000_000)]
     try { validate(p); throw new Error('expected OffGridLayerBoundary, but validate passed') }

@@ -7,25 +7,28 @@
 //
 // Why chunked + dedicated decoder driver:
 //   The preview-tuned SourceDecoderPool gates decoding on a small
-//   lookahead window with `setTimeout(8 ms)` poll-and-yield — far too
-//   slow for export, which has no preview-latency budget to protect.
+//   lookahead window — far too slow for export, which has no
+//   preview-latency budget to protect.
 //
 //   This Worker drives an `ExportDecoderPool` directly: per
 //   ~2 s chunk we feed every needed sample for every active clip
-//   in one shot, `await decoder.flush()`, then run the encode loop
-//   over the chunk with no per-frame waiting. After the chunk
-//   encodes we evict its consumed frames so memory stays bounded.
+//   in one shot, with NO `decoder.flush()` between ranges (the
+//   deadlock landmine lives on `decodeRange`), then pull each frame
+//   from the ring via `ring.waitForPts` as the encode loop reaches
+//   it. After the chunk encodes we evict its consumed frames so
+//   memory stays bounded.
 //
 // Limitations:
 //   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. Final mux/transcode combines
 //     this temp video with an optional temp audio file (.m4a/.mka).
 //   - Captions render as Text layers and export through the normal Text path.
-//   - Motifs DO render: the SVG capture harness can't run in the
-//     Worker (no `document`), so the main thread pre-rasterizes each
-//     Motif layer's frames (`exportBake.ts`) and transfers them in
-//     via `ExportRequest.start.motifFrames`; `compositor.setMotifFrames`
-//     installs them and `MotifSprite` binds by comp-frame index.
+//   - Motifs DO render: the CDP motif-capture path needs a DOM and a
+//     window, neither of which exists in the Worker, so the main thread
+//     pre-rasterizes each Motif layer's frames (`exportBake.ts`) and
+//     transfers them in via `ExportRequest.start.motifFrames`;
+//     `compositor.setMotifFrames` installs them and `MotifSprite` binds
+//     by comp-frame index.
 //     VideoClip / ImageOverlay / Color / Text render fine.
 
 import { Application, Container, DOMAdapter, RenderTexture, TexturePool, WebWorkerAdapter } from "pixi.js";
@@ -203,9 +206,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     originalAssetUrl: (mediaId: string) =>
       req.project.originalAssetUrls[mediaId] ?? null,
     // Export drives `exportPool.acquire` directly (threading `mediaColor`
-    // there itself), so the Compositor's own `ensureClip` acquire path is
-    // unused in export mode; this resolver exists to satisfy the required
-    // init field and stays consistent with that wiring if it ever fires.
+    // there itself). The Compositor's own `ensureClip` acquire DOES run in
+    // export mode, but 6a has already created the handle under the same
+    // `exportHandleKey`, so it only ever resolves to that handle; this
+    // resolver just has to stay consistent with that wiring.
     sourceColor: (mediaId: string) => req.project.mediaColor[mediaId],
     mediaById: (mediaId: string): MediaSummary | undefined => {
       const d = req.project.mediaDims[mediaId];
@@ -289,12 +293,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // output fps naturally samples fewer composition frames (drops); a higher
   // one duplicates. No frame-resampling machinery needed.
   //
-  // Frame TIMES + COUNT come from the exact rational fps (see frameGrid.ts): a
-  // floored per-frame duration (`i * round(1e6/fps)`, `ceil(span/33333)`)
-  // compounds the rounding floor, drifts behind the exact composition grid,
-  // and makes `frameAt` duplicate a frame (301 frames for a 300-frame clip,
-  // output[N] = source[N-1]). `frameTimeUs`/`exportFrameCount` derive from one
-  // shared predicate so the grid and the count never disagree.
+  // Frame TIMES + COUNT come from the exact rational grid — see frameGrid.ts
+  // for why a floored per-frame duration must not be used.
   const startUs = Math.max(0, req.startUs);
   const endUs = Math.min(req.project.durationUs, req.endUs);
   const frameTimeUs = (i: number): number =>
@@ -435,16 +435,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     const decodeMs = performance.now() - decodeT0;
     totals.decodeMs += decodeMs;
 
-    // 6b. Composite + encode every frame in the chunk. Each iteration:
-    //   1. Await every active clip's source frame at this output time.
-    //      The decoder runs concurrently — this is where we sync.
-    //   2. Compose + capture + encode the output frame.
-    //   3. Evict source frames whose presentation interval ends at or
-    //      before the next output frame's source PTS. This frees
-    //      VideoFrame pool slots so the decoder can produce more.
-    //      Without this evict the pool saturates and the decoder
-    //      deadlocks (it can never release frames the encode loop
-    //      is still waiting on).
+    // 6b. Composite + encode every frame in the chunk; the per-frame evict
+    // below is what keeps the decoder pool from saturating.
     let compositeMs = 0;
     let captureMs = 0;
     let encodeMs = 0;
@@ -487,8 +479,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
         // had a full frame of wait/composite/pack behind it, so the retrieve
         // is normally a straight CPU copy out of the PBO rather than a GPU
-        // sync stall (the old per-frame readPixels block, and the 10× run-
-        // order readback anomaly, both lived in that stall).
+        // sync stall.
         const capT0 = performance.now();
         pack!.submit(compositeRT!);
         const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
@@ -509,7 +500,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         }
       } else {
         // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
-        // push to the WebCodecs EncoderSink — UNCHANGED.
+        // push to the WebCodecs EncoderSink.
         app.render();
         compositeMs += performance.now() - compT0;
 

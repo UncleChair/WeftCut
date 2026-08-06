@@ -7,15 +7,10 @@
 // previous frame (`ActiveClip.boundFramePtsUs`), so without this module
 // the only trace of an underrun is a console log.
 //
-// Two independent causes of "playback isn't keeping up", counted
-// separately because they point at different fixes:
-//
-//   - **dropped** — `judgeFrameSelection` says the ring had no fresh
-//     frame for a painted VideoClip. The decoder is behind.
-//   - **late** — the composite loop itself ticked past one comp-frame
-//     budget. The ring can be full and every selection fresh while a
-//     synchronous GPU drain or a heavy raster stalls the loop; that
-//     judder is invisible to the frame-selection verdict.
+// Two independent causes of "playback isn't keeping up" — a stale ring
+// (**dropped**) and a stalled composite loop (**late**) — counted
+// separately because they point at different fixes. `UnderrunSnapshot`'s
+// two count fields define what each one scores.
 //
 // Both drive one edge-triggered "active" flag safe to write straight
 // into React state. This module owns neither the loop nor the ring:

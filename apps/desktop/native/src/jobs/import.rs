@@ -17,8 +17,9 @@
 //!   - `import:error`    → media_id + detail, on failure
 //!
 //! Single-worker FIFO — disk write bandwidth is the bottleneck. Cancellation
-//! between jobs drops a pending job + its MediaItem; mid-copy cancellation is
-//! best-effort via a shared atomic flag the chunked copy checks per buffer.
+//! between jobs drops the pending copy job (the media item stays in the pool —
+//! the TS actor owns it); mid-copy cancellation is best-effort via a shared
+//! atomic flag the chunked copy checks per buffer.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -242,8 +243,7 @@ impl ImportQueue {
                     // Route the path/hash write-back through the shared seam: it
                     // emits `media:workspace_paths` for the TS host to apply (the
                     // sole writer). The hash matches the standalone hash pass the
-                    // import already ran (same bytes), so this is idempotent — no
-                    // migrate/patch needed (hash-first; ADR 0007 superseded).
+                    // import already ran (same bytes), so this is idempotent.
                     if let Err(e) = crate::jobs::commit_media_workspace_paths(
                         &self.events,
                         media_id,
@@ -566,10 +566,9 @@ mod tests {
         let ws = TempDir::new().unwrap();
         let ext = TempDir::new().unwrap();
         let src = ext.path().join("video.mp4");
-        // Big enough that the inner loop runs > 1 iteration and has time to
-        // see the cancel flag — 5MB > 1MB buffer.
         std::fs::write(&src, vec![0u8; 5 * 1024 * 1024]).unwrap();
 
+        // Pre-armed cancel flag: the copy loop must bail before its first read.
         let cancel = Arc::new(AtomicBool::new(true));
         let result = copy_to_workspace(&src, ws.path(), cancel).await.unwrap();
         assert!(result.is_none(), "expected cancelled outcome");

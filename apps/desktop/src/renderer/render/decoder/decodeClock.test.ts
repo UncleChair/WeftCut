@@ -11,9 +11,8 @@ function packet(timestampUs: number): DecodeClockPacket {
 
 describe("DecodeClock", () => {
   it("normalizes a non-zero origin from the timestamp actually sent to WebCodecs", () => {
-    // 2/30 s = 66,666.666… µs. Mediabunny truncates the EncodedVideoChunk
-    // timestamp to 66,666; the old independently-rounded origin was 66,667,
-    // so the first decoded frame entered the ring at source PTS -1 µs.
+    // 2/30 s = 66,666.666… µs; Mediabunny sends 66,666, so the first frame
+    // must normalize to source PTS 0, not -1 µs.
     const first = packet(66_666);
     const clock = DecodeClock.fromFirstPacket(first, 999_999);
 

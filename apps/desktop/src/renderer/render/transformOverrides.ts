@@ -28,12 +28,10 @@ export interface TransformDelta {
   /// halves on the same frame or the layer visibly jumps mid-drag.
   danchorX?: number;
   danchorY?: number;
-  /// Added to the resolved scale pair. Additive rather than absolute like every
-  /// other channel here, and for the same reason: a keyframed layer must keep
-  /// animating under the cursor, so the gesture composes with whatever the
-  /// tracks resolve to right now. A resize handle pairs these with a
-  /// compensating `dx`/`dy` too — the pivot's composed position carries a
-  /// `|scale|` term (`anchorPivot.ts`), so scaling about the anchor moves `x`/`y`.
+  /// Added to the resolved scale pair (additive, same reason as `dx`/`dy`). A
+  /// resize handle pairs these with a compensating `dx`/`dy` — the pivot's
+  /// composed position carries a `|scale|` term (`anchorPivot.ts`), so scaling
+  /// about the anchor moves `x`/`y`.
   dscaleX?: number;
   dscaleY?: number;
 }

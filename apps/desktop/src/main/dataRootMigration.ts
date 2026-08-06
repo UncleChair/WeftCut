@@ -1,4 +1,4 @@
-// Data-root migration core (ticket 03). Pure logic for safely CHANGING the
+// Data-root migration core. Pure logic for safely CHANGING the
 // user-configurable data root (resolved by dataRoot.ts): plan (adopt-or-copy),
 // copy user content to the new root, verify it, and roll back on failure — plus
 // a userData-resident "delete the old copy after a successful relaunch" marker.
@@ -13,7 +13,7 @@
 // app-settings.ts). The IPC glue in index.ts wires the node:fs adapter.
 //
 // Motif verification REUSES the existing motif/contentHash — no second hashing
-// scheme is invented (per spec + ticket).
+// scheme is invented.
 
 import { parseManifestIsland } from '../shared/motifs/catalog'
 import { motifContentHash } from './motif/contentHash'
@@ -38,7 +38,6 @@ export interface MigrationFs {
   readFileText(path: string): string
   /** Byte size of a file (0 when it can't be stat'd). */
   fileSize(path: string): number
-  /** mkdir -p. */
   mkdirp(path: string): void
   /** Copy a single file src → dest (dest's parent already created). */
   copyFile(src: string, dest: string): void
@@ -254,7 +253,6 @@ export function runCopy(
     if (fs.exists(srcDownloads) && fs.isDirectory(srcDownloads)) {
       copyTree(srcDownloads, destDownloads, fs, join, tick('downloads'))
     }
-    // cache/ deliberately NOT copied — the empty dir created above refills naturally.
 
     onProgress?.({ phase: 'verify', copiedFiles, totalFiles })
     return { createdPaths }
@@ -347,8 +345,9 @@ export function verify(
 
 /**
  * Delete ONLY what a copy run created at newRoot (createdPaths), deepest-first.
- * Idempotent. NEVER touches oldRoot. The `newRoot` arg is a safety fence: a path
- * that somehow isn't under newRoot is skipped rather than removed.
+ * Idempotent. NEVER touches oldRoot. The `newRoot` arg is a safety fence, but a
+ * raw prefix test rather than true containment — a sibling such as `<newRoot>x`
+ * passes it — so only ever pass paths a copy run itself recorded.
  */
 export function rollback(newRoot: string, fs: MigrationFs, createdPaths: string[]): void {
   for (let i = createdPaths.length - 1; i >= 0; i--) {

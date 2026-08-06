@@ -4,9 +4,6 @@
 // shape written historically by the Rust addon, so existing users'
 // recents.json keeps working after the move to TS.
 
-/** A single entry in the recents list. `last_opened` is an ISO-8601 timestamp
- *  (RFC 3339 from Rust's chrono DateTime<Utc>) — TS stamps with
- *  `new Date().toISOString()` on push. */
 export interface RecentEntry {
   path: string;
   name: string;

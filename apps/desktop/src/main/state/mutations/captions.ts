@@ -3,7 +3,7 @@ import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { applyAddLayer, defaultTransform } from './add'
 
-/** subtitles/mod.rs:27 CueStyle — per-cue style hints (all optional; absent ⇒
+/** subtitles/mod.rs CueStyle — per-cue style hints (all optional; absent ⇒
  *  the default caption look applies). `align` is the ASS 9-grid (1..9). */
 export interface CueStyle {
   font_family?: string | null
@@ -17,7 +17,7 @@ export interface CueStyle {
   align?: number | null
   pos?: [number, number] | null
 }
-/** subtitles/mod.rs:16 Cue — one subtitle cue (text keeps explicit '\n'). */
+/** subtitles/mod.rs Cue — one subtitle cue (text keeps explicit '\n'). */
 export interface Cue { start_us: number; end_us: number; text: string; style?: CueStyle }
 
 const DEFAULT_CAPTION_FONT = 'Liberation Sans, Noto Sans SC'

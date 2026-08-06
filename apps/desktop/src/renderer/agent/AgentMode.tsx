@@ -28,12 +28,10 @@ import { WindowControls } from "../components/WindowControls";
 /// command palette (`agent_session_begin` channel); exited via the
 /// persistent "Exit to editor" button in the titlebar's top-right.
 ///
-/// Layout: preview top-left (expanding), mini timeline bottom-left
-/// (fixed ~80 px), agent panel right (default 360 px, resizable via the
-/// sash in the column gap — the panes otherwise stay put: no dragging,
-/// no docking). The right pane is the shared AgentPanel component (title
-/// info on top, record stream below), the same surface the editor dock's
-/// "Agent" panel renders. See docs/mcp.md.
+/// Layout: preview top-left, mini timeline bottom-left, agent panel right
+/// (resizable via the sash in the column gap) — grid metrics live in
+/// styles/agent.css. The right pane is the shared AgentPanel component, the
+/// same surface the editor dock's "Agent" panel renders. See docs/mcp.md.
 /// Both the menu bar and editor-mode status bar are hidden — in
 /// agent mode the record panel IS the surface for activity.
 interface AgentModeProps {
@@ -46,8 +44,7 @@ interface AgentModeProps {
   onExit: () => void;
 }
 
-/// Record-panel width bounds (px). The default matches the width the pane
-/// had before it became resizable.
+/// Record-panel width bounds (px).
 const RECORD_WIDTH_DEFAULT = 360;
 const RECORD_WIDTH_MIN = 280;
 const RECORD_WIDTH_MAX = 720;

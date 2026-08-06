@@ -20,15 +20,11 @@
 //!
 //! `offsets.from`/`offsets.to` are **milliseconds** (whisper.cpp's JSON unit),
 //! NOT the centisecond `t0`/`t1` of the C API — we multiply by 1000 to reach
-//! microseconds. Token `text` uses a leading space to mark a word boundary
-//! (SentencePiece convention); we group sub-word tokens back into words on
-//! that signal, AND on a token starting with a space-less CJK character (Han,
-//! kana) — Chinese/Japanese tokens carry no leading space, so without the CJK
-//! rule an entire segment would merge into one giant "word", discarding the
-//! per-token offsets the engine paid for. `word_timing = Exact` when the words
-//! come from token offsets; a segment-only JSON (no token arrays anywhere)
-//! degrades to one pseudo-word per segment and reports `word_timing = None` —
-//! segment granularity, honestly labeled.
+//! microseconds. Token `text` carries whisper's SentencePiece markers;
+//! `group_tokens_into_words` owns how those tokens regroup into words.
+//! `word_timing = Exact` when the words come from token offsets; a segment-only
+//! JSON (no token arrays anywhere) degrades to one pseudo-word per segment and
+//! reports `word_timing = None` — segment granularity, honestly labeled.
 
 use serde::Deserialize;
 

@@ -8,13 +8,9 @@ export interface FfprobeColor {
   color_transfer?: string | null;
 }
 
-// SDR-only mapping. HDR/wide-gamut ffprobe values (bt2020nc, bt2020, smpte432,
-// smpte2084/pq, arib-std-b67/hlg, bt2020-10) are intentionally NOT mapped: this
-// color fix targets 8-bit SDR sources (BT.601/709, limited/full), and TS's
-// lib.dom WebCodecs unions don't include the HDR enum values anyway. Such
-// sources are 10-bit and take WeftCut's proxy path. Mapping them would require
-// widening past the DOM types + casting at the VideoColorSpaceInit boundary —
-// a separate slice. Unmapped values fall through to the resolution default.
+// SDR-only mapping: TS's lib.dom WebCodecs unions carry no HDR/wide-gamut enum
+// values, and such sources are 10-bit and take WeftCut's proxy path anyway.
+// Unmapped values fall through to the resolution default.
 const MATRIX: Record<string, VideoMatrixCoefficients> = {
   bt709: "bt709",
   smpte170m: "smpte170m",

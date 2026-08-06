@@ -1,6 +1,6 @@
 //! The normalized transcript shape every speech backend converges on.
 //!
-//! Backends emit different *styles* (SRT, whisper JSON, later FunASR JSON); a
+//! Backends emit different *styles* (SRT, whisper JSON, FunASR JSON); a
 //! per-style [`parse`](super::parse) turns each into this one structure so
 //! consumers (the `transcribe_clip` tool, the scene/content-analysis
 //! word-transcript resource) see a single shape regardless of engine. The only
@@ -61,9 +61,8 @@ pub struct Transcript {
 impl Transcript {
     /// Shift every segment and word timestamp forward by `offset_us` (the
     /// slice's timeline-absolute start), clamping at zero so a negative result
-    /// never underflows. Replaces the old text-level `srt::shift_srt`: we shift
-    /// the parsed struct, then re-render SRT from it via [`render_srt`] if the
-    /// caller needs a cue body.
+    /// never underflows. Shifts the parsed struct; a caller that needs a cue
+    /// body re-renders it via [`render_srt`].
     ///
     /// [`render_srt`]: Transcript::render_srt
     pub fn shift(&mut self, offset_us: i64) {
@@ -103,9 +102,7 @@ fn shift_us(base_us: i64, offset_us: i64) -> i64 {
     base_us.saturating_add(offset_us).max(0)
 }
 
-/// `HH:MM:SS,mmm` — the SRT cue-timestamp format. Mirrors the formatter the
-/// old `srt::shift_srt` used, kept here as the one place transcripts render
-/// timestamps.
+/// `HH:MM:SS,mmm` — the SRT cue-timestamp format.
 fn format_srt_timestamp(us: i64) -> String {
     let us = us.max(0);
     let total_ms = us / 1000;

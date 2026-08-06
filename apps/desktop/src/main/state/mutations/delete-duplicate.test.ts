@@ -36,9 +36,7 @@ describe('delete + duplicate', () => {
     expect(p.groups).toHaveLength(0)
   })
   it('snaps the duplicate onto the frame grid at a fractional rate', () => {
-    // `t_offset_us` arrives raw (duplicate_layer is MCP-only), so `+=` on both
-    // edges left them off the grid at every rational rate. Both edges now come out
-    // of the same snap-the-start-then-carry-the-delta model as paste.
+    // Both edges land on the grid via the snap-start-then-carry-the-delta model (duplicate.ts).
     const g = seededGen(); const p = blankProject(g, 't')
     p.composition.fps = { num: 30000, den: 1001 }
     const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 100_100)

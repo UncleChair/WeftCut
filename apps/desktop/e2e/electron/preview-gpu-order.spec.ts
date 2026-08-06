@@ -5,13 +5,12 @@ import { fileURLToPath } from 'node:url'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 
 // Frame-CONTENT-order regression guard for the ffmpeg engine's HARDWARE
-// (d3d11va GPU) lane preview. The Phase-D manual HW smoke found that this
-// lane presents B-frame content OUT OF ORDER during forward playback
-// (jumps/repeats/reverses) even though the ring self-sorts by PTS — i.e. the
-// bitmap paired with a PTS carried a DIFFERENT frame's pixels (the
-// shared-texture slot read/ack coherence race). The decode-bench never
-// caught it because throughput/seek measure fps + frame COUNT, never
-// CONTENT.
+// (d3d11va GPU) lane preview. This lane can present B-frame content OUT OF
+// ORDER during forward playback (jumps/repeats/reverses) even though the ring
+// self-sorts by PTS — i.e. the bitmap paired with a PTS carries a DIFFERENT
+// frame's pixels (the shared-texture slot read/ack coherence race). The
+// decode-bench cannot catch it because throughput/seek measure fps + frame
+// COUNT, never CONTENT.
 //
 // This drives `decodeBenchOrderCheck` against an index-encoded clip (each
 // presentation frame N carries a 12-stripe binary barcode of N) through the
@@ -387,7 +386,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     }
   })
 
-  // Smoke item b — HW admission budget → downgrade (runtime seam), FORCED lane.
+  // HW admission budget → downgrade (runtime seam), FORCED lane.
   // Main admits this fixture up to the smaller of session slots and coded-area
   // fits; the (cap+1)th open must reject with `hw-budget-exceeded` and surface it via
   // onFatalError (the resolver's downgrade-off-tier-1 on that marker is
@@ -431,7 +430,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     }
   })
 
-  // HW→SW in-place fallback (Task 13) — a REAL budget-rejection trigger, not
+  // HW→SW in-place fallback — a REAL budget-rejection trigger, not
   // an injected error. Opens the largest admitted fixture shape + 1 real ffmpeg-engine
   // sources on this HW-eligible clip WITHOUT forcing a lane —
   // `pickInitialLane`'s real GPU capability probe puts each on hardware

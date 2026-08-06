@@ -2,8 +2,6 @@
 //
 // Focused unit tests for buildProjectSummary — the pure projection from
 // Project + HistoryStatus + fileExists into the renderer's ProjectSummary view.
-// These replace the 177-step oracle-summary differential: a handful of
-// hand-built states are sufficient to pin the projection precisely.
 import { describe, it, expect } from 'vitest'
 import { buildProjectSummary } from '../summary'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
@@ -142,7 +140,7 @@ describe('ProjectSummary projection', () => {
   })
 
   it('nullifies a proxied route\'s readiness slots when the media is missing, keeps them when present', () => {
-    // routeForSummary (summary.ts:189-197) existence-gates the proxy readiness
+    // routeForSummary existence-gates the proxy readiness
     // paths: a serialized-but-deleted proxy must project as null, not a stale path.
     // format_version is NOT a path and passes through unchanged.
     const mediaId = 'cccccccc-0000-0000-0000-000000000003'

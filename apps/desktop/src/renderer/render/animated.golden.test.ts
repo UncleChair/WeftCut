@@ -3,9 +3,8 @@ import type { AnimTrack } from "./animated";
 import { resolveAnimated } from "./animated";
 import fixture from "./animatedGolden.fixture.json";
 
-// resolveAnimated is wasm-backed now (the shared weftcut-eval crate, loaded by
-// the global test setup). This golden verifies the wasm reproduces the fixture
-// (single source) — it no longer checks that two hand-mirrored engines agree.
+// resolveAnimated runs the shared weftcut-eval wasm (loaded by the global test
+// setup); this golden verifies it reproduces the fixture.
 
 interface Sample {
   t_us: number;

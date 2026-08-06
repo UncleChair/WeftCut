@@ -1,7 +1,7 @@
 //! Per-layer effect instances. Rust stores the ordered instances + animatable
 //! params; the TS renderer (effectRegistry.ts) owns the catalog of which filters
-//! exist and how to build them. The two join on `kind`. See
-//! docs/plans/effects-subsystem.md.
+//! exist and how to build them. The two join on `kind`. See docs/adr/0027 and
+//! docs/render.md.
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

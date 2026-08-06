@@ -10,7 +10,7 @@ use super::ids::{
 };
 use super::time::TimeUs;
 
-// ---- ValidationError (moved from state/validate.rs) ----
+// ---- ValidationError ----
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -176,8 +176,8 @@ pub enum CommandError {
     TrackNotFound { track: TrackId },
     #[error("layer {layer} not found")]
     LayerNotFound { layer: LayerId },
-    /// A/B-roll v2 V.7: returned when separate_audio_to_new_track is
-    /// invoked on a non-Audio layer.
+    /// Returned when `separate_audio_to_new_track` is invoked on a non-Audio
+    /// layer.
     #[error("layer {layer} is not a {expected} layer")]
     WrongLayerKind {
         layer: LayerId,
@@ -264,15 +264,14 @@ pub enum CommandError {
     EffectNotFound { effect: EffectId },
     #[error("effect index {index} out of range for effect count {len}")]
     EffectIndexOutOfRange { index: usize, len: usize },
-    /// Step 1a (command-surface unification): a raw argument failed to parse at
-    /// the shared command layer — a UUID string, an edge name, etc. Carries the
-    /// field so adapters render a precise message. The UI flattens it to a
-    /// string; MCP maps it to `invalid_params`.
+    /// A raw argument failed to parse at the shared command layer — a UUID
+    /// string, an edge name, etc. Carries the field so adapters render a
+    /// precise message. The UI flattens it to a string; MCP maps it to
+    /// `invalid_params`.
     #[error("invalid argument `{field}`: {detail}")]
     InvalidArgument { field: String, detail: String },
-    /// Step 1a: the napi `Backend` had no project handle (uninitialized). Kept
-    /// distinct from validation failures; MCP maps it to `internal_error`,
-    /// matching the prior `From<String> for McpToolError` behavior.
+    /// The napi `Backend` had no project handle (uninitialized). Kept distinct
+    /// from validation failures; MCP maps it to `internal_error`.
     #[error("{0}")]
     Backend(String),
 }

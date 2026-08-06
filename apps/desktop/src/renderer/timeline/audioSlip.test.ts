@@ -57,9 +57,8 @@ describe("audio nudge", () => {
   });
 
   it("does not drift over 10 000 nudges out and back", () => {
-    // THE property that catches a rounded step — and the one the video frame-step bug
-    // failed. Lattice spacing is 20 or 21 µs (never a constant), so anything additive
-    // in µs accumulates; index arithmetic is exact.
+    // THE property that catches a rounded step: out and back must land on the
+    // original sample exactly (why: `nudgedStartUs` in audioSlip.ts).
     const start = sample(123_457);
     let l = audio("a", start);
     for (let i = 0; i < 10_000; i++) l = { ...l, t_start_us: nudgedStartUs(l, NUDGE_SAMPLE) };

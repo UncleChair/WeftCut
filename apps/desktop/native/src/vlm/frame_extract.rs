@@ -7,12 +7,9 @@
 //! each as a downscaled PNG, and return them tagged with their **window-relative**
 //! timestamp.
 //!
-//! ffmpeg invocation mirrors the validated `spike.mjs` exactly: input-side `-ss`
-//! (fast keyframe seek — thumbnail-grade accuracy is fine for description),
-//! `-frames:v 1`, `-vf scale='min(768,iw)':-2`, `-q:v 2`, one child per frame
-//! under `jobs::ffmpeg_sem()` with the `NoConsoleWindow` conhost guard. Frames
-//! land in a caller-owned temp dir (RAII-cleaned once the sidecar has read them),
-//! not the persistent cache — the *description* is what we cache, not the frames.
+//! One ffmpeg child per frame, under `jobs::ffmpeg_sem()`. Frames land in a
+//! caller-owned temp dir (RAII-cleaned once the sidecar has read them), not the
+//! persistent cache — the *description* is what we cache, not the frames.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -25,9 +22,8 @@ use crate::process::NoConsoleWindow;
 use super::describer::TimedFrame;
 use super::error::VlmError;
 
-/// Longest side of an extracted frame, in pixels. Matches the spike's
-/// `--max-side 768`: enough detail for description, small enough that 8–16
-/// frames fit the capped `-c 8192` KV budget.
+/// Longest side of an extracted frame, in pixels: enough detail for
+/// description, small enough to fit the KV budget [`MAX_FRAMES`] documents.
 const MAX_SIDE: u32 = 768;
 
 /// Hard cap on frames per clip. The context is capped at 8192 tokens (KV-cache

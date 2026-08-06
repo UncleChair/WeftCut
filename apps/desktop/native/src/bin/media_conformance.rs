@@ -1,6 +1,15 @@
-//! `media_conformance` — verifies an exported MP4 against its source: frame
-//! alignment (windowed best-match SSIM over the burned-in counter) + app-only
-//! conversion loss (SSIM/PSNR of output vs decoded source, same index).
+//! `media_conformance` — analyzes an exported MP4. One mode per invocation:
+//!
+//!   - default (`--samples`): frame alignment against `--source` (windowed
+//!     best-match SSIM over the burned-in counter) + app-only conversion loss
+//!     (SSIM/PSNR of output vs decoded source, same index).
+//!   - `--color`: per-patch color error vs a `--manifest`, source decoded under
+//!     the forced `--in-matrix`/`--in-range`.
+//!   - `--gradient-row`: per-channel banding over one decoded mid-row.
+//!   - `--self-ssim`: compares two indices of the OUTPUT alone (no source).
+//!   - `--audio`: per-second alignment, boundary drift, tone SNR.
+//!   - `--audio-envelope`: windowed-RMS levels vs analytic expectations.
+//!   - `--audio-pan`: per-channel RMS ratio vs an expected L−R dB delta.
 //!
 //!   media_conformance --output <mp4> --source <mp4> --samples N1,N2,... \
 //!     [--window 2] [--ssim-min 0.95]
@@ -848,9 +857,7 @@ fn analyze_color(
     in_matrix: &str,
     in_range: &str,
 ) -> Result<ColorReport> {
-    // Output: decode by its own embedded tag (None ⇒ no forced scale).
     let out_img = decode_rgb16(&extract_frame_png_ex(output, sample, None, None, false)?)?;
-    // Source: decode under the forced reference matrix/range (incomplete tags).
     let src_img = decode_rgb16(&extract_frame_png_ex(
         source,
         sample,
@@ -863,9 +870,9 @@ fn analyze_color(
     for p in &manifest.patches {
         let o = sample_patch(&out_img, p);
         let s = sample_patch(&src_img, p);
-        // *257 matches image::to_rgb16's 8->16 byte-replication so authored
-        // aligns with how output/source were upscaled (gate uses app_error,
-        // which compares output vs source — both via to_rgb16 — so it is exact).
+        // The gate is app_error, which compares output vs source — both via
+        // to_rgb16 — so it is exact; `authored` (see `Patch::rgb`) only feeds
+        // the diagnostic total_error.
         debug_assert!(
             p.rgb.iter().all(|&v| v <= 255),
             "manifest rgb must be 8-bit (0..=255), got {:?}",

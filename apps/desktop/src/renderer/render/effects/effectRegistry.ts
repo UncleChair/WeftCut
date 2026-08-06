@@ -1,7 +1,7 @@
 // Effect registry: maps a kind string to an EffectDescriptor (stock Pixi Filter
-// factory + per-param apply glue + fidelity tier). Rust owns effect instances;
-// this module owns the catalog — what filters exist, how to construct them, and
-// how to apply each parameter value.
+// factory + per-param apply glue + fidelity tier). The TS state model owns
+// effect instances; this module owns the catalog — what filters exist, how to
+// construct them, and how to apply each parameter value. `kind` is the join key.
 //
 // Adding an effect: add one entry to REGISTRY with the shape below. The
 // fidelity field documents whether the filter operates correctly at float16

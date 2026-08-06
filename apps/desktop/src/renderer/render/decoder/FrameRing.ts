@@ -7,7 +7,7 @@
 // kind alike through the shared `close()`. Anchor / eviction / lookup
 // semantics live on the methods below.
 //
-// Plan: docs/render.md §Decoder pool — 1 s lookahead / 0.5 s lookbehind per clip
+// See docs/render.md §Decoder pool.
 
 import {
   frameRingByteBudget,
@@ -309,7 +309,7 @@ export class FrameRing {
   /// This is also the ONLY lookup that counts towards `fate`, and the only one
   /// that marks an entry served. `frameAt` and `containsPts` are readiness
   /// probes — the Compositor's swap path polls `frameAt` per tick
-  /// (`Compositor.ts:1991`) — so counting them would inflate hits with
+  /// (`Compositor.pollSwap`) — so counting them would inflate hits with
   /// selections nothing ever painted, and would mark entries served that never
   /// reached a sprite. "Served" here means exactly "handed to the compositor's
   /// paint path".

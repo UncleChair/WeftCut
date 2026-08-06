@@ -8,8 +8,7 @@
 // The on-disk file path + JSON field names are a COMPATIBILITY SURFACE: once a
 // user has a vlm_config.json it must keep loading, so neither may change without
 // a migration. Bad-config recovery: a missing / empty / corrupt file, or one from
-// an older build lacking a field, degrades to defaults — preferred_engine
-// backfills to "auto" so a Settings selector never blanks.
+// an older build lacking a field, degrades to defaults.
 //
 // `toVlmBackendSnapshot` is the pure merge that turns this store's config + the
 // safeStorage cloud key into the tagged `HashMap<String, BackendConfig>` JSON the
@@ -159,9 +158,9 @@ type BackendConfigJson =
 /// Merge the non-secret store config + the secret cloud key into the
 /// `Record<backendTag, BackendConfig>` snapshot the stateless describe_clip
 /// resolver reads. Keyed by the Rust `VlmBackend::as_str` tags. Pure — the
-/// caller supplies `cloudKey` from safeStorage (keys.ts). This is what the
-/// Electron main process injects into `describe_clip` / `media://{id}/description`
-/// once wired.
+/// caller supplies `cloudKey` from safeStorage (keys.ts). index.ts feeds the
+/// result to the MCP host's vlm-config callback, which injects it per call into
+/// `describe_clip` / `media://{id}/description`.
 export function toVlmBackendSnapshot(
   cfg: VlmConfig,
   cloudKey?: string | null,

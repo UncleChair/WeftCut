@@ -1,7 +1,6 @@
 // Transcription-engine selector options (Auto + one per known backend), shared
 // shape with the decode-engine picker (decodeEngineOptions.tsx). Data-driven
-// from the backend listing so a new engine appears automatically; the shown-
-// but-disabled mechanism stays generic for any future not-yet-built backend.
+// from the backend listing so a new engine appears automatically.
 import type { TFunction } from "i18next";
 import type { AppSelectOption } from "../components/AppSelect";
 import type { SpeechBackendInfo } from "../ipc";

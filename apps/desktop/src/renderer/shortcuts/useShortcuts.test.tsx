@@ -265,10 +265,7 @@ describe("useShortcuts — NLE-style global accelerators", () => {
 
   // ── Panel scope (ADR 0041) ────────────────────────────────────────────────
   //
-  // The gate is strict: a scoped action is dead unless its own panel owns the
-  // keyboard, `null` (chrome, a dialog, the startup screen) included. It must
-  // yield WITHOUT preventDefault, like every other stand-down, so the key stays
-  // available to whatever does own the focused region.
+  // The rule lives with the scope gate in `useShortcuts.ts`.
 
   it("fires a timeline-scoped action only while the timeline region has focus", () => {
     const deleteSelected = vi.fn();

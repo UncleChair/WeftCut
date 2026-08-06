@@ -7,7 +7,7 @@ import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
 import { builtinMotifs, getMotifSource, motifToPayload, listMotifsInner, type BuiltinMotif } from './authoring'
 import { motifContentHash } from './contentHash'
 
-/** Minimal manifest factory mirroring authoring_commands.rs `m()`. */
+/** Minimal manifest factory. */
 function m(name: string, id = 'ignored'): Manifest {
   return { id, name, version: 1, size: [100, 100], default_duration_s: 1, fonts: [], props_schema: {} }
 }

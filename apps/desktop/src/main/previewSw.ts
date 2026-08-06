@@ -17,8 +17,8 @@ import type { NativeDecode } from '@weftcut/native-decode'
 /// `lane`/`device` optionally select a HARDWARE copy-back lane (Linux
 /// NVDEC/VAAPI, `device` = the DRM node for VAAPI) that rides this SAME
 /// transport as software — hw accel, then copy-back to the identical NV12
-/// frames. A null `lane` = software decode, matching today exactly; the frame
-/// contract the callback relays is unchanged either way.
+/// frames. A null `lane` = software decode; the frame contract the callback
+/// relays is identical either way.
 ///
 /// `scaleDiv` is the playback-resolution divisor (1 | 2 | 4; null = 1 = full):
 /// native swscales each frame DOWN before packing, so a 4K frame crosses this
@@ -28,10 +28,10 @@ import type { NativeDecode } from '@weftcut/native-decode'
 /// `cadenceDiv` selects producer output cadence (null = 1 = every frame).
 /// Native skips unselected frames before copy-back/swscale/packing and IPC.
 ///
-/// `outFormat` selects the session's CPU transport format (null = 'NV12' =
-/// today's path byte-for-byte): 'I420P10' opens 10-bit output — the renderer
-/// asks for it on the videotoolbox lane for a 10-bit source (issue #10 ticket
-/// 03) — and every relayed frame carries the matching `format` tag.
+/// `outFormat` selects the session's CPU transport format (null = 'NV12'):
+/// 'I420P10' opens 10-bit output — the renderer asks for it on the
+/// videotoolbox lane for a 10-bit source (issue #10 ticket 03) — and every
+/// relayed frame carries the matching `format` tag.
 export function openPreviewSw(
   backend: NativeDecode,
   win: BrowserWindow,

@@ -19,8 +19,8 @@ import { hwEligibleOnLane } from '../shared/hwLaneEligibility'
 /// platforms, but the cache vocabulary is platform-independent.
 export type DecodeLane = 'sw' | 'd3d11va' | 'nvdec' | 'vaapi' | 'videotoolbox'
 
-/// HW-lane resolution order (User Story 8; mirrors the encode side's
-/// NVENC > VAAPI). NVDEC first so an NVIDIA machine uses its native decoder
+/// HW-lane resolution order (mirrors the encode side's NVENC > VAAPI).
+/// NVDEC first so an NVIDIA machine uses its native decoder
 /// rather than the flaky NVIDIA VAAPI shim; VAAPI next (Intel/AMD, and NVIDIA's
 /// shim as a last resort); `d3d11va` (Windows) and `videotoolbox` (macOS) trail
 /// as each platform's sole lane (neither ever shares an advertisement with the
@@ -129,30 +129,13 @@ export interface HwLaneResolution {
 /// #5 Block C). PURE apart from its injected collaborators (cache store, per-lane
 /// envKey resolver, DRM-device enumerator, and the one-frame probe), so lane
 /// selection is unit-testable with fake capabilities and fake verdicts — no GPU,
-/// no platform special-casing. It replaces the single-lane `d3d11va` gate with a
-/// priority walk so NVDEC/VAAPI (and Windows d3d11va) all resolve through one
-/// path. Steps:
-///   1. Keep only the advertised HW lanes, in `HW_LANE_PRIORITY` order. If the
-///      component advertised none (Linux SW-only build, or an unloaded
-///      component whose lanes are empty), return "unavailable" WITHOUT probing —
-///      the gate that stops a resolver from ever calling into a lane the addon
-///      never compiled.
-///   1b. Drop advertised lanes the format class is not ELIGIBLE on (the
-///      per-lane seek-validated sets in `shared/hwLaneEligibility.ts` —
-///      issue #10 ticket 03: ProRes/10-bit ride videotoolbox only; every other
-///      lane keeps the 8-bit h264/hevc/vp9 gate). An ineligible lane is never
-///      probed and never cached, so widening the renderer's probe-kick union
-///      cannot change any other lane's behavior. A classKey that does not
-///      parse (test fakes) skips this narrowing — eligibility narrows on
-///      positive knowledge only.
-///   2. For each candidate lane (highest priority first), enumerate its devices
-///      (VAAPI: the DRM render nodes; other lanes: a single null device). A lane
-///      that enumerates zero devices (VAAPI with no render nodes) is skipped.
-///   3. For each (lane, device): a cached verdict short-circuits — a positive
-///      wins immediately; a negative skips to the next candidate WITHOUT
-///      re-probing. On a cache miss, probe once, cache the verdict, and take the
-///      lane if it passed.
-///   4. If every advertised lane/device is unusable, return software fallback.
+/// no platform special-casing.
+///
+/// Two constraints the walk itself does not show: a lane the component never
+/// advertised is NEVER probed — that is the gate stopping a resolver from
+/// calling into a lane the addon never compiled; and the eligibility narrowing
+/// (`shared/hwLaneEligibility.ts`) applies on POSITIVE knowledge only, so a
+/// classKey that does not parse skips it rather than dropping every candidate.
 export async function resolveHwLane(deps: {
   lanes: readonly string[]
   store: DecodeCapabilityStore

@@ -125,10 +125,8 @@ describe('parseMarkerPatch', () => {
 
 describe('toolJson', () => {
   const text = (r: ReturnType<typeof toolJson>) => (r.content[0] as { type: 'text'; text: string }).text
-  // Regression: toolJson must NOT sentinel wall-clock fields. The Rust MCP path
-  // (NamedCheckpointSummary etc.) returned real DateTime<Utc> in tool results;
-  // reusing the differential-harness canonicalize() leaked '<TS>' to MCP agents
-  // (list_checkpoints.created_at, begin_agent_session.started_at).
+  // Regression: toolJson must NOT sentinel wall-clock fields — list_checkpoints
+  // .created_at and begin_agent_session.started_at are real timestamps agents read.
   it('preserves real wall-clock timestamps (does not emit the <TS> sentinel)', () => {
     const out = toolJson([{ id: 'x', label: 'cp', actor: { client: 'mcp', kind: 'Agent' }, created_at: '2026-06-26T07:42:46.605Z' }])
     const parsed = JSON.parse(text(out)) as Array<{ created_at: string }>

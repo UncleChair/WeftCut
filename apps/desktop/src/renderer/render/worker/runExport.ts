@@ -34,8 +34,8 @@ export interface RunExportInit {
   /// Time range to render (microseconds). Defaults to whole project.
   startUs?: number;
   endUs?: number;
-  /// Encoder config. Defaults to 1080p H.264 High@4.2 / 8 Mbps /
-  /// prefer-hardware. ExportPanel can override per preset.
+  /// Encoder config. Absent ⇒ `defaultEncoderConfig`; ExportPanel can override
+  /// per preset.
   encoderConfig?: VideoEncoderConfig;
   /// Output frame rate (rational). Overrides composition fps for the frame
   /// grid + capture cadence. Absent ⇒ composition fps.
@@ -77,10 +77,12 @@ export interface RunExportResult {
   totalFrames: number;
 }
 
-/// Default 1080p H.264 encoder config used when the caller doesn't
-/// supply one. Matches the proxy spec we already have: High profile,
-/// Level 4.2, yuv420p — universally hardware-decodable downstream.
-/// Framerate must follow the composition fps (passed in), not a constant — a fixed value would mis-time non-30fps exports.
+/// Composition-sized H.264 default used when the caller doesn't supply a
+/// config. Matches the proxy spec we already have: High profile, Level 4.2,
+/// yuv420p — universally hardware-decodable downstream.
+/// Framerate must follow the export's output fps (passed in; composition fps
+/// when `outputFps` is absent), not a constant — a fixed value would mis-time
+/// non-30fps exports.
 function defaultEncoderConfig(
   width: number,
   height: number,
@@ -129,7 +131,8 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     const exportPath = resolveDecode(m).exportPath;
     // Native-routed media decode their ORIGINAL via the napi session: they
     // need no export proxy and deliberately skipped the readiness gate's
-    // full-proxy wait (spec decision 8), so the assertion exempts them.
+    // full-proxy wait (`proxyWaitScope` in exportDecodeRouting.ts; ADR 0033),
+    // so the assertion exempts them.
     const nativeRouted = routes[m.id]?.engine === "native";
     if (m.kind === "Video" && referenced.has(m.id) && !exportPath && !nativeRouted) {
       throw new Error(
@@ -300,8 +303,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           const f = m.frame;
           // The one main→renderer copy already happened (structured-clone to a
           // Uint8Array); hand its ArrayBuffer to the Worker zero-copy via
-          // transfer. A view spanning its whole buffer transfers directly; a
-          // partial view is sliced to a fresh, exactly-sized buffer first.
+          // transfer.
           const u8 = f.data;
           const ab = (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
             ? u8.buffer

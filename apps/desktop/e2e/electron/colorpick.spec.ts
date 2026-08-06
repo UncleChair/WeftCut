@@ -1,4 +1,3 @@
-// apps/desktop/e2e/electron/colorpick.spec.ts
 // Chromakey eyedropper closed loop: pick a BLUE canvas → keyR/G/B land as one
 // batched write → ONE undo reverts all three. Blue (not green) because the
 // chroma defaults ARE green — a green pick would assert nothing.
@@ -76,8 +75,7 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
   // Bring the Effect tab forward: the pristine baseline docks it inactive behind
   // Attribute (workspaceLayout.ts contextual group, activeView "attribute"), which
   // leaves effect-colorpick-0 rendered but visibility:hidden. Mirrors
-  // effects-smoke.spec.ts — both used to pass only because a pre-isolation leaked
-  // shared-userData layout had this tab active.
+  // effects-smoke.spec.ts.
   await page.locator('.weft-dock-tab-label', { hasText: 'Effect' }).click()
   const pickBtn = page.getByTestId('effect-colorpick-0')
   await pickBtn.waitFor({ state: 'visible', timeout: 15_000 })

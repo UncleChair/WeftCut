@@ -1,12 +1,13 @@
 //! Sampled envelope contract — docs/audio.md §The envelope contract.
 //!
-//! `sample_gain` composes Animated gain_db (via the golden-locked
-//! `Animated::value_at`) with the layer's linear fade ramps, on a fixed
-//! 10 ms grid, in LINEAR gain (10^(dB/20)). Both renderers linearly
-//! interpolate between the same points: Web Audio `setValueCurveAtTime`
-//! on the TS side, `Envelope::eval` per sample on this side. The TS twin
-//! is `apps/desktop/src/render/audio/envelope.ts`; the shared fixture is
-//! `audioEnvelopeGolden.fixture.json` — keep all three in lockstep.
+//! `sample_gain` composes Animated gain_db (collected once via `eval_kfs` and
+//! evaluated through `weftcut_eval::eval_f64`) with the layer's linear fade
+//! ramps, on a fixed 10 ms grid, in LINEAR gain (10^(dB/20)). Both renderers
+//! linearly interpolate between the same points: Web Audio
+//! `setValueCurveAtTime` on the TS side, `Envelope::eval` per sample on this
+//! side. The TS twin is `apps/desktop/src/renderer/render/audio/envelope.ts`;
+//! the shared fixture is `audioEnvelopeGolden.fixture.json` — keep all three in
+//! lockstep.
 
 use crate::state::animated::Animated;
 
@@ -67,17 +68,14 @@ impl Envelope {
     }
 }
 
-// dB→linear lives in the weftcut-eval leaf (shared with the renderer's audio
-// preview via wasm). Re-exported so `crate::audio::envelope::db_to_linear` and
-// the golden tests keep resolving.
+// dB→linear and the fade ramp live in the weftcut-eval leaf (shared with the
+// renderer's audio preview via wasm). Re-exported so `crate::audio::envelope`
+// callers and the golden tests keep resolving against one source.
 pub use weftcut_eval::db_to_linear;
 
-// Fade ramp lives in the weftcut-eval leaf (shared with the renderer's gain
-// sampler via wasm). Re-exported so `crate::audio::envelope::fade_multiplier`
-// and `sample_gain` keep resolving against one source.
 pub use weftcut_eval::fade_multiplier;
 
-/// Gain envelope for one audio layer: linear(value_at(gain_db)) × fades.
+/// Gain envelope for one audio layer: linear(gain_db at t) × fades.
 /// Static gain + no fades short-circuits to a single point.
 pub fn sample_gain(
     gain_db: &Animated<f64>,

@@ -5,16 +5,11 @@
 // progress arc sweeps every frame; a skipped/static motif scores ~1.0 (identical
 // black frames) while an animating motif scores far lower. We use frame 10
 // (≈0.33 s, numeral 2) vs frame 50 (≈1.67 s, numeral 1).
-//
-// driveExport(hook:"exportMotifClip") fires the hook, polls __e2eExportDone,
-// and returns the settled state.
 
 import { test, expect } from '@playwright/test'
 import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-// analyzeSelf runs `cargo run --bin media_conformance -- --self-ssim ...`
-// and returns { pass, pairs: [{ a, b, ssim, differ }] }.
 import { analyzeSelf } from '../lib/analyze.mjs'
 import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
@@ -55,8 +50,6 @@ test('motif export: countdown animates in output (frames differ across seconds)'
 
     expect(existsSync(OUTPUT), 'output file must exist after export').toBe(true)
 
-    // Self-SSIM: frame 10 ≈ 0.33 s (numeral 2) vs frame 50 ≈ 1.67 s (numeral 1).
-    // A static/skipped motif would score ~1.0; the animated countdown scores far lower.
     const report = analyzeSelf({ output: OUTPUT, samples: [10, 50], ssimMax: 0.99 })
     console.log('[export] motif self-ssim report:', JSON.stringify(report))
 

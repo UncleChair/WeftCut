@@ -1,8 +1,8 @@
 // Maps a WebCodecs codec string (the `codec` field of a VideoEncoderConfig,
 // e.g. "avc1.640028") to the bare mediabunny VideoCodec ("avc") that
 // `EncodedVideoPacketSource` is constructed with. The export encoder emits
-// H.264 today; the others are mapped for completeness + a clear throw on
-// anything we don't support, rather than a confusing failure deep in the mux.
+// H.264, HEVC or AV1 (see `codecString`); an unmapped codec throws clearly
+// here rather than failing deep in the mux.
 
 import type { VideoCodec } from "mediabunny";
 

@@ -88,11 +88,7 @@ describe("tileRangeForWindow", () => {
   });
 });
 
-// `registerWaveformProducer` has a module-level "only the first call ever
-// registers" guard (real production behavior: one producer per engine, and
-// production code only ever builds one `tileEngine`). All tests below that
-// need a registered producer therefore share this single engine + single
-// registration call, keyed apart by distinct mediaIds.
+// Register-once guard: share one engine, key the tests apart by mediaId.
 describe("waveform tile producer (shared engine)", () => {
   const engine = new TileEngine(1024 * 1024);
   registerWaveformProducer(engine);

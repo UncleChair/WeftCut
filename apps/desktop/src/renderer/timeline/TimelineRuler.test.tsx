@@ -106,7 +106,7 @@ describe("<TimelineRuler>", () => {
   });
 
   it("paints a viewport-sized node set for a one-hour 60 fps row", () => {
-    // 216_001 ticks before this ticket; the row is 7.2 M px wide either way.
+    // The row is 7.2 M px wide, so the node set must stay viewport-sized.
     const { container } = render(
       <TimelineRuler
         pxPerSec={2000}
@@ -128,7 +128,7 @@ describe("in/out end caps", () => {
       `[data-testid="timeline-range-cap-${side}"]`,
     );
 
-  /// 2 s row at 2000 px/s, so 1 s of time is exactly 2000 px of row.
+  /// 4 s row at 2000 px/s, so 1 s of time is exactly 2000 px of row.
   const renderRuler = () =>
     renderWholeRow({ pxPerSec: 2000, totalSec: 4, fpsNum: 30, fpsDen: 1 });
 
@@ -180,10 +180,12 @@ describe("in/out end caps", () => {
 });
 
 describe("scroll subscription", () => {
-  /// The acceptance criterion from spec finding 7: the visible interval reaches
-  /// the ruler without `scrollLeft` becoming React state above a leaf. Proven
-  /// with a counter, not by inspection — a parent that re-rendered on scroll
-  /// would be the whole timeline tree in production.
+  /// The acceptance criterion from
+  /// `.scratch/timeline-frame-grid/issues/06-ruler-model-and-virtualization.md`:
+  /// the visible interval reaches the ruler without `scrollLeft` becoming
+  /// React state above a leaf. Proven with a counter, not by inspection — a
+  /// parent that re-rendered on scroll would be the whole timeline tree in
+  /// production.
   function renderWithParentCounter() {
     const counter = { renders: 0 };
     function Parent() {

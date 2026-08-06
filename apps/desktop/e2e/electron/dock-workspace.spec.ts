@@ -247,8 +247,8 @@ test("tabs carry no close chrome, and the Quick Actions grip closes its strip", 
     await expect(page.locator(".dv-default-tab-action")).toHaveCount(0);
 
     // Right-clicking a tab opens nothing at all — neither Dockview's menu nor
-    // one of ours. Checked on a solo tab and on a tab inside a shared group,
-    // the two cases whose menus used to differ.
+    // one of ours. Checked on a solo tab and on a tab inside a shared group —
+    // the solo and grouped tab shapes.
     for (const kind of ["media", "attribute"]) {
       await dockTab(page, kind).click({ button: "right" });
       await expect(page.locator(".dv-context-menu-item")).toHaveCount(0);

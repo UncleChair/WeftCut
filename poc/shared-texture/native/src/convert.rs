@@ -9,18 +9,9 @@
 //! lives, and hand Chromium an already-BGRA texture (matrix:'rgb', range:'full')
 //! so the WebGPU path has no YUV→RGB to mishandle.
 //!
-//! This module owns the GPU conversion via [`convert_nv12_to_bgra_shader`]: a
-//! custom HLSL pixel shader applies the limited-range YUV→RGB matrix EXACTLY (no
-//! primaries/gamut remap), so its output matches `drawImage`'s naive matrix-only
-//! behavior. It creates two SRVs over the SAME NV12 texture (Y as R8_UNORM plane
-//! 0, UV as R8G8_UNORM plane 1 — D3D11 binds individual NV12 planes as typed
-//! views) and renders a full-screen triangle into a BGRA render target.
-//!
-//! The task allowed a cheaper-first `VideoProcessorBlt` path (approach A), but
-//! warned it may apply a 601→display primaries remap landing near the broken
-//! [58,217,38]. The shader (approach B) passed with ZERO error vs the `drawImage`
-//! reference on the first run (Result 6), so VideoProcessor was not needed and is
-//! not implemented here.
+//! The conversion itself is [`convert_nv12_to_bgra_shader`], a custom HLSL pixel
+//! shader. Do NOT swap in `VideoProcessorBlt`: it may apply a 601→display
+//! primaries remap and reintroduce the mis-color.
 
 use windows::core::{Interface, PCSTR, PCWSTR};
 use windows::Win32::Foundation::HANDLE;
@@ -76,7 +67,7 @@ SamplerState      samp  : register(s0);
 struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
 VSOut vs_main(uint vid : SV_VertexID) {
-    // Full-screen triangle: clip-space (-1,-3),(-1,1),(3,1); UVs (0,2),(0,0),(2,0).
+    // Full-screen triangle (no vertex buffer).
     float2 clip[3] = { float2(-1.0, -3.0), float2(-1.0, 1.0), float2(3.0, 1.0) };
     float2 uvs[3]  = { float2(0.0, 2.0),  float2(0.0, 0.0),  float2(2.0, 0.0)  };
     VSOut o;
@@ -204,18 +195,16 @@ fn make_shared_bgra(
     }
 }
 
-/// Approach B — custom pixel shader. Convert the decoded NV12 surface (`src_tex`
-/// subresource `src_index`) to BGRA on `device`/`context` using the BT.601
-/// limited-range matrix, into a fresh shared BGRA texture. The destination write
-/// is bracketed by the destination's keyed mutex (our render vs. Chromium's
-/// later read); the source read is bracketed by ffmpeg's device-context lock
-/// (decode thread vs. our render) if provided.
+/// Convert the decoded NV12 surface `src_nv12` to BGRA on `device`/`context`
+/// using the limited-range matrix selected by `matrix`, into a fresh shared BGRA
+/// texture. The destination write is bracketed by the destination's keyed mutex
+/// (our render vs. Chromium's later read).
 ///
 /// IMPORTANT: SRVs over an NV12 texture require the texture to carry
 /// `D3D11_BIND_SHADER_RESOURCE`. ffmpeg's decoder textures are `BIND_DECODER`
 /// only and array-typed, so we cannot SRV them directly — the caller must first
 /// `CopySubresourceRegion` the decoded slice into a non-array NV12 texture that
-/// has `BIND_SHADER_RESOURCE`. `src_tex` here is that copy (subresource 0).
+/// has `BIND_SHADER_RESOURCE`. `src_nv12` is that copy.
 #[allow(clippy::too_many_arguments)]
 pub fn convert_nv12_to_bgra_shader(
     device: &ID3D11Device,
@@ -226,7 +215,8 @@ pub fn convert_nv12_to_bgra_shader(
     matrix: YuvMatrix,
 ) -> Result<BgraResult, String> {
     unsafe {
-        // Two SRVs over the one NV12 texture: Y plane as R8, UV plane as R8G8.
+        // Two SRVs over the one NV12 texture: Y plane as R8, UV plane as R8G8 —
+        // D3D11 exposes each NV12 plane as its own typed view.
         let mut srv_y: Option<ID3D11ShaderResourceView> = None;
         let mut srv_uv: Option<ID3D11ShaderResourceView> = None;
         let y_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {

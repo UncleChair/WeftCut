@@ -117,9 +117,8 @@ describe("NearbyPanel", () => {
     expect(onPick).toHaveBeenCalledWith("layer-1", "track-1");
   });
 
-  // Shared naming with the timeline block and the inspector. The old local chain
-  // ended at the track name, so an unnamed Layer rendered "B-roll / B-roll" —
-  // the row said nothing about the Layer it stood for.
+  // Shared naming with the timeline block and the inspector: a row must name
+  // the Layer it stands for, never fall back to its track's name.
   it("names an unnamed layer by its kind, not by its track", () => {
     const track = nearbyTrack();
     (track.layers[0] as { label: string | null }).label = null;

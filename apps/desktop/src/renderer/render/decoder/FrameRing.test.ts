@@ -3,12 +3,7 @@
 // was 0 at push time (WebCodecs lets implementations leave
 // `VideoFrame.duration` null on output, and the producer side passes
 // `frame.duration ?? 0` into the ring along with the snapshotted
-// `ImageBitmap`). An earlier version of these methods used
-// `duration || POSITIVE_INFINITY` as the predicate upper-bound, which
-// made the binary search return whichever mid happened to satisfy
-// `pts <= t` first instead of the latest such entry. With ~33 frames
-// in the ring, asking for frame 9 deterministically returned frame 7
-// — the "stuck on frame N" symptom the user saw in preview.
+// `ImageBitmap`).
 
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -299,11 +294,8 @@ describe("strandedAheadOf", () => {
   });
 });
 
-// The ring's retention policy is a TIME window, so it spends wildly different
-// amounts of GPU memory per source: an ImageBitmap is ~8 MB at 1080p and ~33 MB
-// at 4K. Measured, one 4K clip pinned ~1.9 GB and two asked for ~4 GB, at which
-// point three of four decoders stopped producing usable frames. These lock the
-// byte arm that bounds it — and the floors that stop it degrading into thrash.
+// These lock the byte arm that bounds ring memory — and the floors that keep it
+// from degrading into thrash. Why the budget exists: frameRingBudget.ts.
 /// Mirrors the module's private floors. Not exported from `FrameRing` because
 /// they are policy the tests below assert, not configuration a caller sets.
 const MIN_LOOKAHEAD_FRAMES = 10;
@@ -376,12 +368,13 @@ describe("FrameRing byte budget", () => {
   });
 
   it("never pauses below the lookahead floor, even far over budget", () => {
-    // Four rings divide the budget, so each gets 128 MB — under four 4K frames.
+    // Four rings divide the 1 GiB budget, so each gets 256 MiB — about eight 4K
+    // frames.
     const rings = [new FrameRing(), new FrameRing(), new FrameRing(), new FrameRing()];
     expect(liveFrameRingCount()).toBe(4);
     const ring = rings[0]!;
     push4k(ring, MIN_LOOKAHEAD_FRAMES - 1);
-    // Way over its 128 MB share, but starving the pump here would break the
+    // Way over its 256 MiB share, but starving the pump here would break the
     // warm-up gate, which needs ~150 ms of ring before it releases the clock.
     expect(ring.retainedBytes).toBeGreaterThan(frameRingByteBudget());
     expect(ring.isLookaheadFull()).toBe(false);
@@ -422,10 +415,8 @@ describe("FrameRing byte budget", () => {
   });
 
   it("does NOT trim lookbehind on byte pressure — only its time window evicts", () => {
-    // Measured regression guard: an earlier version trimmed lookbehind to
-    // reclaim the ~0.5 GB a 4K one holds, and the frames it dropped were
-    // immediately re-requested — decode throughput rose 40 % and drops went
-    // 7.2 % → 55.5 %, because a re-seek on a long GOP re-decodes its prefix.
+    // Guards the lookbehind LANDMINE in FrameRing.ts, which owns the measured
+    // reason byte pressure must never trim lookbehind.
     const rings = [new FrameRing(), new FrameRing(), new FrameRing(), new FrameRing()];
     const ring = rings[0]!;
     push4k(ring, 30); // 1 s of 4K ≈ 995 MB against a 256 MiB share
@@ -447,8 +438,9 @@ describe("FrameRing byte budget", () => {
       const ptsUs = Math.round((i * 1_000_000) / 30);
       ring.push(make1080p(), ptsUs, 33_333);
     }
-    // 47 × 8.3 MB = 390 MB, comfortably inside the 512 MiB budget, so the byte
-    // arm never fires and eviction is still driven purely by the time window.
+    // 47 × 8.3 MB = 390 MB, comfortably inside this sole ring's 1 GiB share, so
+    // the byte arm never fires and eviction is still driven purely by the time
+    // window.
     // (`isLookaheadFull` is true here on the TIME arm — 47 frames at 30 fps
     // spans 1.53 s past a 1 s lookahead — which is pre-existing behaviour.)
     expect(ring.retainedBytes).toBe(47 * BYTES_1080P);

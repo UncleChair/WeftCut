@@ -13,14 +13,10 @@ import { launchApp, newProject, tmpDir } from './helpers/driver'
 //     #0a0a0a caption, so an unfocused window looked like it had no buttons.
 //     `color-scheme: dark` cannot fix this: it governs only what Chromium paints.
 //
-//  2. Inset timing on leaving fullscreen. Chromium restores the traffic-light
-//     area at the START of the exit animation; Electron's 'leave-full-screen'
-//     event lands only once it has FINISHED (~500ms later, measured on 42.4.1).
-//     Driving the inset off that event left the title sitting on top of the
-//     reappearing buttons for the whole animation. The fix is to read
-//     env(titlebar-area-x), which `titleBarOverlay: true` publishes — so the
-//     guard below asserts the inset is already back at the moment the overlay
-//     returns, NOT merely once fullscreen has fully exited.
+//  2. Inset timing on leaving fullscreen. The inset must be driven by
+//     env(titlebar-area-x), which `titleBarOverlay: true` publishes — never by
+//     Electron's 'leave-full-screen' event; see the regression guard below for
+//     why that event is too late.
 
 const isDarwin = process.platform === 'darwin'
 
@@ -124,10 +120,12 @@ test.describe('macOS traffic-light inset @serial', () => {
     await setFullScreen(app, false)
     await page.waitForFunction(() => window.__insetWhenOverlayReturned != null)
 
-    // THE regression guard. This value is read the instant the buttons come back
-    // — before 'leave-full-screen' fires. An IPC-driven inset would still be
-    // reporting the fullscreen value (0) here, which is exactly the frame where
-    // the title used to overlap the buttons.
+    // THE regression guard. Chromium restores the traffic-light area at the
+    // START of the exit animation while 'leave-full-screen' fires only once it
+    // has FINISHED, so this value is read the instant the buttons come back —
+    // before that event. An IPC-driven inset would still be reporting the
+    // fullscreen value (0) here, which is exactly the frame where the title
+    // overlaps the buttons.
     const insetOnReturn = await page.evaluate(() => window.__insetWhenOverlayReturned)
     expect(insetOnReturn).toBeGreaterThan(60)
 

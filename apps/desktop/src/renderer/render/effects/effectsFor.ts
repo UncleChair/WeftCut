@@ -2,10 +2,6 @@
 // single frame. A thin adapter so Compositor does not need to call
 // EffectChain.sync directly, and so this logic is unit-testable without
 // pulling in the full Compositor import graph.
-//
-// Preview LOD gating lives here: pass opts.previewEffectsEnabled=false to
-// skip all filters (scrub perf). Future resolution-based tiers can also go
-// here before delegating to chain.sync.
 
 import type { Filter } from "pixi.js";
 import type { LayerSummary } from "../../ipc";
@@ -14,8 +10,8 @@ import type { EffectChain } from "./EffectChain";
 /** Resolve a layer's effect chain to the ordered Pixi filters for this frame.
  *
  * Pass `opts.previewEffectsEnabled = false` to skip all filters during
- * scrub/preview (LOD gate). The export worker calls chain.sync directly
- * and is always full-quality — this opt never reaches that path.
+ * scrub/preview (LOD gate). Compositor pins it true in export mode, so the
+ * gate is inert on the export path — export is always full-quality.
  */
 export function effectsFor(
   chain: EffectChain,

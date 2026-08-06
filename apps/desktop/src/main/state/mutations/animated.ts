@@ -1,7 +1,7 @@
 import type { Animated, Keyframe, LayerParams, Rgba } from '../model'
 
 /** Mirror native/src/state/layer.rs:for_each_animated_f64 — every Animated<f64>
- *  track stored on the params (opacity + the 5 transform tracks for visual kinds;
+ *  track stored on the params (opacity + the 7 transform tracks for visual kinds;
  *  gain_db + pan for Audio). Operates on params ONLY (effects are not traversed by
  *  the Rust split/trim path). */
 export function forEachAnimatedF64(p: LayerParams, fn: (a: Animated<number>) => void): void {

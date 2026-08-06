@@ -30,8 +30,7 @@ export function setLayerBakeStatuses(next: Record<string, LayerBakeStatus>): voi
   useMotifBakeStatusStore.getState().replace(next);
 }
 
-// Pure lookups (unit-tested); the hooks wrap them so the dot's selector returns
-// a primitive (phase string) and doesn't re-render on `done` ticks.
+// Pure lookups (unit-tested); wrapped by the hooks below.
 export const selectLayerBakePhase = (
   byLayer: Record<string, LayerBakeStatus>,
   layerId: string,

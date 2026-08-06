@@ -2,12 +2,12 @@
 //! that moves, trims, and splits together.
 //!
 //! Design: `docs/features.md#groups`. Membership is flat (a layer is in at most
-//! one group). The actor enforces invariants on every commit; fan-out for
-//! structural ops lives in `state::actor` and consults the derived
-//! `LayerId → GroupId` index built by `index_groups`.
+//! one group). This module owns the wire shape plus the derived-index helper;
+//! the TS writer owns enforcement (`src/main/state/validate.ts`) and structural
+//! fan-out (`src/main/state/mutations/groups.ts`).
 //!
-//! Groups carry only identity, an optional label, and flat membership
-//! (a layer is in at most one group). They have no rendering significance.
+//! Groups carry only identity, an optional label, and membership. They have no
+//! rendering significance.
 
 #![allow(dead_code)]
 
@@ -46,9 +46,10 @@ impl Group {
     }
 }
 
-/// Build the derived `LayerId → GroupId` lookup. The actor rebuilds this
-/// on every commit that mutates `Project.groups` or `Project.tracks`;
-/// readers use it for O(1) "what group is this in" queries.
+/// Build the derived `LayerId → GroupId` lookup — O(1) "what group is this in"
+/// queries. Derived, never stored: recompute it from `Project.groups` after any
+/// mutation. The TS writer fans structural ops out through its own
+/// `indexGroups` (`src/main/state/mutations/groups.ts`).
 pub fn index_groups(groups: &imbl::Vector<Group>) -> HashMap<LayerId, GroupId> {
     let mut idx = HashMap::new();
     for g in groups.iter() {

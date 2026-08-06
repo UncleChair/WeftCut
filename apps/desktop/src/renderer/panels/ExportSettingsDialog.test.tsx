@@ -180,8 +180,6 @@ describe("export dialog accessibility", () => {
 });
 
 describe("export dialog rate control", () => {
-  // The complaint this group exists to answer: under a quality preset the
-  // bitrate used to be derived and invisible, so CBR had no settable rate.
   it("shows the preset-derived target bitrate without picking Custom", async () => {
     const user = userEvent.setup();
     await renderDialog(user);
@@ -217,8 +215,7 @@ describe("export dialog rate control", () => {
     const user = userEvent.setup();
     await renderDialog(user);
 
-    // Default VBR: the peak field exists but is empty — uncapped ABR, which is
-    // what every project exported before this control shipped.
+    // Default VBR: the peak field exists but is empty — uncapped ABR.
     expect(screen.getByLabelText("Maximum bitrate")).toHaveProperty("value", "");
     expect(screen.getByText(/Peak uncapped/)).toBeTruthy();
     // Nothing to average over yet, so no buffer row.

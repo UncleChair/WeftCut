@@ -68,9 +68,9 @@ const STARTUP_TASKS: readonly StartupTask[] = [
 
 /**
  * Resolve after every renderer startup task has either completed or reported
- * an error. Individual failures are non-fatal, matching the previous startup
- * behaviour: the UI is surfaced so it can explain a degraded subsystem rather
- * than leaving the user behind a permanent splash screen.
+ * an error. Individual failures are non-fatal: the UI is surfaced so it can
+ * explain a degraded subsystem rather than leaving the user behind a permanent
+ * splash screen.
  */
 export function startRendererInitialization(): RendererInitialization {
   const pending = new Set(STARTUP_TASKS.map((task) => task.id));

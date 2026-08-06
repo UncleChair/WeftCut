@@ -9,101 +9,31 @@
 // STAGE is the wall and at what track count the wall is hit. The per-stage
 // numbers come from `render/perf/stageTimers.ts`, which brackets the two costs
 // `compositeMsLast` structurally cannot see (`setAnchorTime` and the Pixi
-// present) plus the per-layer sub-stages inside the composite.
+// present) plus the per-layer sub-stages inside the composite. The "Frame fate"
+// table reports the other half — where each decoded frame WENT — from
+// `FrameRing`'s `fate` (see `FrameRingFate`).
 //
-// The "Frame fate" table answers the other half — not how long a stage took but
-// where each decoded frame WENT. It exists because `decode fps/clip` is a
-// `decodedFrameCount` diff and both engines bump that counter before calling
-// `FrameRing.push`, so a clip that decodes at full rate into a ring that discards
-// every frame is indistinguishable from a healthy one by throughput alone. The
-// counters come from `FrameRing`'s `fate` (see `FrameRingFate`).
+// Two crossed axes, both PINNED per cell and VERIFIED per layer via
+// `activeClipProbe` before and after the measured window rather than trusted: a
+// cell whose clips drifted off either pin reports the run invalid, so a
+// downgraded lane can never be published under the label it drifted from.
+//   route   — the three decode paths (`ROUTE_SPEC` below), all measured on ONE
+//             fixture so a route comparison is never codec-confounded.
+//   barrier — `--barrier`, pinned by WEFTCUT_HW_BARRIER and meaningful on the
+//             hardware route ONLY. What each mode waits on, and which one the
+//             product ships: `HwBarrierMode` in `src/shared/ipc.ts`.
 //
-// The three decode paths are pinned on ONE fixture, so a route comparison is
-// never codec-confounded:
-//   ffmpeg hardware — decode_engine=ffmpeg + WEFTCUT_FORCE_HW_LANE=d3d11va
-//   ffmpeg software — decode_engine=ffmpeg + WEFTCUT_FORCE_HW_LANE=nvdec
-//                     (Windows never advertises nvdec, so main's advertised-lane
-//                     filter empties and `resolveHwLane` reports unavailable
-//                     BEFORE probing and before any cache write — a clean
-//                     software resolve that neither costs a probe nor poisons
-//                     `decode_capability.json`)
-//   webcodecs       — decode_engine=webcodecs
-// Every cell VERIFIES the pin per layer via `activeClipProbe` before and after
-// the measured window and reports the run invalid on drift, so a silently
-// downgraded lane can never be published under a hardware label.
-//
-// Crossed with those routes is the read-barrier axis — `--barrier`, pinned by
-// WEFTCUT_HW_BARRIER, and meaningful on the hardware route ONLY, since it
-// selects what is waited on between snapshotting a shared texture and acking the
-// slot back to the native pool (see `HwBarrierMode` in `src/shared/ipc.ts` for
-// the mechanism):
-//   rendererFence — the shipped default: the preload runs no barrier and hands
-//              the ack obligation to the renderer with the bitmap; the renderer
-//              takes the completion signal on Pixi's WebGPU device and acks back
-//              over the same port. Both fence variants defer the ack; what
-//              separates them is that WebGPU's signal is a promise, so waiting
-//              costs nothing, while WebGL2's has to be spun for. Compare them
-//              inside ONE sitting — that is what this axis is for.
-//   fence    — the same deferral on a PRIVATE offscreen 1×1 WebGL2 context in
-//              the preload. Still a hard completion signal and still off the
-//              critical path, but on an idle GPU that fence does not signal on
-//              its own at any bound: its deadline fallback is a flush-and-poll
-//              SPIN (WebGL2 cannot express a blocking wait — Chromium reports
-//              `MAX_CLIENT_WAIT_TIMEOUT_WEBGL` as 0) and the spin is what
-//              completes it. `spin thread-s/s` is where that shows up.
-//              `rendererFence` reports 0 there because it has nothing to poll —
-//              read its `fence forced waits` instead, which is saturated by
-//              design at low track counts (see `DEADLINE_MS` in
-//              renderer/render/decoder/transports/slotFenceQueue.ts).
-//   readback — the barrier the fences replaced: correct, shipped for years, and
-//              now the control every other variant is read against
-//   gpuflush — a GPU-side drain with no CPU readback. INCORRECT on the same
-//              ground as `none`: submitting the copy is not what the ack waits
-//              for, COMPLETION is, so it reorders too. Kept only to re-run that
-//              comparison, never as a candidate.
-//   none     — no barrier at all. KNOWINGLY INCORRECT — the lane presents
-//              frames out of order — and here only to price the ceiling: what
-//              the loop would cost if the wait were free. A `none` number
-//              therefore BOUNDS a possible win; it never reports one, because
-//              no shippable lane can run that way.
-// `barrier p50` is NOT one quantity across variants, and two of them must never
-// be differenced: under `readback` it is the whole wait, under `fence` only the
-// submit that still blocks (~0.1 ms) — the rest of the wait moved off the
-// critical path and is reported apart from it. A `fence` row is therefore not a
-// like-for-like reduction of a `readback` row; it is a different cost. What
-// decides whether that cost was MOVED or merely renamed is the deadline
-// fallback, and nothing in `barrier p50` will say it: a forced wait costs
-// roughly what the old barrier cost in DURATION and burns CPU spinning for it.
-// Occasional is fine; ROUTINE is strictly worse than the `readback` it replaces
-// — the same stall, now paid for twice. Two columns price it: `fence forced
-// waits` is how often, `spin thread-s/s` is how much thread time, and only the
-// second separates 200 harmless spins from 200 ruinous ones. `spin thread-s/s`
-// is also already INSIDE `barrier thread-s/s`, so the total stays the one
-// number an acceptance criterion can be written against.
-// The pin is verified per clip, not trusted, exactly as the route pin is: a
-// variant that cannot get the GL context it needs falls back to `readback`, by
-// design and without a word, so each cell compares the mode its clips actually
-// ran (`barrierModeObserved`) against the one its label claims and invalidates
-// itself on a mismatch. A cell that reached the tables therefore ran the
-// variant it is named after, or ran with the env unset and the product default.
-// It is a leg axis rather than something flipped between invocations because
-// absolute numbers on this box drift 15–25% across sittings — wider than the
-// effect being measured — so only variants run back to back inside one sitting
-// compare. With `--barrier` absent the variable is left unset: main resolves
-// unset to `fence` anyway, but the leg then measures the untouched path rather
-// than one that took the env branch.
-//
-// Requirements 3 of the experiment brief are enforced, not assumed: the
-// composition is created at the fixture's own resolution, `playback_resolution`
-// is pinned `full` (½/¼ would shrink both the raster target AND the shipped
-// NV12), `prefer_proxies` is set false explicitly, a per-media proxy override
-// forces Original, and each clip's `builtFromKey` is asserted to carry
-// `:original:` rather than `:proxy:`.
+// Every cell measures the ORIGINAL at full size, and pins that rather than
+// assuming it: the composition is created at the fixture's own resolution,
+// `playback_resolution` is pinned `full` (½/¼ would shrink both the raster
+// target AND the shipped NV12), `prefer_proxies` is set false explicitly, a
+// per-media proxy override forces Original, and each clip's `builtFromKey` is
+// asserted to carry `:original:` rather than `:proxy:`.
 //
 // Run:
 //   1. npm run napi:build && npm run napi:build:decode   (close the dev app — it locks the .node)
 //   2. npm run build:e2e                                 (the __weftcutTest hook)
-//   3. npm run bench:playback:fixtures                   (from e2e/, generates the matrix)
+//   3. npm run bench:decode:fixtures                     (from e2e/, generates the fixtures)
 //   4. npm run bench:playback                            (from e2e/)
 //
 // Run on a QUIET machine: the typeperf GPU-engine counters are machine-wide.
@@ -147,9 +77,12 @@ const CODECS = arg("codec", "h264").split(",");
 const RESOLUTIONS = arg("resolution", "1080,2160").split(",");
 const ROUTES = arg("route", "hw,sw,webcodecs").split(",");
 /// `null` — the single element when the flag is absent — means "launch with
-/// WEFTCUT_HW_BARRIER unset", which is not the same leg as an explicit `fence`
-/// even though both resolve to it: this is the path the app takes with nobody
-/// experimenting on it.
+/// WEFTCUT_HW_BARRIER unset", which is not the same leg as an explicit
+/// `rendererFence` even though both resolve to it: this is the path the app
+/// takes with nobody experimenting on it. A leg axis rather than something
+/// flipped between invocations because absolute numbers on this box drift
+/// 15–25% across sittings — wider than the effect being measured — so only
+/// variants run back to back inside one sitting compare.
 const BARRIER_FLAG = arg("barrier", "");
 const BARRIERS = BARRIER_FLAG ? BARRIER_FLAG.split(",") : [null];
 const MAX_TRACKS = Number(arg("max-tracks", "8"));
@@ -188,6 +121,10 @@ const ROUTE_SPEC = {
     sourceKind: "native-gpu",
     keyPrefix: "ffmpeg:original:",
   },
+  // Windows never advertises nvdec, so main's advertised-lane filter empties and
+  // `resolveHwLane` reports unavailable BEFORE probing and before any cache
+  // write — a clean software resolve that neither costs a probe nor poisons
+  // `decode_capability.json`.
   sw: {
     label: "ffmpeg-sw",
     setting: "ffmpeg",
@@ -1350,12 +1287,11 @@ function printTables(report) {
     }
   }
 
-  // Collected since the matrix was built, but never printed until now — which
-  // made ticket 07's step 4 ("watch for a silent internal downgrade") unanswerable
-  // from a report. `decoderFallback.ts` reconfigures with `prefer-software` on a
-  // zero-output first-frame error and only `console.error`s; no state anywhere
-  // else records it, so these lines are the ONLY trace that a cell labelled
-  // hardware silently finished on software.
+  // `decoderFallback.ts` downgrades to `prefer-software` on a zero-output
+  // first-frame error without logging it, and the caller only `console.error`s
+  // the underlying decoder error; no state anywhere else records the downgrade,
+  // so these lines are the ONLY trace that a cell labelled hardware silently
+  // finished on software.
   const withLines = report.legs.flatMap((leg) =>
     leg.cells
       .filter((c) => c.kind === "ok" && (c.consoleErrors?.length ?? 0) > 0)

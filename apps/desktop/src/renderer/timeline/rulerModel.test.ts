@@ -19,7 +19,7 @@ import {
   type RulerTick,
 } from "./rulerModel";
 
-/// The spec's rate matrix — four broadcast fractional rates and their integer
+/// The spec's rate matrix — the broadcast fractional rates and their integer
 /// twins.
 const RATES: [number, number][] = [
   [24_000, 1001],

@@ -21,9 +21,8 @@ export interface WireProject {
   transitions: WireTransition[]
 }
 
-/** Fresh blank project + actor with seeded ids (#1 A-roll, #2 B-roll, #3 project),
- *  matching the deleted replay_driver setup. Clock is constant so timestamps never
- *  perturb canonical comparison. */
+/** Fresh blank project + actor with seeded ids (#1 A-roll, #2 B-roll, #3 project).
+ *  Clock is constant so timestamps never perturb canonical comparison. */
 export function freshActor() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'replay')

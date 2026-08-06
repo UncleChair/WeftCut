@@ -10,23 +10,15 @@
 //! [`FunAsrParser`](crate::speech::parse::funasr_json::FunAsrParser) to normalize
 //! (per-token = per-character exact word timing).
 //!
-//! ## sherpa-onnx-offline invocation (assumed; not runnable in CI)
-//!
-//! `sherpa-onnx-offline --paraformer=<model.onnx> --tokens=<tokens.txt>
-//! [--num-threads=<n>] <wav>`. Flag spellings follow sherpa-onnx conventions:
-//! `--paraformer=` selects the Paraformer model file, `--tokens=` the required
-//! token table beside it, `--num-threads=` the CPU thread count — all in
-//! sherpa's `--flag=value` form, with the WAV as a trailing positional. This arg
-//! logic is unit-tested ([`build_args`]) because an end-to-end run against a real
-//! binary is a manual check. Punctuation / VAD are separate sherpa models — not
-//! wired in v1 (tokens + Paraformer only).
+//! The `sherpa-onnx-offline` CLI contract (flag spellings, `--flag=value` form,
+//! WAV as trailing positional) is owned and unit-tested at [`build_args`] — an
+//! end-to-end run against a real binary is a manual check, never CI.
+//! Punctuation / VAD are separate sherpa models, not wired in v1 (tokens +
+//! Paraformer only).
 //!
 //! Model/tokens provisioning (bundle vs download vs user-path) is out of scope —
 //! v1 is a user-provided binary + model + tokens path from the Settings UI
-//! config. `device` is accepted and reserved for a future GPU-selection
-//! flag but intentionally NOT mapped: sherpa's provider selection is a
-//! build/provider concern, not a portable CLI flag, and inventing one here would
-//! be a hazard on a path that can't run in CI (same stance as whisper.cpp).
+//! config.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -48,8 +40,11 @@ pub struct FunAsr {
     model: PathBuf,
     tokens: PathBuf,
     threads: Option<u32>,
-    /// Accepted from config, reserved for a future device-selection flag; NOT
-    /// mapped to a CLI arg in v1 (see module docs).
+    /// Accepted from config and reserved for a future device-selection flag. It
+    /// is intentionally NOT mapped to a CLI arg in v1: sherpa's provider
+    /// selection is a build/provider concern, not a portable CLI flag, and
+    /// inventing an unverified one here would be a hazard since this path can't
+    /// run in CI (same stance as whisper.cpp).
     #[allow(dead_code)]
     device: Option<String>,
 }

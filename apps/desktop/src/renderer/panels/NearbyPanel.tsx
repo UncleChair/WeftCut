@@ -1,10 +1,8 @@
-// A/B-roll context panel. This module owns the full "near playhead" feature:
-// mode gating, window calculation, filtering, grouping, row presentation, and
-// the two navigation gestures. A plain pick selects + reveals the layer WITHOUT
-// moving the playhead (the near-playhead observation window stays put); an
-// explicit Go To seeks + scrolls. Double-click renames via the recorded Layer
-// label command. Outside A/B Roll (or with an empty window) the panel explains
-// itself rather than leaving an unexplained blank area.
+// A/B-roll context panel. Owns mode gating, row presentation, and the two
+// navigation gestures (pick vs Go To — see the props below); double-click
+// renames via the recorded Layer label command. Windowing, filtering and
+// grouping live in `peek.ts`. Outside A/B Roll (or with an empty window) the
+// panel renders an explainer instead of rows.
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -162,8 +160,6 @@ export function NearbyPanel({
   );
 }
 
-/// Self-explaining empty state — keeps the Nearby dock Panel from ever
-/// rendering as an unexplained blank area.
 function Explainer({ title, message }: { title: string; message: string }) {
   const { t } = useTranslation();
   return (
@@ -208,8 +204,7 @@ function PeekRow({
       ? item.layer.params.media_id
       : null;
   // Shared with the timeline block and the inspector — the row must call a Layer
-  // what its clip is called. The old local chain ended at `trackLabel`, which
-  // echoed the sublabel below ("Visual / Visual") instead of naming the Layer.
+  // what its clip is called.
   const primaryLabel = layerDisplayName(item.layer, t);
 
   // Inline rename. Enter commits, Escape cancels, click-away commits — all

@@ -40,9 +40,8 @@ export class ColorSprite implements StageableSprite {
     const sig = `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|${view.width}x${view.height}`;
     if (sig === this.appliedSig) return;
     this.appliedSig = sig;
-    // Pixi v8 Color accepts `{r,g,b,a}` with components in 0–255 by
-    // default. The schema's Rgba uses 0–255 for all four channels,
-    // so we pass through.
+    // The schema's Rgba is 0–255 on all four channels; the fill takes RGB
+    // packed as 0xRRGGBB with alpha normalized to 0–1.
     const fillColor = (view.color.r << 16) | (view.color.g << 8) | view.color.b;
     const fillAlpha = view.color.a / 255;
     this.graphics.clear();

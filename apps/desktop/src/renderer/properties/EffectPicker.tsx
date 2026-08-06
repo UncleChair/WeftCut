@@ -1,7 +1,5 @@
 // Add-effect picker: one trigger button opening a searchable, category-grouped
-// popup over the effect catalog. Replaces the old select + Add button pair,
-// which had no search and no hierarchy — fine at two entries, unusable at
-// twenty.
+// popup over the effect catalog.
 //
 // The popup is PORTALED (Base UI Popover.Portal): the Effect panel renders
 // inside `.weft-dock-panel-scroll` (overflow: auto), so an in-flow dropdown

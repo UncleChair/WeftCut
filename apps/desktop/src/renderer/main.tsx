@@ -62,9 +62,7 @@ if (!import.meta.env.DEV) {
   });
 }
 
-// The Pixi compositor is the only preview surface.
-
-/// Top-level router per workspace-redesign Q7. The app boots into the
+/// Top-level router. The app boots into the
 /// StartupScreen by default; once the user picks Create / Open / Recent
 /// (or the "Reopen last project on launch" auto-open fires), we flip to
 /// the editor. Reverse transition (back to startup) isn't supported yet —
@@ -208,8 +206,8 @@ function Root() {
 
   // Flash-free startup: the Electron main window is created hidden (the main
   // process withholds show until the renderer signals ready) and revealed on
-  // the splash's first painted frame. Initialization now runs behind that
-  // visible animation instead of delaying the renderer mount.
+  // the splash's first painted frame. Initialization runs behind that
+  // visible animation.
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       void getCurrentWindow().show();

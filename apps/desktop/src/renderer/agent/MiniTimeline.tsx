@@ -5,9 +5,8 @@ import type { MarkerSummary } from "../ipc";
 import { usePlayheadTimeUs } from "../state/playheadStore";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
-/// row + project marker pips + timecode readout. No track lanes —
-/// per Q5 the human is supposed to be watching the preview, not
-/// editing.
+/// row + project marker pips + timecode readout. No track lanes — the
+/// human is supposed to be watching the preview, not editing.
 ///
 /// Layout inside the 80-px-tall pane allocated by `.agent-mini-timeline`:
 ///   row 1 — tick marks (scale-adaptive)         ~14 px
@@ -28,8 +27,7 @@ function pickTickIntervalUs(durationUs: number, widthPx: number): number {
   if (durationUs <= 0 || widthPx <= 0) return 1_000_000;
   const SEC = 1_000_000;
   const MIN = 60 * SEC;
-  // Candidate intervals oldest → largest. Stop at the first that
-  // produces ≥ 60 px between consecutive ticks at the current width.
+  // Candidate intervals, smallest → largest.
   const candidates: number[] = [
     SEC,
     2 * SEC,
@@ -124,10 +122,6 @@ export function MiniTimeline({
     [seekFromClientX],
   );
 
-  // Compute the tick set + playhead position from the latest known
-  // strip width. The render below resolves to a flat list of
-  // absolute-positioned divs — simpler than SVG and good enough at
-  // this size.
   const width = stripWidth;
   const safeDuration = Math.max(durationUs, 1);
   const tickInterval = pickTickIntervalUs(safeDuration, width);

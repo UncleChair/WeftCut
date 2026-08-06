@@ -9,18 +9,17 @@
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { serializeProject, parseProject, type GridRepair, type ParseProjectOptions } from './serialize'
 
-/** io/mod.rs:19 — the on-disk project file name inside a workspace folder. */
+/** The on-disk project file name inside a workspace folder. */
 export const PROJECT_FILE = 'project.json'
 
-/** serde_json::to_string_pretty (2-space indent, NO trailing newline;
- *  fs::write writes the string verbatim). Round-trip fidelity, not
- *  byte-identical key order vs Rust, is the contract. */
+/** 2-space-indented JSON, NO trailing newline. Round-trip fidelity, not
+ *  byte-identical key order, is the contract. */
 export function serializeProjectToJson(p: Project): string {
   return JSON.stringify(serializeProject(p), null, 2)
 }
 
-/** io/migrate.rs:20 run — the schema-version gate. Equal → ok; below → re-create
- *  in a fresh workspace; above → update the app. Pre-release: no migration path. */
+/** The schema-version gate. Equal → ok; below → re-create in a fresh workspace;
+ *  above → update the app. Pre-release: no migration path. */
 export function schemaGate(project: unknown): void {
   const v = (project as { schema_version?: unknown })?.schema_version
   if (v === SCHEMA_VERSION) return
@@ -37,7 +36,7 @@ export function schemaGate(project: unknown): void {
   throw new Error(`project schema version is missing or non-numeric (expected ${SCHEMA_VERSION})`)
 }
 
-/** io/mod.rs:57 — deserialize project.json text → Project, gated on schema version.
+/** Deserialize project.json text → Project, gated on schema version.
  *  JSON.parse throws on malformed text; schemaGate runs BEFORE the structural cast
  *  so the rich version-specific guidance wins over parseProject's generic check. */
 export function parseProjectJson(text: string, opts: ParseProjectOptions = {}): Project {
@@ -46,12 +45,12 @@ export function parseProjectJson(text: string, opts: ParseProjectOptions = {}): 
   return parseProject(json, opts)
 }
 
-/** io/mod.rs:73-86 — on load, an item whose `path_rel` is populated has its
- *  in-memory `path_abs` recomputed as join(dir, path_rel), reconciling the saved
- *  absolute path with the current (possibly-moved) workspace location. Items with
+/** On load, an item whose `path_rel` is populated has its in-memory `path_abs`
+ *  recomputed as join(dir, path_rel), reconciling the saved absolute path with
+ *  the current (possibly-moved) workspace location. Items with
  *  `path_rel === null` (import-worker copy pending, or synthesized Cache/ media)
- *  keep their serialized `path_abs` verbatim. `join` is injected (platform-native
- *  in 3c via node:path; a posix joiner in tests) — see the plan's path landmine. */
+ *  keep their serialized `path_abs` verbatim. `join` is injected: node:path in
+ *  production, a posix joiner in tests. */
 export function reconcileMediaPaths(p: Project, dir: string, join: (...parts: string[]) => string): Project {
   const media_pool: Record<string, MediaItem> = {}
   for (const [id, item] of Object.entries(p.media_pool)) {
@@ -78,10 +77,10 @@ export function clearSessionQuickProxies(p: Project): { project: Project; quickP
   return { project: { ...p, media_pool }, quickProxiesToDelete }
 }
 
-/** io/mod.rs:49 load_from_dir — the pure half: parse + schema-gate + media path
- *  reconcile + quick-proxy clear. NOTE: stale-proxy invalidation (the Proxied
- *  route's format_version) is `#[cfg(feature = "jobs")]` in Rust and rides the
- *  jobs-callback re-point; it is deliberately NOT done here. */
+/** The pure half of a project load: parse + schema-gate + media path reconcile
+ *  + quick-proxy clear. NOTE: stale-proxy invalidation (the Proxied route's
+ *  `format_version`) is deliberately NOT done here — it rides the background
+ *  jobs write-back. */
 export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string; onGridRepair?: (repairs: readonly GridRepair[]) => void }): { project: Project; quickProxiesToDelete: string[] } {
   // Omitting the hook (tests) leaves `onGridRepair: undefined`, which parseProject
   // falls back to its console default for — the reporting default is unchanged.

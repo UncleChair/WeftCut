@@ -21,10 +21,10 @@ export type DecodeRoute =
     }
   // Native software-decode preview (ProRes today): the original is
   // WebCodecs-blind but a native ffmpeg SW decoder can preview it. Carries the
-  // same proxy paths as Proxied so that with the experimental toggle OFF the
-  // clip previews via its proxy (no regression); resolveDecode returns the
-  // proxy. The "use the native-SW original" behavior is a later overlay (the
-  // decode-engine resolver), NOT a resolveDecode change. See docs/adr/0028.
+  // same proxy paths as Proxied and resolves identically to it; the
+  // original-vs-proxy choice is the decode-engine resolver's
+  // (renderer/render/decoder/decodeEngine.ts, docs/adr/0030), NOT a
+  // resolveDecode change. See docs/adr/0028.
   | {
       route: "native-sw";
       quick_proxy: string | null;

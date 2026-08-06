@@ -19,8 +19,7 @@ import { AUDIO_GRID, frameGrid, gridIndex, snapFrameRound, timeUsAtGridIndex } f
 // the frame lattice is NOT a sublattice of the 48 kHz one and each grid rejects the
 // other's boundaries. At 24/25/30/50/60 and 23.976 the ratio IS an integer
 // (2000/1920/1600/960/800/2002), so the two coincide and no test there can tell a
-// kind-blind snap from a correct one — which is exactly why round 1 shipped without
-// noticing the gap.
+// kind-blind snap from a correct one.
 const FPS = { num: 30_000, den: 1001 }
 const AUDIO_MEDIA = 'audio-grid-media'
 const VIDEO_MEDIA = 'audio-grid-video'
@@ -163,9 +162,10 @@ describe('audio grid — the 48 kHz mix lattice', () => {
   })
 
   it('NEGATIVE CONTROL: the kind-blind fan-out destroys the slip', () => {
-    // The pre-fix `move.ts:50-51`, verbatim: snap every group sibling on the
-    // COMPOSITION grid. Applied to the same slipped state, it must fail the
-    // assertion above — proving that test discriminates rather than passing by luck.
+    // A kind-blind fan-out snaps every group sibling on the COMPOSITION grid
+    // instead of each member's own lattice. Applied to the same slipped state, it
+    // must fail the assertion above — proving that test discriminates rather than
+    // passing by luck.
     const { actor, videoLayer, audioLayer, audioTrack } = pairedFixture()
     const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
     expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_group: true }).ok).toBe(true)
@@ -201,9 +201,9 @@ describe('audio grid — the 48 kHz mix lattice', () => {
   })
 
   it('NEGATIVE CONTROL: the kind-blind load repair moves the audio on every open', () => {
-    // The pre-fix `repairGrid`, verbatim: snap EVERY layer endpoint on the
-    // composition frame grid regardless of kind. Because it runs on load, the damage
-    // compounds silently — open, save, open again and the slip is simply gone.
+    // A kind-blind repair snaps EVERY layer endpoint on the composition frame grid
+    // regardless of kind. Because it runs on load, the damage compounds silently —
+    // open, save, open again and the slip is simply gone.
     const { actor, audioLayer, audioTrack } = pairedFixture()
     const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
     expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_group: true }).ok).toBe(true)
@@ -324,8 +324,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     const audioParams = findLayer(actor.snapshot(), audioLayer).params
     if (audioParams.kind !== 'Audio' || audioParams.gain_db.mode !== 'Keyframed') throw new Error('expected a keyframed audio gain')
     const audioT = audioParams.gain_db.value[0]!.t_us
-    // Audio automation is no longer coarser than the mixer that renders it: the
-    // request survives verbatim because it is already on the mix lattice.
+    // Audio automation resolves on the mix lattice, so the request survives verbatim.
     expect(audioT).toBe(raw)
 
     expect(actor.dispatch('update_layer_param_track', { layer: videoLayer, param_key: 'opacity', track: kf(raw) }).ok).toBe(true)

@@ -16,10 +16,10 @@ export interface AppNumberFieldProps {
   /// `null` renders an empty field — for optional values (e.g. an unset
   /// custom bitrate). Required-value call sites just pass their number.
   value: number | null;
-  /// Live value (every keystroke / scrub tick). Drives the call site's local
-  /// state.
+  /// Live value (every keystroke / arrow/stepper step). Drives the call site's
+  /// local state.
   onValueChange: (value: number) => void;
-  /// Fires once per edit, on blur / Enter / scrub-end so undo stays one entry
+  /// Fires once per edit, on blur / Enter / step-end so undo stays one entry
   /// per edit. Omit for live-commit call sites (they use onValueChange only).
   onCommit?: (value: number) => void;
   /// Fires (live) when the field is cleared to empty. Without it, an empty
@@ -47,9 +47,6 @@ export interface AppNumberFieldProps {
 /// (No drag-scrub: Base UI's ScrubArea needs Pointer Lock; it is simply not
 /// wired up here. Could be added — keyboard arrows and the +/- steppers cover
 /// the same edits.)
-/// `value` may go null mid-edit (empty field): without `onClear` we drop the
-/// null so the call site keeps its last good number; with `onClear` the
-/// call site learns the field is unset.
 /// No ref forwarding: number fields aren't programmatically focused (unlike
 /// the rename/timecode AppInput sites).
 export function AppNumberField({

@@ -4,11 +4,6 @@
 // can't run in Node — these helpers are extracted so the arithmetic is
 // testable without the browser surface. The async capture/bind chain is
 // exercised end-to-end by the Electron e2e (`e2e/electron/motif-capture.spec.ts`).
-//
-// `refreshMotif` is exercised against a mocked Pixi surface + a controllable
-// `getMotif` / `sharedMotifFrameCache` (see `vi.mock` blocks below): the live
-// refresh only needs the no-op-guard + re-fetch behavior verified, which is
-// pure enough to assert in Node by observing the cache key the sprite requests.
 
 import { describe, expect, test, it, vi } from "vitest";
 

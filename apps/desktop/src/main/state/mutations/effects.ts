@@ -19,9 +19,9 @@ function effectsOrThrow(p: Project, layerId: Uuid): Effect[] {
 }
 
 /** The effect id is minted UNCONDITIONALLY, BEFORE the layer lookup — so a
- *  LayerNotFound still burns the id. This is the OPPOSITE of applyAddLayer
- *  (add.ts:33, mints after the track check). Mints here, not in the dispatch
- *  arm, so the actor's commit pipeline stays uniform. */
+ *  LayerNotFound still burns the id. This is the OPPOSITE of add.ts
+ *  applyAddLayer, which mints after the track check. Mints here, not in the
+ *  dispatch arm, so the actor's commit pipeline stays uniform. */
 export function applyAddEffect(p: Project, idGen: IdGen, layerId: Uuid, kind: string): Uuid {
   const id = idGen() // unconditional — burned even on LayerNotFound
   const effect: Effect = { id, kind, enabled: true, params: {} }

@@ -7,8 +7,7 @@
 // The on-disk file path + JSON field names are a COMPATIBILITY SURFACE: once
 // users have a speech_config.json it must keep loading, so neither may change
 // without a migration. Bad-config recovery: a missing / empty / corrupt file,
-// or one written by an older build that lacks a field, degrades to defaults —
-// preferred_engine backfills to "auto" so the Settings selector never blanks.
+// or one written by an older build that lacks a field, degrades to defaults.
 
 import {
   SPEECH_CONFIG_DEFAULTS,

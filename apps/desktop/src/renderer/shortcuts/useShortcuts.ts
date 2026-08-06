@@ -246,10 +246,6 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
     });
     return;
   }
-  // Async path: gate the Started entry on a 250 ms timer; if the
-  // promise resolves first, the timer is cancelled and we emit a
-  // single Ok entry. Either way the final Ok/Err shares `op_id` with
-  // any prior Started so the console can collapse them.
   const opId = makeOpId();
   let resolved = false;
   const startedTimer = window.setTimeout(() => {

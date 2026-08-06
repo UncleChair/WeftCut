@@ -4,8 +4,8 @@
 //! MCP catalog advertises to clients.
 //!
 //! This table carries the native/compute/hybrid tools only.
-//! The ~47 TS-executed mutations are served by the TS actor's `MCP_TOOLS` table
-//! and routed by `routeMcpTool`; their Rust handlers are deleted.
+//! TS-executed mutations are served by the TS actor's `MCP_TOOLS` table and
+//! routed by `routeMcpTool`.
 
 use super::wire::{McpCatalog, McpToolError, PromptDef, ResourceDef, ToolDef, ToolResult};
 use super::{prompts, resources, tools};

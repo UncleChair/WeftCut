@@ -81,13 +81,6 @@ export function KeybindingPanel({
   const { t } = useTranslation();
   const effective = useMemo(() => resolveEffective(keybindings), [keybindings]);
   const [capturing, setCapturing] = useState<ActionId | null>(null);
-  // The capture chip beats the global dispatcher without needing an
-  // explicit `disabled` toggle: it attaches a `keydown` listener on
-  // `window` with `{ capture: true }`, calls `preventDefault` +
-  // `stopPropagation`, and the global dispatcher (listening on the
-  // bubble phase) never sees the event. `useShortcuts` keeps a
-  // `disabled` prop available for future modal flows that don't have
-  // their own capturing listener.
 
   async function applyOverride(action: ActionId, keys: string[]) {
     try {
@@ -113,8 +106,8 @@ export function KeybindingPanel({
   }
 
   async function onResetRow(action: ActionId) {
-    // Per Q10 of the design: per-row reset blocks if a default would
-    // conflict with a currently-bound chord on another action.
+    // Per-row reset blocks if a default would conflict with a
+    // currently-bound chord on another action.
     const defaults = ACTION_DEFS[action].defaultKeys;
     for (const d of defaults) {
       const owner = findChordOwner(effective, d, action);

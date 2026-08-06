@@ -1,6 +1,6 @@
 // apps/desktop/src/main/mcp/motifResult.ts
-// Shape a runMotifTool raw value into the Rust-faithful MCP ToolResult for the
-// motif tools. Mirrors the Rust handlers in native/src/mcp/tools.rs:
+// Shape a runMotifTool raw value into the MCP ToolResult for the motif tools.
+// TS owns this contract; the result shape per tool is:
 //   list_motifs            → json(payload with `html` removed)
 //   get_motif_source       → json({manifest, html})
 //   write_motif_draft      → text(id)

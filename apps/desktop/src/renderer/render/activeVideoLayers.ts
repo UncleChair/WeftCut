@@ -1,6 +1,7 @@
 // The single source of truth for "which VideoClip layers does export decode?"
 // Both the export Worker's decode loop (exportWorker.ts `activeVideoClips`)
-// and the export-readiness gate (exportReadiness.ts) select from this. They
+// and the export-readiness gate (app/useExportFlow.ts and worker/runExport.ts,
+// which scope the gate via `referencedVideoMediaIds`) select from this. They
 // MUST stay in lockstep: if the gate selects a different set than the Worker
 // decodes, an undecodable source either reaches the Worker un-gated (the scary
 // failure returns) or the export hangs on a proxy it never needed.

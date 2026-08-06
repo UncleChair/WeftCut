@@ -5,9 +5,9 @@ import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
 
-// The Dock-presentation gate (issue 07's contract at the Compositor level):
-// a hidden Preview keeps the owner clock ticking but freezes presented
-// output; re-showing schedules exactly one catch-up repaint.
+// The Dock-presentation gate (owned by previewPresentation.ts) at the
+// Compositor level: a hidden Preview keeps the owner clock ticking but freezes
+// presented output; re-showing schedules exactly one catch-up repaint.
 
 const colorLayer: LayerSummary = {
   id: "layer-1",

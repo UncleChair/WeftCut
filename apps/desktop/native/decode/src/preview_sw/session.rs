@@ -16,15 +16,9 @@
 //! travels through the sink and outlives the stream — no coherence protocol
 //! needed, and no background refill pump.
 //!
-//! A served request decodes FORWARD FROM WHERE THE LAST ONE STOPPED and keeps
-//! [`LOOKAHEAD_HORIZON_US`] of frames ready past the target — see
-//! [`serve_request`] and [`PumpCursor`]. Only a request that moves backward, or
-//! lands further than [`FORWARD_CONTINUE_US`] past the frontier, pays a seek.
-//! Requests are additionally coalesced latest-wins at the loop top: before
-//! serving, the thread drains everything already queued, so a scrub storm's
-//! superseded targets are dropped unserved (their pokes simply never fire) and
-//! only the newest target is served. A drained `Close` wins over any pending
-//! request.
+//! Requests are served forward-continuing (a seek only when the target moves
+//! backward or lands too far ahead) and coalesced latest-wins at the loop top —
+//! see [`serve_request`], [`PumpCursor`] and the drain in [`session_thread`].
 //!
 //! Thread ownership: [`SwVideoStream`] is `!Send`-in-spirit (raw ffmpeg
 //! pointers; marked `Send` forward-compat) but it is created, driven, and
@@ -170,8 +164,7 @@ struct Session {
 
 /// Which teardown path [`PreviewSwRegistry::close`] took. Split out (rather
 /// than folded into the `Result`) so the unit tests can assert the healthy
-/// path really reaps — with a bounded grace, a plain `Ok` alone no longer
-/// proves the thread exited.
+/// path really reaps — a plain `Ok` does not prove the thread exited.
 #[derive(Debug, PartialEq, Eq)]
 enum CloseOutcome {
     /// The thread exited within the grace window and was joined.
@@ -216,8 +209,7 @@ impl PumpCursor {
     /// Forget where the decoder is, so the next request — forward or not — seeks
     /// before it decodes. Used after a seek/decode failure: the stream's position
     /// is undefined at that point, and continuing from it would deliver frames
-    /// from the wrong place. (The pre-cursor code got this for free by seeking
-    /// unconditionally.)
+    /// from the wrong place.
     fn invalidate(&mut self) {
         self.pending = None;
         self.last_target_us = None;
@@ -463,9 +455,6 @@ fn session_thread(
             }
         };
     stream.set_output_cadence(output_cadence);
-    // Dimensions come from the stream's public fields (set at open) — do NOT
-    // decode a frame just to learn them. The SHIPPED pair, not the source's:
-    // every frame this session emits carries these.
     let info = PreviewSwOpenInfo {
         width: stream.out_width,
         height: stream.out_height,
@@ -492,10 +481,9 @@ fn session_thread(
         // renderer keys frames by pts off a latest-target ring anchor, so a
         // burst that never fires is indistinguishable from one it evicted). A
         // drained `Close` wins outright: teardown is never postponed behind a
-        // request. The shutdown flag stays the authority for teardown (it
-        // alone aborts a burst MID-decode); this drain is an optimization on
-        // the same path, not a replacement. No timers, no extra threads —
-        // purely a non-blocking sweep of what recv() woke up to.
+        // request. The shutdown flag stays the teardown authority — see the
+        // `Session::shutdown` field. No timers, no extra threads — purely a
+        // non-blocking sweep of what recv() woke up to.
         let mut target_us = match first {
             SwSessionMsg::RequestFrameAt(t) => t,
             SwSessionMsg::Close => break,
@@ -509,9 +497,7 @@ fn session_thread(
                     break;
                 }
                 // Empty = nothing else queued; Disconnected = registry gone.
-                // Either way the drain is over — serve what we have (matches
-                // the pre-drain behavior of serving, then exiting on the next
-                // failed recv).
+                // Either way the drain is over — serve what we have.
                 Err(_) => break,
             }
         }
@@ -521,13 +507,11 @@ fn session_thread(
         if close_drained || shutdown.load(Ordering::Acquire) {
             break;
         }
-        // A panic in the ffmpeg decode path must not silently kill this
-        // thread and leave the renderer waiting forever on frames that
-        // never arrive. Catch it, surface it as a normal `Error` poke (so
-        // JS tears the session down / retries), then stop: the stream's
-        // libav state is suspect after an unwind, so we never touch it
-        // again — which is exactly what makes the `AssertUnwindSafe`
-        // (needed for the `&mut stream` capture) sound here.
+        // Catch a decode panic and surface it as an `Error` poke (see the
+        // `recover` module docs, hazard 2), then stop: the stream's libav state
+        // is suspect after an unwind, so we never touch it again — which is
+        // exactly what makes the `AssertUnwindSafe` (needed for the
+        // `&mut stream` capture) sound here.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             serve_request(
                 &mut stream,
@@ -717,17 +701,12 @@ impl PreviewSwRegistry {
     }
 
     /// Signal the session thread to tear down and wait a BOUNDED grace
-    /// ([`CLOSE_GRACE`]) for it to exit. The queued backlog is covered twice
-    /// over: the thread's loop-top drain coalesces queued `request_frame_at`s
-    /// latest-wins and breaks the moment it drains a `Close`, and the
-    /// shutdown flag — set BEFORE the `Close` send — remains the authority
-    /// (it alone aborts a burst mid-decode, and it holds even if the `Close`
-    /// message is never received). Note the drain means superseded requests
-    /// may never fire their pokes AT ALL — that is normal operation, not a
-    /// teardown-only effect. On timely exit the thread is reaped (a panicked
-    /// thread surfaces as
-    /// `Err`, as before); if it is still wedged INSIDE a single decode call at
-    /// the deadline (the dump-verified d3d11va hang) it is DETACHED and `close`
+    /// ([`CLOSE_GRACE`]) for it to exit. The queued backlog is preempted by the
+    /// shutdown flag (set BEFORE the `Close` send) together with the thread's
+    /// loop-top drain — see the `Session::shutdown` field for that division.
+    /// On timely exit the thread is reaped (a panicked thread surfaces as
+    /// `Err`); if it is still wedged INSIDE a single decode call at the
+    /// deadline (the dump-verified d3d11va hang) it is DETACHED and `close`
     /// returns `Ok` — the caller is the napi (Electron main) thread and must
     /// never wait unboundedly. Landmine: on the detach path a straggler's panic
     /// is unobservable (nothing ever joins it).
@@ -762,17 +741,13 @@ impl PreviewSwRegistry {
         // immediately (`Disconnected`).
         s.shutdown.store(true, Ordering::Release);
         let _ = s.tx.send(SwSessionMsg::Close);
-        // Bound the wait on the done signal, never on `join()` (which has no
-        // timeout). `Disconnected` = the sender in the thread's closure frame
-        // dropped = the thread body finished, by return or unwind alike.
-        // `Ok(())` is unreachable (nothing ever sends) but read as done for
-        // robustness.
+        // Bound the wait on the done signal, never on `join()` (no timeout) —
+        // see the `done_rx` field.
         match s.done_rx.recv_timeout(grace) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if let Some(join) = s.join.take() {
                     // Non-blocking now: the body finished; only OS-thread
-                    // teardown remains. Err = the thread panicked — surfaced
-                    // exactly as the old unbounded-join contract did.
+                    // teardown remains. Err = the thread panicked.
                     join.join().map_err(|_| {
                         format!("preview-sw session '{stream_id}' thread panicked during teardown")
                     })?;
@@ -850,7 +825,7 @@ mod tests {
         let _ = reg.close("s1".into());
         let frames = got.lock().unwrap();
         assert!(!frames.is_empty(), "expected at least one frame poke");
-        // §5: the delivered frame carries a sensible pts_us (seek(0) -> first
+        // The delivered frame carries a sensible pts_us (seek(0) -> first
         // frame at/after container start, so >= 0). Do NOT assert color tags:
         // the synthetic testsrc fixture may leave them unspecified (None valid).
         assert_eq!(frames[0].0, 320, "frame width");
@@ -1053,14 +1028,10 @@ mod tests {
 
     #[test]
     fn close_preempts_queued_backlog() {
-        // The command channel is FIFO: with strict FIFO service, close() joins
-        // only after the thread services EVERY queued request — here ~5000
-        // long-GOP seek+decode bursts (measured ~10 s un-preempted on a fast
-        // box, vs. the 2 s bound). Teardown now preempts twice over — the
-        // shutdown flag (bail at the next per-message/per-frame check, the
-        // mid-burst authority) AND the loop-top drain (a drained Close wins
-        // before any burst) — so close() must return promptly, and faster
-        // still than flag-only.
+        // The command channel is FIFO: served strictly in order, close() would
+        // join only after ~5000 queued long-GOP seek+decode bursts (~10 s on a
+        // fast box). Teardown must preempt them, so close() has to come back
+        // Reaped well inside the grace.
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(|_| {}));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
@@ -1074,8 +1045,9 @@ mod tests {
         let start = std::time::Instant::now();
         // With a bounded grace, a plain Ok from close() could mean DETACHED —
         // which would pass the timing bound even with preemption broken. Run
-        // with a grace equal to the old 2 s bound and assert Reaped, so this
-        // test still guards preemption itself (thread exited AND was joined).
+        // with a grace far longer than the healthy path needs and assert
+        // Reaped, so this test still guards preemption itself (thread exited
+        // AND was joined).
         let outcome = reg
             .close_with_grace("c1".into(), std::time::Duration::from_secs(2))
             .expect("close");
@@ -1095,20 +1067,11 @@ mod tests {
     fn scrub_storm_coalesces_to_latest_target() {
         // Latest-wins drain: a queued scrub storm must NOT be served FIFO.
         //
-        // Determinism rationale: the session thread races the send loop, so
-        // "exactly one burst" cannot be asserted — the thread may legitimately
-        // pick up the first request (and a few drain generations) while sends
-        // are still queueing. What CANNOT legitimately happen under the drain
-        // is full FIFO service: each target-0 burst is a real ffmpeg seek + a
-        // decode burst (>= hundreds of microseconds), while an mpsc send is
-        // sub-microsecond — for EVERY request to be served, the drain would have
-        // to find the queue empty N-1 consecutive times against a tight send
-        // loop, which the orders-of-magnitude speed gap rules out. So the test
-        // asserts the two invariants that hold under every interleaving: (a) the
-        // LAST target's burst IS emitted, and (b) target 0 was served at most
-        // once (its low-pts pokes fit inside a single burst). A test-only seam
-        // gating the thread's start would buy exact determinism but needs a
-        // wedge inside the message loop — rejected as not trivially small.
+        // "Exactly one burst" is not assertable — the session thread races the
+        // send loop and may serve a few drain generations. The two invariants
+        // that hold under every interleaving: (a) the LAST target's burst IS
+        // emitted, and (b) target 0 was served at most once (its low-pts pokes
+        // fit inside a single burst).
         //
         // Note the horizon backs the drain up here: a repeat of an
         // already-served target finds the cursor's pending frame past
@@ -1167,10 +1130,7 @@ mod tests {
         // THE flow-control invariant (issue 04). Playback issues one request per
         // tick with the target advancing one frame; each must continue the
         // previous decode pass, never re-seek and re-deliver frames the consumer
-        // already holds. Before the cursor existed, every request seeked and
-        // emitted a fixed 4-frame burst, so consecutive requests overlapped by
-        // three frames — 4× the NV12 across IPC, and a ring that filled with
-        // duplicate PTS.
+        // already holds.
         //
         // Duplicates are the assertion because they are interleaving-proof: the
         // latest-wins drain may skip targets (fewer pokes), but no scheduling can
@@ -1290,9 +1250,8 @@ mod tests {
     #[test]
     fn ticking_past_eof_stays_quiet() {
         // Past the end of the material the renderer keeps ticking (it has no eof
-        // signal on this transport). Each of those ticks used to re-seek, re-walk
-        // the tail and re-emit the final frame; now the drained cursor absorbs
-        // them — one Eof, and no repeat of the last frame.
+        // signal on this transport). The drained cursor absorbs those ticks —
+        // one Eof, and no repeat of the last frame.
         let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
         let eofs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let f2 = frames.clone();
@@ -1330,10 +1289,8 @@ mod tests {
     fn far_past_eof_ticks_do_not_reseek() {
         // A target FURTHER than FORWARD_CONTINUE_US past the material (a
         // playhead parked way past a short clip): the seek lands at the tail
-        // and EOF is rediscovered — once. Before the EOF arms advanced the
-        // frontier, the gap to the stale frontier failed the forward test on
-        // EVERY subsequent tick, so each one paid a fresh seek+flush+probe and
-        // emitted another Eof poke, forever.
+        // and EOF is rediscovered — once. The EOF arms advance the frontier to
+        // the target, which keeps every later tick inside the continue window.
         let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
         let eofs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let f2 = frames.clone();

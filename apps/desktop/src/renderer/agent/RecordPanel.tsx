@@ -15,14 +15,9 @@ import { useLogStore } from "../logs/store";
 /// the dockable "Agent" panel (full history — the dock only mounts
 /// outside agent mode).
 ///
-/// Filter: source.kind === "Agent" AND ts >= session.started_at
-/// (this-session-only window).
-///
-/// Grouping: entries with op_id collapse into one row per op (latest
-/// message + status icon from the terminal op_state); entries with
-/// details.kind === "Checkpoint" render as pin-style rows with a
-/// Restore button regardless of op_id; everything else is a
-/// single-entry row.
+/// Filter: agent-attributed rows since the window start, plus Restore
+/// dividers and Checkpoint pins from any source, minus everything inside a
+/// rolled-back range. `buildRows` owns the per-row rules.
 ///
 /// Order: chronological (oldest first), auto-scroll-to-bottom that
 /// yields the moment the user scrolls up — Premiere / build-log

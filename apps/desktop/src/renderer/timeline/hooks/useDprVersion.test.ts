@@ -65,7 +65,7 @@ describe("useDprVersion", () => {
         // The old listener must have been torn down (re-arm, not accumulate).
         expect(firstListenerSet.size).toBe(0);
 
-        // A5-M3: unmount must remove the currently-armed (second) listener,
+        // Unmount must remove the currently-armed (second) listener,
         // not leak it — assert removeEventListener fires with that handler.
         const secondListenerSet = listenersByQuery.get(secondQuery)!;
         const [armedHandler] = secondListenerSet;

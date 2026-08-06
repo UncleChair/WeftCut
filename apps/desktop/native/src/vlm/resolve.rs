@@ -1,15 +1,10 @@
 //! Backend resolution — the twin of `speech::resolve_transcriber`.
 //!
-//! [`resolve_scene_describer`] honors an optional `preferred` backend as a SOFT
-//! hint, then walks [`DEFAULT_ORDER`], returning the first backend that is
-//! [`Available`]. [`resolve_scene_describer_exact`] is the STRICT counterpart for
-//! an explicit per-call `backend`: that engine or an error naming its gap, never
-//! a silent substitute.
-//!
-//! **Privacy-strict.** [`DEFAULT_ORDER`] is local-first and cloud-last, and the
-//! exact resolver never falls back, so an explicit local choice can never
-//! degrade into a cloud frame upload — frames are heavier and more sensitive
-//! than audio, which is why this rule is stricter here than the STT default.
+//! Owns backend selection (preference + availability) and construction of the
+//! concrete describer; the availability rules themselves live in
+//! [`super::config`]. Privacy-strict by construction — see [`DEFAULT_ORDER`]
+//! for the local-first order and [`resolve_scene_describer_exact`] for the
+//! never-fall-back rule.
 
 use std::collections::HashMap;
 
@@ -22,7 +17,7 @@ use super::sidecar::{LlamaMtmdSidecar, OutputStyle};
 
 /// Actionable "nothing can describe" message, naming every remedy (local engine,
 /// BYO endpoint, cloud key). Shared so the tool layer's error and these tests
-/// read the same string (ticket 06 acceptance #1).
+/// read the same string.
 pub const NO_DESCRIBER_CONFIGURED: &str =
     "no video-understanding backend available — configure a local engine (llama-mtmd-cli binary \
      + Qwen3-VL GGUF model + mmproj) in Settings, point WeftCut at a self-hosted \

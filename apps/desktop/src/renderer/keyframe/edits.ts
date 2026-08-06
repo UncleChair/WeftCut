@@ -96,10 +96,6 @@ export function setKeyframeInterp(
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-// The "preserve the non-smoothed control point" reads use `interpToCoeffs`
-// (from ./curve) so Linear/Hold map to the identity diagonal [0,0,1,1] and the
-// named eases / Bezier map to their coords — one canonical interp→coeff table.
-
 /// Monotone-clamped tangent (value per microsecond) at interior key `i`.
 /// 0 at a local extremum (or when a neighbour delta is 0).
 function tangentAt(keys: Keyframe<number>[], i: number): number {
@@ -116,7 +112,9 @@ function tangentAt(keys: Keyframe<number>[], i: number): number {
 
 /// Bake monotone (no-overshoot) tangents at key `id` into the outgoing segment
 /// (this key's interp.p1) and the incoming segment (previous key's interp.p2),
-/// giving C1-continuous velocity through the key. Returns a NEW track.
+/// giving C1-continuous velocity through the key. The control point on the
+/// untouched side is read back through `interpToCoeffs`, so a Linear/Hold
+/// neighbour comes through as the identity diagonal. Returns a NEW track.
 export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<number> {
   if (track.mode === "Static") return track;
   const keys = track.value;

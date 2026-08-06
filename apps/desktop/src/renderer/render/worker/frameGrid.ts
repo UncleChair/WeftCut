@@ -1,9 +1,7 @@
 // The export worker's entry point to the composition frame grid. Both functions
 // delegate to the `weftcut-eval` leaf (`renderer/frames.ts`), so the export grid
 // is LITERALLY the same code the actor, the ruler, and preview resolve — not a
-// worker-local reimplementation. Kept as a module because the worker imports it
-// under its own name and the export-side naming (`exportFrameCount`) reads
-// differently from the grid-side one.
+// worker-local reimplementation.
 //
 // THE TRAP this module exists to prevent: computing an output frame's time as
 // `i * round(1e6 / fps)` (or a count as `ceil(span / round(1e6/fps))`) compounds

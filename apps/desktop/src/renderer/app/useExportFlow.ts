@@ -197,9 +197,11 @@ export function useExportFlow(deps: {
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
   //   1. PreviewSurface handle suspends the preview compositor and drives
-  //      the Worker; the Worker streams video-only fMP4 chunks to tempVideoPath.
+  //      the Worker. Under the native sink the Worker streams raw packed
+  //      frames to export_video_sink_write and ffmpeg writes tempVideoPath;
+  //      under WebCodecs it streams video-only fMP4 chunks to tempVideoPath.
   //   2. Rust audio-only export produces a sibling .m4a (AAC) or .mka (Opus).
-  //   3. Rust mux/transcode writes the user-chosen path.
+  //   3. Rust stream-copy mux writes the user-chosen path.
   //
   // The Worker emits progress on every encoded frame; that maps to
   // the encode phase of ExportPanel. Audio + mux run silently in
@@ -243,12 +245,10 @@ export function useExportFlow(deps: {
     // false), which the existing code below already does.
     if (settings.includeAudio && !settings.includeVideo) {
       const store = useProjectStore.getState();
-      // Read the project from Rust directly, not the event-driven store: the
-      // store summary can lag a just-added layer (its autofit `duration_us`
-      // arrives a tick later), and a stale `duration_us` of 0 would window the
-      // export to [0,0] → empty plan → a false "no audio material". The main
-      // video path is immune because it reads the summary only after its
-      // readiness-gate awaits.
+      // Read the project from Rust directly, not the event-driven store — the
+      // stale-`duration_us` hazard the no-material guard above spells out;
+      // here it windows the export to [0,0] → empty plan → a false
+      // "no audio material".
       const proj = await projectSummary().catch(() => store.summary);
       if (!proj) {
         setExportState({ kind: "error", detail: "No project loaded." });
@@ -534,7 +534,7 @@ export function useExportFlow(deps: {
 
     // One resolution seam for the encode engine (see docs/render.md §"Encode exits").
     // Probe injected: the smoke-encode only runs when the target needs it —
-    // as of E4 that's only an explicit WebCodecs pin; `auto` always resolves
+    // that's only an explicit WebCodecs pin; `auto` always resolves
     // native and this ternary short-circuits to `true` unconsulted. Cast is
     // sound: this branch only runs when needsEncoderProbe(settings) is true,
     // which needsEncoderProbe itself defines as excluding
@@ -565,7 +565,7 @@ export function useExportFlow(deps: {
       return;
     }
     // `let`, not `const`: a native sink-start failure under `auto` can flip
-    // this trio to a consent-gated WebCodecs retry below (E4). `sinkTarget`
+    // this trio to a consent-gated WebCodecs retry below. `sinkTarget`
     // is nulled out alongside the flip so its type (`NativeTarget | null`)
     // stays honest — no consumer below may assert it non-null with `!`;
     // each site re-checks `sinkTarget` (or reads it after the flip settles).

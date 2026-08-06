@@ -12,8 +12,9 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 /** Motif catalog-read + authoring + install + staleness tools, served in TS by
- *  runMotifTool. Their 6 MCP-advertised defs come from TS MOTIF_TOOL_DEFS
- *  (mcpCatalog dedups by name); the Rust catalog carries no motif arms. */
+ *  runMotifTool. The five advertised members take their defs from TS
+ *  MOTIF_TOOL_DEFS (mcpCatalog dedups by name); the two staleness tools are
+ *  unadvertised. The Rust catalog carries no motif arms. */
 export const MOTIF_TOOLS: ReadonlySet<string> = new Set([
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif',
   'motif_staleness_report', 'acknowledge_motif_staleness',

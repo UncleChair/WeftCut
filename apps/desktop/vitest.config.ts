@@ -11,9 +11,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // Electron bridge), resolved via the @ alias just like the build.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // Unit tests live under src/renderer (the app) and src/main (pure
-  // main-process helpers, e.g. the fs:* path guard). The Playwright Electron
-  // specs in e2e/ use the Playwright runner (npm run e2e) — keep
+  // Unit tests live under the trees listed in `include` below. The Playwright
+  // Electron specs in e2e/ use the Playwright runner (npm run e2e) — keep
   // Vitest from scooping up their *.spec.ts (they fail under Vitest; not Vitest
   // tests). Only add main-process tests for modules that DON'T import `electron`
   // (it can't load under Vitest).

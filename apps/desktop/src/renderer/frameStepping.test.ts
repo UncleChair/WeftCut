@@ -10,8 +10,7 @@ import {
 // Acceptance for the single-frame playhead step (App.tsx `seekFrameBack` /
 // `seekFrameForward`). The step moves the frame INDEX and asks the grid for that
 // frame's time, so every assertion here is against the grid alone: the clock's
-// setPosition snap — which is what used to absorb the old rounded-duration
-// step's per-step error — is deliberately not in the loop.
+// setPosition snap is deliberately not in the loop.
 
 /// The spec's rate matrix: four broadcast fractional rates and their integer
 /// twins. Stepping must be exact at all eight.

@@ -82,7 +82,7 @@ function rejectAudioParticipant(layer: Layer): void {
  *  minted AFTER all checks (so LayerNotFound/TransitionUnsupportedLayerKind/
  *  TransitionInsufficientHandle/TransitionLayersNotAdjacent burn no id) but
  *  BEFORE commit's validate — so a downstream ValidationFailed burns it
- *  (the keystone landmine; gated by add-transition-validate-fail-burns-id). */
+ *  (the keystone landmine). */
 export function applyAddTransition(p: Project, idGen: IdGen, fromLayer: Uuid, toLayer: Uuid, durationUs: number, kind: Transition['kind']): Uuid {
   const fromLoc = locate(p, fromLayer)
   if (!fromLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: fromLayer })

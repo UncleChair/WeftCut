@@ -10,7 +10,7 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 // Animated (multi-frame) gif. detect_kind must now classify it IMAGE (an
 // animated image looped by the renderer, NO proxy), and it must animate + loop
 // + export. ffmpeg-gated on fixture presence (run: cd apps/desktop/e2e && npm
-// run fixtures); the export leg also needs ffmpeg/ffprobe at runtime.
+// run fixtures); the export leg also needs ffmpeg at runtime.
 const GIF = path.resolve(MEDIA_DIR, 'test_1080p_10fps.gif')
 const FFPROBE = process.env.FFPROBE || 'ffprobe'
 const FFMPEG = process.env.FFMPEG || 'ffmpeg'

@@ -1,10 +1,10 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
 import { launchApp, waitForHook } from './helpers/driver'
 
-// Preview pan correctness — renders the REAL buildPanGraph + panCurves in an
-// OfflineAudioContext and checks output L/R against the equal-power law. This
-// covers the matrix-mixer WIRING (channel topology, 4-gain summing) that the
-// headless math goldens cannot reach (docs/audio.md §Preview mixer).
+// Preview pan correctness — renders the REAL buildPanGraph + constantPanGains
+// in an OfflineAudioContext and checks output L/R against the equal-power law.
+// This covers the matrix-mixer WIRING (channel topology, 4-gain summing) that
+// the headless math goldens cannot reach (docs/audio.md §Preview mixer).
 test.describe('preview pan matrix mixer (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page

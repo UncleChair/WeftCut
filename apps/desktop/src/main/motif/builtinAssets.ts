@@ -8,8 +8,7 @@ import type { UserMotifStore } from "./store";
  * PRODUCTION-ONLY: base dir of built-in served assets. Mirrors the ffmpeg-sidecar
  * resolution (`src/main/index.ts`): packaged → `<resources>/motifs/builtin`;
  * dev → `apps/desktop/src/shared/motifs/builtin` relative to the bundled main
- * (`import.meta.dirname = apps/desktop/out/main`, so `../../src/...`). NOT used
- * by unit tests (they pass an explicit dir to `resolveMotifFile`).
+ * (`import.meta.dirname = apps/desktop/out/main`, so `../../src/...`).
  */
 export function builtinAssetDir(): string {
   return app.isPackaged
@@ -17,7 +16,7 @@ export function builtinAssetDir(): string {
     : path.join(import.meta.dirname, "../../src/shared/motifs/builtin");
 }
 
-/** Guess a Content-Type from a file extension. Mirrors `content_type_for`. */
+/** Guess a Content-Type from a file extension. */
 export function contentTypeFor(rel: string): string {
   const ext = (rel.split(".").pop() ?? "").toLowerCase();
   switch (ext) {
@@ -51,9 +50,8 @@ function safeBuiltinRel(rel: string): string[] | null {
 
 /**
  * Resolve `motif://<id>/<rest>` to bytes + content-type. Embedded built-ins win;
- * the on-disk user store is the fallback. Mirrors `resolve_bytes` + the napi
- * `motif_resolve_file`. `builtinDir` is passed EXPLICITLY (the caller — index.ts —
- * computes it via `builtinAssetDir()`; tests pass a fixture dir).
+ * the on-disk user store is the fallback. `builtinDir` is passed EXPLICITLY (the
+ * caller — index.ts — computes it via `builtinAssetDir()`; tests pass a fixture dir).
  */
 export function resolveMotifFile(
   builtinDir: string,
@@ -63,9 +61,8 @@ export function resolveMotifFile(
 ): { bytes: Buffer; contentType: string } | null {
   if (BUILTIN_IDS.includes(id)) {
     // Built-in branch is TERMINAL: a built-in id always wins and never falls
-    // through to the user store. (In Rust built-ins are embedded so they can't
-    // be missing; here they're on-disk and could be — so a missing/unsafe read
-    // returns null rather than letting a same-id user file shadow a built-in.)
+    // through to the user store — a missing/unsafe read returns null rather than
+    // letting a same-id user file shadow a built-in.
     const safe = safeBuiltinRel(rest);
     if (!safe) return null;
     try {

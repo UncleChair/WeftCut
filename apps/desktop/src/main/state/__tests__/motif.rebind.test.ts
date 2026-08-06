@@ -25,7 +25,6 @@ describe('rebind_motif dispatch', () => {
     if (!addR.ok) throw new Error(JSON.stringify(addR.error))
     const layerId = addR.value as string
 
-    // rebind it
     const r = actor.dispatch('rebind_motif', {
       updates: [{ layer_id: layerId, motif_id: 'motif-y', motif_version: 2, props: { b: 2 } }],
     })
@@ -50,7 +49,6 @@ describe('rebind_motif dispatch', () => {
   it('skips non-Motif layers silently', () => {
     const { actor, aRoll } = setup()
 
-    // add a color layer
     const colorR = actor.dispatch('add_layer', {
       track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000,
     })
@@ -63,7 +61,6 @@ describe('rebind_motif dispatch', () => {
     })
     expect(r.ok).toBe(true)
 
-    // color layer params unchanged
     const snap = actor.snapshot()
     const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === colorId)
     expect(layer!.params.kind).toBe('Color')

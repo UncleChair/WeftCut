@@ -34,9 +34,8 @@ describe("AppNumberField", () => {
     // a raw el.blur()): exercises Base UI's inputBlur commit path.
     await userEvent.click(document.body);
     expect(onCommit).toHaveBeenCalledWith(12);
-    // (Enter-to-commit and drag-scrub also commit via onValueCommitted, but
-    // jsdom doesn't drive Base UI's keyboard/pointer commit paths — those are
-    // covered by visual smoke, like scrub.)
+    // (Enter-to-commit also goes through onValueCommitted, but jsdom doesn't
+    // drive Base UI's keyboard commit path.)
   });
 
   // Helper: real-timer wait (the file's blur path needs real timers, like the

@@ -7,10 +7,10 @@ import {
   isTenBitPixFmt,
 } from "./hwLaneEligibility";
 
-// Lane-aware HW eligibility (issue #10 ticket 03): videotoolbox carries its
-// own set (ProRes + 10-bit allowed); EVERY other lane keeps the historical
-// 8-bit h264/hevc/vp9 gate exactly. Tested per lane so a future widening of
-// one lane cannot silently leak into another.
+// Lane-aware HW eligibility: videotoolbox carries its own set (ProRes +
+// 10-bit allowed); EVERY other lane keeps the 8-bit h264/hevc/vp9 gate
+// exactly. Tested per lane so a future widening of one lane cannot silently
+// leak into another.
 
 const LEGACY_LANES = ["nvdec", "vaapi", "d3d11va"] as const;
 

@@ -1,6 +1,5 @@
-// Unit tests for the TS recents store — ports all 5 Rust tests from
-// native/src/recents.rs plus dedup/cap/order edge cases.
-// All tests use an in-memory filesystem (no real disk I/O).
+// Unit tests for the TS recents store — load/save, dedup, cap and order edge
+// cases. All tests use an in-memory filesystem (no real disk I/O).
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { createRecentsStore } from './recents'

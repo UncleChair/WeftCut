@@ -31,7 +31,6 @@ export const useUnderrunStore = create<State>(() => ({
   lateFrames: 0,
 }));
 
-/// Wired as `Compositor.onUnderrun` by PixiPreview.
 export function setUnderrunState(snapshot: UnderrunSnapshot): void {
   useUnderrunStore.setState({
     active: snapshot.active,

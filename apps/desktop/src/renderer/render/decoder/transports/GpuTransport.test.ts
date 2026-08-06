@@ -1,18 +1,9 @@
 // @vitest-environment jsdom
 //
 // GpuTransport.test.ts — port handoff + streamId filtering, with
-// `window.api.previewGpu` faked. Mirrors the FakePort + fake-bitmap approach
-// the deleted native-GPU handle's test relied on (same environment, same
-// helpers) rather than a real `MessageChannel`/`window.postMessage` transfer
-// or a real `createImageBitmap`/`ImageData`: verified empirically that this
-// repo's jsdom (25.0.1, via vitest 4.1.7) implements neither
-// `createImageBitmap` nor `ImageData` as globals, and its `postMessage`
-// does not populate `MessageEvent.ports` from a real transfer list — only
-// a `MessageEvent` constructed directly with a `ports` init option carries
-// them. The sibling test dispatches the handoff exactly that way and invokes
-// the fake port's `onmessage` directly for frame delivery; this test does the
-// same, preserving the same behavioral contract (streamId-stamped frame
-// delivery, foreign-streamId frames dropped) the brief specifies.
+// `window.api.previewGpu` faked. jsdom implements neither `createImageBitmap`
+// nor `ImageData`, and only a directly-constructed `MessageEvent` carries
+// `ports` (a real transfer list does not populate them) — hence the fakes.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GpuTransport } from "./GpuTransport";
 import {
@@ -256,7 +247,7 @@ describe("GpuTransport", () => {
 
     expect(frames).toEqual([20]); // foreign s2 dropped
     // ...and dropped WITHOUT leaking. A 4K ImageBitmap per foreign frame is not a
-    // survivable leak, and the drop path used to just `return`.
+    // survivable leak.
     expect(foreign.close).toHaveBeenCalled();
     t.dispose();
   });

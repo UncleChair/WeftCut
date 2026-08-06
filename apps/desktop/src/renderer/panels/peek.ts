@@ -31,7 +31,6 @@ export function buildPeekItems(
   for (const t of tracks) {
     if (t.role !== null) continue;
     for (const layer of t.layers) {
-      // Window intersection: layer.t_end > lo AND layer.t_start < hi.
       if (layer.t_end_us <= lo || layer.t_start_us >= hi) continue;
       const spans =
         layer.t_start_us <= currentTimeUs && layer.t_end_us >= currentTimeUs;

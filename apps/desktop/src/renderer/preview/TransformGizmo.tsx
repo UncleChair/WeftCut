@@ -8,9 +8,7 @@
 // drawn into it would poison those buffers; and a box drawn in composition
 // space would be sub-pixel on a 4K composition shown in a small panel.
 //
-// Every pointer- and frame-rate update here is imperative through refs: the box
-// follows animated x/y during playback, and a per-frame React state write is
-// exactly what the memory-ratchet gate exists to catch.
+// All pointer- and frame-rate updates here are imperative through refs.
 // Spec: docs/features.md#on-canvas-transform-gizmo
 
 import { useEffect, useRef } from "react";
@@ -660,12 +658,12 @@ function TransformGizmo({
   /// First the ledger is dropped if this gizmo has nothing outstanding — the
   /// mirror is then as current as anything we know.
   ///
-  /// Then the override is re-derived. The carry goes to zero exactly when this
-  /// summary is the one carrying our write, so this IS the lift the old
-  /// unconditional clear performed: clearing on the mutation's resolve instead
-  /// would snap the layer back for the frame or two until the refetch lands.
-  /// Unlike that clear it also handles a summary arriving MID-gesture, where the
-  /// gesture's delta has to be re-based onto the new value rather than dropped.
+  /// Then the override is re-derived. The carry zeroes exactly when the summary
+  /// carrying our write lands, which is what lifts the override; clearing on the
+  /// mutation's resolve instead would snap the layer back for the frame or two
+  /// until the refetch lands. Re-deriving also handles a summary arriving
+  /// MID-gesture, where the gesture's delta has to be re-based onto the new
+  /// value rather than dropped.
   useEffect(() => {
     if (inFlightRef.current === 0 && !dragRef.current) pendingRef.current.clear();
     applyOverride(dragRef.current);
@@ -883,8 +881,6 @@ function TransformGizmo({
     // press — and letting it through would start a canvas-level gesture.
     e.preventDefault();
     e.stopPropagation();
-    // Nullable, unlike the resize gesture's: a move without a drawn frame yet
-    // must still move, it just cannot snap.
     const frame = geomRef.current;
     dragRef.current = {
       kind: "move",
@@ -1242,11 +1238,7 @@ function TransformGizmo({
     >
       {/* Snap guides, FIRST in document order so they paint UNDER the box and
           the handles: a guide is information about the gesture, never a target,
-          and it must not occlude something grabbable. One group per axis, since
-          at most one guide can be live on each — so these are two fixed
-          elements and not a list to reconcile. Each holds the dark under-stroke
-          and the bright line over it; the draw loop writes one geometry into
-          both children. */}
+          and it must not occlude something grabbable. */}
       <g
         ref={guideXRef}
         data-testid="transform-gizmo-guide-x"

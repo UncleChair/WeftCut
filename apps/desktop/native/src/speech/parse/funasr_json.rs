@@ -28,14 +28,10 @@
 //!   single Chinese character, so words come out char-granular. `Word` is
 //!   granularity-agnostic, so this is the SAME `Transcript` shape as
 //!   whisper/cloud — only `word_timing` differs (`Exact` here).
-//! - sherpa reports no explicit token END, so each word ends where the next word
-//!   starts; the final word ends at its own start (zero-width) — honest, since
-//!   the engine does not report the last token's duration. If the optional
-//!   `durations` array is present and long enough, we use `start + duration`
-//!   instead (a truer end when the model emits it).
+//! - sherpa reports no explicit token END; `build_words` derives one.
 //! - sherpa-onnx-offline returns ONE result per WAV (no VAD segmentation without
-//!   the separate VAD model, deferred in v1), so the transcript is a SINGLE
-//!   segment spanning all tokens. `word_timing = Exact`.
+//!   the separate VAD model), so the transcript is a SINGLE segment spanning all
+//!   tokens. `word_timing = Exact`.
 
 use serde::Deserialize;
 

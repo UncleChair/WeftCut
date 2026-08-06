@@ -126,7 +126,8 @@ export interface TsActorHost {
   stop: () => void
 }
 
-/** Rust project:changed payload shape (napi_backend.rs:155-165). */
+/** Mints the `project:changed` wire payload — the shape the renderer event and
+ *  the mcp:change relay both see. */
 export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'user' | 'agent'; client: string | null; summary: string; timestamp: string; affected_count: number } {
   const actor_kind = e.actor.kind === 'Agent' ? 'agent' : 'user'
   const client = e.actor.kind === 'Agent' ? e.actor.client : null
@@ -142,7 +143,6 @@ function manifestsFromList(entries: unknown[]): Manifest[] {
   for (const e of entries) {
     if (e == null || typeof e !== 'object') continue
     const entry = e as Record<string, unknown>
-    // Skip built-ins — already present in MotifCatalog's built-in layer.
     if (entry['status'] === 'builtin') continue
     // Keep only entries that have at minimum the required Manifest fields.
     if (typeof entry['id'] !== 'string' || typeof entry['name'] !== 'string') continue
@@ -162,7 +162,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const actor = createActor({
     initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
-    // relink/checkpoint pin-rows. Best-effort — never abort a commit.
+    // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
   })
   let unsub: (() => void) | null = null
@@ -178,7 +178,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const enqueueDerivatives = makeEnqueueDerivatives(deps.napi)
   // Open-time relink self-heal: content identity comes from the same BLAKE3
   // napi the import hash pass uses; the report lands as a status-log row.
-  // Emits are best-effort — a failing emitLog must never abort the open.
   const onRelink = (report: RelinkReport): void => {
     try {
       if (report.healed.length > 0) {
@@ -288,7 +287,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   function reject(reason: string): never { throw new Error(reason) }
 
   // ── LogBus pin-row helpers ──────────────────────────────────────────────────
-  // Emits are best-effort: a failing emitLog must never abort the mutation.
   // All pin-rows: level 'info', category {kind:'Project'}.
 
   function emitRestoreLog(id: string, label: string | null, source: { kind: 'User' } | { kind: 'Agent'; client: string }): void {
@@ -315,9 +313,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (checkpoint)', err) }
   }
 
-  /** Host-level MCP wrapper. Delegates to actor.mcpCall; on a successful result
-   *  emits the pin-row LogBus entry for restore_checkpoint / checkpoint /
-   *  begin_agent_session (best-effort, try/catch). Returns the actor result unchanged. */
+  /** See TsActorHost.mcpCall. */
   function mcpCall(name: string, argsJson: string): import('./mcp-commands.js').McpCallResult {
     const result = actor.mcpCall(name, argsJson)
     if (!result.ok) return result
@@ -347,11 +343,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     switch (route.kind) {
       case 'command': {
         const r = actor.command(channel, args)
-        // CommandError → renderer error contract: Rust's invoke returns a string error;
-        // the renderer's invoke (bridge/ipc.ts) propagates IPC rejections as Error
-        // objects where `.message` is the error string. Serialize the CommandError as
-        // JSON so the renderer sees a structured message — same surface as Rust's
-        // Debug-format string that the existing renderer error handling catches.
+        // The renderer surfaces an IPC rejection as `Error.message` (bridge/ipc.ts),
+        // so serialize the CommandError as JSON to keep it structured.
         if (!r.ok) throw new Error(JSON.stringify(r.error))
         if (channel === 'project_restore_checkpoint') {
           // Emit the Restore pin-row (User source). The checkpoint is kept on restore,
@@ -419,7 +412,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         switch (channel) {
           case 'workspace_get': return store.get()
           case 'workspace_set_current':
-            // Buffer + debounce (main flushes on quit / before a profile switch).
+            // Buffer + debounce; flushed on quit (index.ts).
             store.setCurrent((args as { current?: unknown }).current ?? null)
             return null
           case 'workspace_set_active':
@@ -444,8 +437,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         if (!store) return reject('view_state: store not configured')
         const ws = deps.workspaceDir()
         if (channel === 'view_state_get') return ws ? store.load(ws) : viewStateDefaults()
-        // view_state_set: pre-workspace (ws null) silently drops, matching the
-        // old Rust behavior — the next debounced write lands after Save As.
+        // view_state_set: pre-workspace (ws null) silently drops — the next
+        // debounced write lands after Save As.
         const state = (args as { state?: ViewState }).state
         if (ws && state) store.save(ws, state)
         return null
@@ -455,8 +448,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         if (!store) return reject('export_settings: store not configured')
         const ws = deps.workspaceDir()
         if (channel === 'export_settings_get') return ws ? store.load(ws) : null
-        // export_settings_set: pre-workspace (ws null) silently drops, matching
-        // the old Rust behavior — the next write lands after the workspace is open.
+        // export_settings_set: pre-workspace (ws null) silently drops — the next
+        // write lands after the workspace is open.
         const settings = (args as { settings?: unknown }).settings
         if (ws && settings !== undefined) store.save(ws, settings)
         return null

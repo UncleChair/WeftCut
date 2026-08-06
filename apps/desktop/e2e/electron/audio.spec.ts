@@ -347,8 +347,7 @@ test.describe('audio role mixing conformance (Electron)', () => {
     console.log('[e2e] role baseline pan report:', JSON.stringify(baseline))
     expect(baseline.pass).toBe(true)
 
-    // Mute the MUSIC role. Track mute/solo no longer gate audio — this role flag
-    // is the only lever that silences the music.
+    // Mute the MUSIC role — the only lever that silences the music.
     await invokeCmd(page, 'update_role_flags', { role: 'music', patch: { muted: true } })
 
     r = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline' })

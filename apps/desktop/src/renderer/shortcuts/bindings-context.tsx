@@ -3,10 +3,9 @@ import { ACTION_DEFS, ACTION_IDS, type ActionId } from "./defs";
 import type { OverrideMap } from "./useShortcuts";
 
 // Read-only view of the effective bindings (defaults overlaid with
-// user overrides) for every action. Consumers — `<MenuItem>` for the
-// accelerator hint, future toolbar tooltips — read through
-// `useEffectiveBindings(id)` so the displayed shortcut and the bound
-// key cannot drift.
+// user overrides) for every action. Consumers — menus, the quick-actions
+// strip, the search palette — read through `useEffectiveBindings(id)` so
+// the displayed shortcut and the bound key cannot drift.
 
 interface BindingsContextValue {
   effective: Record<ActionId, string[]>;

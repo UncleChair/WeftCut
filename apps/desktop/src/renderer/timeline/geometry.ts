@@ -17,7 +17,7 @@ import {
 export const DEFAULT_PX_PER_SEC = 80;
 export const MIN_PX_PER_SEC_FLOOR = 0.05;
 // 2000 px/s exceeds the waveform's stored finest LOD (1000 peaks/s): past
-// ~1333 px/s the envelope stretches instead of gaining detail — accepted;
+// ~1500 px/s the envelope stretches instead of gaining detail — accepted;
 // the filmstrip (the ceiling's driver) keeps densifying to lod 0.
 export const MAX_PX_PER_SEC = 2000;
 // Empty/short projects still need enough temporal context to feel like an
@@ -43,7 +43,7 @@ export const LAYER_PREVIEW_MIN_PX = 16;
 export const LAYER_LABEL_MIN_PX = 48;
 export const LAYER_FULL_LABEL_MIN_PX = 120;
 
-/// Width of the sticky track-header column. See the timeline-redesign spec (§1).
+/// Width of the sticky track-header column.
 export const HEADER_COL_PX = 160;
 
 export function computeTimelineExtent({
@@ -90,7 +90,7 @@ export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
 /// single audio on/off, so the whole-track `enabled` toggle would be redundant;
 /// visual-only and empty tracks keep it. `hasAudio` is retained because a
 /// pure-audio lane (`hasAudio && !showEye`) drives the audio-lane music glyph.
-/// See the audio-track × A/B-roll spec.
+/// See ADR 0023.
 export interface TrackHeaderControls {
   showEye: boolean;
   hasAudio: boolean;
@@ -153,18 +153,10 @@ export function computeLayerSlices(
 //   │ idx 5 — additional (extra)      │         └─────────────────────────────┘
 //   └─────────────────────────────────┘
 //
-// Placement rules at creation time (NOT in this function):
-//   - import_media: prepends the transient track at idx 0 → visually
-//     at the bottom of the timeline, out of the way of A/B work.
-//   - separate_audio_to_new_track: inserts at `source.idx` (source
-//     shifts up) so audio sits BELOW its video visually.
-//
-// Group-start dividers separate the kind-buckets visually. Today we
-// only emit a divider between the role-stamped tracks and the
-// transient tail (the "additional" region at the bottom). Future
-// kind-cluster dividers can be added if needed.
+// Group-start dividers separate the kind-buckets visually. The only divider is
+// between the role-stamped tracks and the transient tail (the "additional"
+// region at the bottom).
 export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
-  // Simple reverse: walk the data-model from last index to first.
   const reversed = tracks.slice().reverse();
   const out: VisualTrack[] = [];
   let prevSection: "role" | "extra" | null = null;
@@ -256,14 +248,14 @@ export function groupHue(groupId: string): number {
   for (let i = 0; i < groupId.length; i++) {
     h = (h * 31 + groupId.charCodeAt(i)) >>> 0;
   }
-  // 360 hues, skip 60-120 (yellow/green band).
   const raw = h % 300;
   return raw < 60 ? raw : raw + 60;
 }
 
 /// Build the layer-id → group-id lookup used by every render path that
-/// asks "what group is this in?". `groups` is small in practice (a
-/// handful), so a simple O(N*M) walk is cheaper than a Map allocation.
+/// asks "what group is this in?". Built by a flat walk over each group's
+/// `layer_ids`: `groups` is small in practice (a handful), so nothing
+/// incremental is worth keeping.
 export function indexGroups(groups: GroupSummary[]): Map<string, string> {
   const idx = new Map<string, string>();
   for (const g of groups) {

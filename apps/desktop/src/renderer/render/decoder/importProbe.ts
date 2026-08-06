@@ -1,25 +1,20 @@
-// E2E-only investigation probe for GitHub issue #7 boundary #1: a HARDWARE-
-// decoded (GPU-backed) `VideoFrame` drawn into a 2D canvas is a silent no-op on
-// Linux/NVIDIA-GL → black export frames (the `preferSoftware` workaround at
-// exportWorker.ts). Web research (Chromium graphics-dev: accelerated 2D canvas
-// is blacklisted on Linux; iOS16 Safari: video→2D-canvas went black on the GPU
-// path, forcing software fixed it; WebKit "painting a VideoFrame in a canvas
-// does nothing") points at the 2D-canvas GL import being the broken path, while
-// WebGL `texImage2D` / `createImageBitmap` are the *supported* GPU-import paths.
-// The preview lane already goes VideoFrame → `createImageBitmap` → drawImage and
-// is HW-verified green on this host.
+// E2E-only probe for GitHub issue #7 boundary #1, which carries the web
+// research: a HARDWARE-decoded (GPU-backed) `VideoFrame` drawn into a 2D canvas
+// is a silent no-op on Linux/NVIDIA-GL → black export frames, the reason
+// exportWorker.ts falls back to `preferSoftware`.
 //
 // This probe decodes the first frame of a clip TWICE (prefer-hardware and
-// prefer-software) and, for each, tries all three import paths, reading pixels
+// prefer-software) and, for each, tries every import path, reading pixels
 // back and reporting mean luma + non-zero coverage. A black import reads ~0; a
 // faithful one reads the clip's real luma. Run in both the renderer main thread
 // AND a dedicated Worker (the export bug's actual context) via
 // `importProbe.worker.ts`. Imported only from the e2e hook surface, so prod
 // bundles tree-shake it out.
 //
-// Decisive matrix: {main, worker} × {hardware, software} × {drawImage,
-// createImageBitmap, texImage2D}. If worker+hardware+drawImage is the ONLY black
-// cell, the fix is to route the export snapshot through the surviving path.
+// Decisive matrix: {main, worker} × {hardware, software} × the four
+// `MethodResult` fields (drawImage, createImageBitmap, texImage2D, copyTo). If
+// worker+hardware+drawImage is the ONLY black cell, the fix is to route the
+// export snapshot through the surviving path.
 
 import { openMediaInput } from "./mediaInput";
 
@@ -365,7 +360,7 @@ async function probeOneDecode(
     }
     frame = await decodeFirstFrame(opened, config, hwAccel);
     result.frameFormat = frame.format ?? null;
-    // Same frame, three import paths — none of these consume/close it.
+    // Same frame, four import paths — none of these consume/close it.
     result.drawImage = await runMethod(() => methodDrawImage(frame!));
     result.createImageBitmap = await runMethod(() => methodCreateImageBitmap(frame!));
     result.texImage2D = await runMethod(() => methodTexImage2D(frame!));

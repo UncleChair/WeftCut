@@ -33,10 +33,10 @@ export interface PanelDefinition {
 const TOOL_MINIMUM = { minimumWidth: 240, minimumHeight: 160 } as const;
 
 /** Quick Actions is a single-row/single-column button strip, so it must be
- *  draggable down to a bare edge bar — `TOOL_MINIMUM` would pin it 6× too
- *  wide. One button plus the drag grip is the real floor; anything narrower
- *  and the strip can't render its own content. Overflow scrolls, so a small
- *  minimum never hides a command permanently. */
+ *  draggable down to a bare edge bar — `TOOL_MINIMUM`'s 240 px would pin it
+ *  ~5.5× too wide. One button plus the drag grip is the real floor; anything
+ *  narrower and the strip can't render its own content. Overflow scrolls, so a
+ *  small minimum never hides a command permanently. */
 const STRIP_MINIMUM = { minimumWidth: 44, minimumHeight: 44 } as const;
 
 /**

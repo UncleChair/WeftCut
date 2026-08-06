@@ -23,7 +23,7 @@ import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
 /// agent-session state (seeded on mount, kept live via
-/// `agent_session:changed`), the §7-B on-open stale-motifs pull, and the
+/// `agent_session:changed`), the on-open stale-motifs pull, and the
 /// stream-wiring effects (status log, project-state mirror, app-settings,
 /// and the `project:changed` → refresh subscription). `refresh` arrives from
 /// App via `deps` — App still owns the callback itself since the R.7
@@ -142,9 +142,9 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
     };
   }, []);
 
-  // Project state mirror for the DOM preview (docs/preview.md). Coexists
+  // Project state mirror for the Pixi preview (docs/preview.md). Coexists
   // with the local-state fetches below — both subscribe to `project:changed`
-  // and re-fetch, with no cross-talk. The DOM preview engine reads from
+  // and re-fetch, with no cross-talk. The Pixi preview engine reads from
   // `useProjectStore`; App.tsx's own fetches still drive the panels.
   // The search index rides along on the same effect: it reads
   // `useProjectStore`'s summary, so it wires right after the store itself

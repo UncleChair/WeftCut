@@ -177,8 +177,8 @@ export interface E2EHook {
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// motif-only timeline, driving the FULL real export path: main-thread
   /// `exportBakeMotifs` → transfer → Worker `MotifSprite` bind-by-index.
-  /// Proves motifs render in export (they were silently absent before). The
-  /// caller (project + editor) must already be set up via `newProjectAndEnter`.
+  /// Proves motifs render in export. The caller (project + editor) must already
+  /// be set up via `newProjectAndEnter`.
   exportMotifClip(args: {
     motifId: string;
     outputAbsPath: string;
@@ -421,14 +421,13 @@ export interface E2EHook {
   /// `FfmpegSource`'s in-place HW→SW recovery instead of the forced path's
   /// hard fatal. Dev/e2e only. See decodeBench.ts's doc comment.
   decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Promise<HwFallbackProbeResult>;
-  /// issue #7 boundary #1 investigation: decode a clip's FIRST frame under
-  /// prefer-hardware AND prefer-software and, for each decode, try importing the
-  /// raw `VideoFrame` three ways — 2D `drawImage` (the export lane's current,
-  /// suspected-black path), `createImageBitmap` (the preview lane's path), and
-  /// WebGL `texImage2D` — reading pixels back as mean luma + lit coverage. Runs
-  /// BOTH on the renderer main thread and in a dedicated Worker (the export
-  /// bug's actual context) so the spec can localise the failure. A silently
-  /// black import reads meanLuma ≈ 0. Dev/e2e only.
+  /// Decode a clip's FIRST frame under prefer-hardware AND prefer-software and,
+  /// for each decode, try importing the raw `VideoFrame` three ways — 2D
+  /// `drawImage` (the export lane's path), `createImageBitmap` (the preview
+  /// lane's path), and WebGL `texImage2D` — reading pixels back as mean luma +
+  /// lit coverage. Runs BOTH on the renderer main thread and in a dedicated
+  /// Worker (the export lane's context) so the spec can localise a silently
+  /// black import, which reads meanLuma ≈ 0. Dev/e2e only.
   importProbe(args: { sourcePath: string }): Promise<{ main: BothModesResult; worker: BothModesResult }>;
   /// Imperative read of the global playhead store (µs). Search-palette e2e
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
@@ -503,10 +502,9 @@ export interface CompositeSample {
   accentB: number;
 }
 
-/// Live-preview bridge handle registered by `PixiPreview` (behind the e2e
-/// guard) so the readback/seek hooks can reach the active renderer + engine
-/// without the spec importing bundled modules. Re-registered on each
-/// `PixiPreview` mount (StrictMode / project swap); the most recent wins.
+/// Live-preview handle onto the active renderer + engine: seek, pixel/frame
+/// readback, and the Compositor's own probes. Registered via
+/// `installPreviewBridge`.
 interface PreviewBridge {
   /// Seek the live preview to composition-time `us` (clock + re-composite).
   seekUs(us: number): void;
@@ -597,9 +595,7 @@ export function installDecodeBenchHooks(): void {
   hookSlot().decodeBenchHwFallbackProbe = decodeBenchHwFallbackProbe;
   installPlaybackBenchHooks();
 
-  // issue #7 boundary #1 probe: run the frame-import comparison on the main
-  // thread AND in a dedicated Worker, returning both so the spec can localise a
-  // silently-black import path. Worker is spawned per call and torn down after.
+  // Worker is spawned per call and terminated after.
   hookSlot().importProbe = async ({ sourcePath }) => {
     const assetUrl = convertFileSrc(sourcePath);
     const main = await probeBothModes(assetUrl);
@@ -653,9 +649,7 @@ export function installPlaybackBenchHooks(): void {
   hookSlot().stageProfilingReset = () => resetStageTimers();
   hookSlot().stageProfilingSnapshot = () => stageSnapshot();
   // Drive the REAL wrapped setter, for the same reason as setPreferProxies (see
-  // its doc comment): the raw update_project_settings patch never reaches
-  // useProxyPrefStore, which is what proxyIntent/resolveSource read, so a bench
-  // that forced Original through the raw command would keep measuring the proxy.
+  // its doc comment).
   hookSlot().setProxyOverride = (mediaId: string, value: boolean | null) =>
     setProxyOverride(mediaId, value);
 }
@@ -663,9 +657,6 @@ export function installPlaybackBenchHooks(): void {
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,
 /// add/patch/clear/baked-index). Lives at Root level; called once on boot.
 export function installMotifTestHooks(): void {
-  // Drive the REAL MotifSprite (Task A) and read back each bound frame's
-  // content checksum so the spec can prove the motif animates across the
-  // timeline through the sprite's own frame-selection + bind path.
   hookSlot().renderMotifSpriteFrames = async ({
     motifId,
     fpsNum,
@@ -910,18 +901,10 @@ export function installMotifTestHooks(): void {
 /// store — i.e. `resolveDecode(media).exportPath != null`, the EXACT condition
 /// the export-readiness gate reads.
 ///
-/// `importMedia`/`addMediaLayer` mutate the actor; those changes reach this
-/// store asynchronously (via the `project:changed` bridge), and the
-/// decodability decision that sets the export route lands a beat later still.
-/// A real user clicks Export only after the clip appears ready on the timeline;
-/// the hook otherwise fires `runExport` in the same tick, racing the bridge.
-/// When it wins, the gate reads a project that doesn't yet reference the layer
-/// (so `referencedVideoMediaIds` is empty → nothing to wait on), then
-/// `runExport`'s snapshot picks up the media with its route still undecided and
-/// throws `"… has no export-ready source"`. Gating the hook on the same
-/// condition the gate uses makes that race impossible. (The companion product
-/// fix — a sequence guard in `wireProjectStore` — keeps the route from being
-/// clobbered back to undecided after this wait resolves.)
+/// `importMedia`/`addMediaLayer` mutate the actor and reach this store
+/// asynchronously (via the `project:changed` bridge), so a hook that fires
+/// `runExport` in the same tick races it. Gating on the same condition the
+/// export gate reads makes that race impossible.
 function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<void> {
   const ready = () => {
     const m = useProjectStore.getState().mediaById.get(mediaId);
@@ -980,13 +963,6 @@ export function installMotifHook(): void {
     return btoa(binary);
   };
 
-  // Live-preview integration hooks. `motifAddCountdown` drops a 5 s countdown
-  // Motif layer onto the timeline through the SAME `add_motif` IPC the
-  // MotifPicker uses — the countdown Motif's manifest supplies the metadata
-  // (size 480×480 + props seconds/label/accent) so the compositor's
-  // resolveMotifFrame → rasterMotifFrame (CDP) path renders it live.
-  // `weftcutSeekUs` / `weftcutSampleComposite`
-  // delegate to the PreviewBridge registered by `PixiPreview`.
   hookSlot().motifAddCountdown = async () => {
     return addMotif({
       motifId: "countdown",
@@ -1003,10 +979,6 @@ export function installMotifHook(): void {
     if (!previewBridge) throw new Error("weftcutSampleComposite: preview bridge not registered");
     return previewBridge.sampleComposite(x, y);
   };
-  // Preview-sw conformance: read the active clip's decode source +
-  // sprite off the live Compositor, capture the composited frame, and expose
-  // the persisted decode route — the three facts the spec needs to prove the
-  // native software-decode preview path end-to-end.
   hookSlot().activeClipProbe = (layerId?: string) => {
     if (!previewBridge) throw new Error("activeClipProbe: preview bridge not registered");
     return previewBridge.activeClipProbe(layerId);
@@ -1025,10 +997,8 @@ export function installMotifHook(): void {
   hookSlot().mediaById = (mediaId: string) => {
     return useProjectStore.getState().mediaById.get(mediaId) ?? null;
   };
-  // Drive the REAL setter (IPC invoke + optimistic setState on
-  // useProxyPrefStore) rather than the raw update_project_settings command —
-  // see the E2EHook.setPreferProxies doc comment for why the raw command
-  // alone never reaches proxyIntent/resolveSource.
+  // Drive the REAL wrapped setter — see the `E2EHook.setPreferProxies` doc
+  // comment for why the raw command is not equivalent.
   hookSlot().setPreferProxies = (v: boolean) => setPreferProxies(v);
 }
 

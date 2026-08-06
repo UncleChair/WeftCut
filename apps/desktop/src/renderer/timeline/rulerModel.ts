@@ -19,15 +19,6 @@ import { formatRulerLabel } from "./geometry";
 /// frame grid itself (`renderer/frames.ts`). See
 /// `.scratch/timeline-frame-grid/spec.md`.
 ///
-/// Two regimes:
-///   - Below `pxPerFrame >= FRAME_MODE_THRESHOLD_PX`: the classic second-level
-///     `NICE_STEPS_SEC` ladder, mm:ss labels.
-///   - At/above the threshold: frame-grid mode. Major-tick stride is the largest
-///     of `NICE_STEPS_FRAMES` where `stride * pxPerFrame >=
-///     TARGET_MAJOR_PX_FRAME_MODE`, labels read SMPTE `HH:MM:SS:FF`, and minor
-///     ticks land at every single frame regardless of major stride so the user
-///     has a visible frame grid to align edits against.
-///
 /// Frame-mode tick times come from the composition frame grid, so the ruler and
 /// the edited content are the same grid.
 
@@ -90,10 +81,8 @@ export interface RulerModel {
   strideFrames: number;
 }
 
-/// One options object rather than the six positional arguments the ticket
-/// sketches: `totalSec` (the row's right bound, independent of the viewport) is
-/// a required sixth input, and six same-typed numbers in a row is a call site
-/// nobody can read.
+/// Inputs to `computeRulerModel`. `totalSec` is the row's right bound and is
+/// independent of the viewport window the other fields describe.
 export interface RulerModelInput {
   fpsNum: number;
   fpsDen: number;
@@ -145,10 +134,10 @@ export function computeRulerModel(input: RulerModelInput): RulerModel {
     fpsNum > 0 && fpsDen > 0 && pxPerFrame >= FRAME_MODE_THRESHOLD_PX;
 
   if (frameMode) {
-    // Pick the largest stride from [1, 2, 5, 10, 30] where the
-    // major-tick spacing meets the target px. Fall back to the
-    // largest if none meet the target (very low zoom for a
-    // high-fps comp — rare).
+    // Pick the smallest stride in NICE_STEPS_FRAMES whose major-tick spacing
+    // clears the target px (the descending walk has no break, so the last
+    // assignment wins). Falls back to 1 when none of them do — very low zoom
+    // for a high-fps comp, rare.
     // Annotated `number` (not the `as const` literal `1`) so the loop can
     // assign any element of NICE_STEPS_FRAMES below.
     let stride: number = NICE_STEPS_FRAMES[0]!;

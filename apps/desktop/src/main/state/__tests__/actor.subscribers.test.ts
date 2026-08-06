@@ -14,6 +14,6 @@ describe('actor change broadcast fault isolation', () => {
     // Any recorded mutation broadcasts a ChangeEvent.
     actor.dispatch('add_track', { label: 'X' })
     expect(thrower).toHaveBeenCalledTimes(1)
-    expect(after).toHaveBeenCalledTimes(1) // would be 0 before the fix
+    expect(after).toHaveBeenCalledTimes(1)
   })
 })

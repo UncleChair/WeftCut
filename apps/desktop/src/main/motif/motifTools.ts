@@ -4,8 +4,6 @@
 // path (ts-actor-host.handleInvoke `case 'motif'`) and the MCP path (server.ts
 // `route === 'motif'`). Returns a RAW value (array | object | id string | null);
 // the MCP caller wraps it via shapeMotifMcpResult, the renderer returns it as-is.
-// Replaces the Rust authoring commands + compute_motif_rebind hybrid for these
-// channels. Mirrors native/src/commands/motif_authoring.rs (the emit + actor wrap).
 import type { Manifest } from '../../shared/motifs/catalog'
 import type { MotifRebindEntry } from '../state/model'
 import type { UserMotifStore } from './store'
@@ -35,10 +33,9 @@ export interface MotifToolDeps {
 }
 
 /** Coerce the install `mode` arg. Renderer sends the object form
- *  `{ kind, target_id? }`; the MCP schema advertises a bare string "new"/"update"
- *  (the historical hybrid contract). "new" coerces; "update" as a bare string has
- *  no target_id and is rejected by installMotifCompute downstream — preserving the
- *  pre-existing inability to MCP-update without a target. */
+ *  `{ kind, target_id? }`; the MCP schema advertises a bare string "new"/"update".
+ *  "new" coerces; a bare "update" carries no target_id and installMotifCompute
+ *  rejects it downstream. */
 function parseMode(mode: unknown): InstallArgs['mode'] {
   if (mode === 'new') return { kind: 'new' }
   if (mode === 'update') return { kind: 'update', target_id: '' } // no target → compute rejects

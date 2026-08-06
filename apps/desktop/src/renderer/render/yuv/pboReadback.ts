@@ -1,10 +1,10 @@
 // Double-buffered async GPU readback for the pack passes: readPixels lands in
 // a PIXEL_PACK_BUFFER (GPU-side DMA, non-blocking) behind a fence; retrieve()
 // waits for the fence — normally already signaled a frame later — then copies
-// the PBO into a frame-owned buffer via getBufferSubData. Replaces the sync
-// readPixels that stalled the worker on GPU completion every frame (and blew
-// up 10× under the run-order readback anomaly). Shared by PackYuvPlanar and
-// PackYuv420p10 so both packers' readback behavior stays aligned.
+// the PBO into a frame-owned buffer via getBufferSubData. A sync readPixels
+// here would stall the worker on GPU completion every frame. Shared by
+// PackYuvPlanar and PackYuv420p10 so both packers' readback behavior stays
+// aligned.
 
 export interface PboPlane {
   /// readPixels dimensions in texels (RGBA8 → w*4 bytes per GPU row).

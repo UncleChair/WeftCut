@@ -1,10 +1,9 @@
 // apps/desktop/src/main/state/__tests__/mcp.agent-hardening.test.ts
-// Regression gates for .scratch/mcp-agent-hardening: real `claude -p` sessions
-// against the live MCP server surfaced (02) update_effect committing nothing on
-// an unparseable patch while reporting success, (03) add_video_layer leaving the
-// video layer on the timeline when its auto-paired audio placement was rejected,
-// and (04) every clip's paired audio piling onto ONE track's audio lane so a
-// visually empty B roll refused placements three sessions running.
+// Regression gates for .scratch/mcp-agent-hardening: (02) update_effect must
+// reject an unparseable patch, never commit nothing and report success; (03)
+// add_video_layer must place the video and its auto-paired audio atomically or
+// not at all; (04) a clip's paired audio must land on its OWN track's audio
+// lane, not a shared one.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 
@@ -48,8 +47,8 @@ describe('add_video_layer auto-pair — combined-row placement (issue 04)', () =
   })
 
   it('two clips at overlapping times on DIFFERENT tracks both succeed (the run2–4 failure)', () => {
-    // Old behavior: both pairs' audio targeted the topmost track (B roll), so
-    // the second placement collided at the audio level on a visually empty roll.
+    // Each pair's audio must stay on its own track: a shared audio lane makes
+    // the second placement collide on a visually empty roll.
     const a = freshActor()
     const media = addVideoWithAudio(a)
     const r1 = a.mcpCall('add_video_layer', videoLayerArgs(aRollId(a), media, 0, 5_000_000))

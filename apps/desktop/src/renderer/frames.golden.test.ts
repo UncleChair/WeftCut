@@ -22,7 +22,7 @@ import {
 
 // The primitives are wasm-backed (the shared weftcut-eval crate, loaded by the
 // global test setup). This golden verifies the wasm reproduces the fixture
-// (single source) — it no longer checks that two hand-mirrored copies agree.
+// (single source).
 
 interface Case {
   name: string;

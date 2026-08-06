@@ -20,14 +20,12 @@ const quantizeScroll = (px: number): number =>
 /// Scroll offset for the tick window, stepped in `RULER_SCROLL_QUANTUM_PX`
 /// blocks.
 ///
-/// The ruler subscribes to the scroll store itself instead of taking
-/// `scrollLeft` as a prop, because a prop would mean React state on the timeline
-/// root and a full-tree re-render per wheel event (timelineScrollStore.ts states
-/// the rule; `Timeline.tsx`'s TimelinePlayhead is the same pattern one step
-/// cheaper). Quantizing bounds the cost further: the ruler commits at most once
-/// per block of scrolling, not once per event, and the window built from a
-/// lagging offset still covers the viewport because the overscan is at least one
-/// quantum wide (see `RULER_OVERSCAN_PX`).
+/// The ruler subscribes to the scroll store itself rather than taking
+/// `scrollLeft` as a prop — see timelineScrollStore.ts for why this is not a
+/// prop. Quantizing bounds the cost further: the ruler commits at most once per
+/// block of scrolling, not once per event, and the window built from a lagging
+/// offset still covers the viewport because the overscan is at least one quantum
+/// wide (see `RULER_OVERSCAN_PX`).
 function useRulerScrollBlockPx(): number {
   const [blockPx, setBlockPx] = useState(() =>
     quantizeScroll(timelineScrollLeftPx()),

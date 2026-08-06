@@ -100,10 +100,6 @@ describe("MotifFrameCache — L0 LRU", () => {
   test("setFrame refreshes recency so a re-set frame survives eviction", () => {
     // Re-`setFrame` of an existing entry must move it to the MRU tail (same as
     // a get-hit), so the OTHER frame becomes the LRU eviction victim.
-    //
-    // Idempotent re-set: the existing bitmap (a) is kept and refreshed to the
-    // MRU tail; the incoming a2 is closed as redundant. Because k#0 moves to
-    // MRU, k#1 remains the LRU eviction victim.
     const c = new MotifFrameCache(2);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
@@ -234,12 +230,8 @@ describe("MotifFrameCache — L0 LRU", () => {
 });
 
 describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
-  // The export Compositor runs in a Worker (worker/exportWorker.ts) where
-  // `window` is undefined and the `window.api` IPC bridge is absent, so the
-  // whole L2 disk layer is unreachable. Each op must degrade to a clean no-op
-  // there instead of throwing `ReferenceError: window is not defined`
-  // (regression: `hydrateBakedIndexAndGc` swallowed that but logged a scary
-  // warning on every export setProject).
+  // Asserts every L2 disk op degrades to a clean no-op when `window` (and with
+  // it the IPC bridge) is absent. Why: `rasterRootDir` in frameCache.ts.
   const realWindow = (globalThis as Record<string, unknown>).window;
   afterEach(() => {
     (globalThis as Record<string, unknown>).window = realWindow;

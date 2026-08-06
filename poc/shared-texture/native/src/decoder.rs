@@ -1,8 +1,10 @@
-//! One-shot video decode → tightly-packed NV12 bytes, adapted from the
-//! `frame-uri-demo` reference. Tries D3D11VA hardware decode (falling back to
-//! software), then `av_hwframe_transfer_data`'s the GPU frame to system memory
-//! as NV12. Step 1b-i uploads the result into a shared NV12 texture; step 1b-ii
-//! will instead copy the GPU texture directly and skip this transfer.
+//! ffmpeg decode for the POC, adapted from the `frame-uri-demo` reference, in
+//! two shapes:
+//!   - `decode_first_frame_nv12` — D3D11VA with a software fallback, then
+//!     `av_hwframe_transfer_data` to system memory as tightly-packed NV12 bytes.
+//!   - `decode_first_d3d11_frame` / `VideoStream` — the D3D11 GPU surface
+//!     itself (hardware decode required), so the caller can copy texture to
+//!     texture with no CPU bounce.
 
 use ffmpeg_next::ffi as ffs;
 use ffmpeg_next::format::{input, Pixel};
@@ -301,11 +303,6 @@ pub fn decode_first_d3d11_frame(path: &str) -> Result<D3d11Frame, String> {
 /// An open d3d11va decode session that yields successive GPU frames, for the
 /// streaming POC (Result 3). Owns the same ffmpeg objects as `D3d11Frame` but
 /// keeps them alive across many `next_frame()` calls instead of one shot.
-///
-/// Packet pumping relies on ffmpeg-next's `PacketIter` holding no cursor of its
-/// own: each `self.ictx.packets().next()` reads the *next* packet because the
-/// read position lives inside the `AVFormatContext`. So a fresh iterator per
-/// call resumes where the previous one left off.
 pub struct VideoStream {
     ictx: ffmpeg_next::format::context::Input,
     decoder: ffmpeg_next::decoder::Video,

@@ -51,12 +51,6 @@ pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
     })
 }
 
-// Import routes through the hybrid — `probe_media` / `parse_subtitles` napi
-// compute → TS-actor write — with the workspace copy + derivative jobs kicked
-// separately (enqueue_workspace_copy / enqueue_jobs_for_media napi). There is
-// no monolithic Rust importer; `probe_media_item` above is the compute half
-// the `probe_media` napi reuses.
-
 pub async fn import_cancel(backend: &Backend, media_id: String) -> Result<bool, String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
     Ok(backend.import_queue.cancel(id))
@@ -266,7 +260,7 @@ pub fn filmstrip_decode_source(
     }
     match &item.decode_route {
         // NativeSw: the ProRes original decodes directly (filmstrip already
-        // supports these formats), so thumbnails come from the original,
+        // supports these formats), so tiles come from the original,
         // immediately — do NOT wait on the proxy the way `Proxied` does.
         state::DecodeRoute::Bypass
         | state::DecodeRoute::DirectExport { .. }
@@ -430,7 +424,7 @@ mod mirror_tests {
 
     /// `ensure_full_proxy` routes the derivative write through the seam
     /// (`commit_media_derivatives`), which always emits `media:derivatives` for
-    /// the TS host to apply (the Rust-write arm is gone post-4b).
+    /// the TS host to apply.
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ensure_full_proxy_routes_through_seam() {
@@ -453,7 +447,7 @@ mod mirror_tests {
     }
 
     /// `get_waveform_tile` returns dequantized min/max/rms values for the
-    /// requested range. Fixtures a v3 peaks file with known RMS values and
+    /// requested range. Fixtures a v4 peaks file with known RMS values and
     /// asserts they round-trip correctly through dequantization.
     #[cfg(feature = "jobs")]
     #[tokio::test]
@@ -490,11 +484,9 @@ mod mirror_tests {
         .expect("get_waveform_tile");
 
         assert_eq!(tile.peaks_per_second, 100.22727272727273);
-        // Verify min/max are dequantized correctly (existing behavior).
         assert_eq!(tile.min[0], -100.0_f32 / 32767.0);
         assert_eq!(tile.max[0], 100.0_f32 / 32767.0);
 
-        // Verify rms is dequantized and present (new behavior).
         assert_eq!(tile.rms.len(), 3);
         assert_eq!(tile.rms[0], 1000.0_f32 / 65535.0);
         assert_eq!(tile.rms[1], 2000.0_f32 / 65535.0);

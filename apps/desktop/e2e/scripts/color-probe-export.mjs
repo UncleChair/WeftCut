@@ -1,4 +1,4 @@
-// Axis-A Stage-0 probe (one-shot diagnostic, NOT a gate). Given a REAL WeftCut
+// Axis-A probe (one-shot diagnostic, NOT a gate). Given a REAL WeftCut
 // export of the 709ltd color chart, it (1) ffprobes the output's color tags and
 // (2) decodes the output under all four (matrix,range) combos and reports total
 // error vs authored RGB — the combo with the lowest error reveals the matrix the

@@ -77,9 +77,9 @@ function readMemory(): PerfMemory | null {
 const INTERVAL_RING_CAP = 120;
 
 /// Circular buffer for rAF intervals. Avoids the O(n) Array.shift on
-/// every overflow tick (~7200 shifts/sec at 60 Hz with CAP=120, each
-/// re-indexing the full ring — a measurable perturbation of the very
-/// interval we're trying to measure on slower machines).
+/// every overflow tick (~60 shifts/sec at 60 Hz, each re-indexing all 120
+/// entries — a measurable perturbation of the very interval we're trying
+/// to measure on slower machines).
 interface IntervalRing {
   buf: number[];
   writeIdx: number;
@@ -499,18 +499,11 @@ function PerfDashboard({
                 <th className="perf-num">ring</th>
                 <th>span (ms)</th>
                 <th className="perf-num">LA</th>
-                {/* Hardware lane only: the synchronous cross-device read
-                    barrier the preload pays per frame, per session. */}
                 <th className="perf-num" title="Preload read-completion barrier, ms (p50/p95) — hardware lane only">
                   barrier
                 </th>
-                {/* Cumulative, not a rate: what a human watches here is whether
-                    it CLIMBS during steady playback. A ring that is filling and
-                    painting leaves this flat; churn (re-seek loops, a decoder
-                    delivering frames the window has already passed) is the only
-                    thing that moves it. `fps` and `ring` both read healthy
-                    while this runs away — that combination is the measured
-                    signature of the multi-track collapse. */}
+                {/* `fps` and `ring` both reading healthy while this runs away is
+                    the measured signature of the multi-track collapse. */}
                 <th className="perf-num" title="Decoded frames the ring discarded without ever painting them (stale-on-arrival + evicted/flushed unserved)">
                   waste
                 </th>
@@ -953,9 +946,6 @@ export function PerformanceMonitorWindow() {
       unlisten?.();
     };
   }, []);
-
-  // The caption close button routes through window:close to this sender. Main
-  // then broadcasts the labelled close, which idles the editor-side bridge.
 
   const onReset = useCallback(() => {
     void emit(PERF_HUD_RESET_EVENT).catch(() => {});

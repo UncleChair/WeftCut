@@ -1,6 +1,6 @@
-//! OpenAI backend — Whisper transcription and tts-1 synthesis. Both share the
-//! same API key pulled from `backend::SpeechBackend::OpenAi` so the user
-//! configures one credential.
+//! OpenAI backend — Whisper transcription and tts-1 synthesis. Both surfaces
+//! read the same key from `backend::SpeechBackend::OpenAi`; see `speech::backend`
+//! for the one-key rationale.
 
 use std::time::Instant;
 
@@ -328,9 +328,12 @@ fn map_status_to_speech_error(
             provider: SpeechBackend::OpenAi,
         },
         StatusCode::PAYLOAD_TOO_LARGE => SpeechError::PayloadTooLarge {
-            // We already pre-checked against `WHISPER_MAX_UPLOAD_BYTES`, so
-            // landing here means OpenAI tightened the cap or we miscounted.
-            // Surface their advertised cap so the message stays accurate.
+            // Whisper-shaped arm: `transcribe` pre-checks
+            // `WHISPER_MAX_UPLOAD_BYTES`, so landing here means OpenAI
+            // tightened the cap or we miscounted. A tts-1 413 also lands here
+            // and is reported against the Whisper cap, not
+            // `TTS_MAX_INPUT_CHARS` — thread the caller's cap in if that ever
+            // has to be exact.
             bytes: 0,
             cap: WHISPER_MAX_UPLOAD_BYTES,
         },

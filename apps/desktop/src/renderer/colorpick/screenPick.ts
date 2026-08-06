@@ -1,7 +1,7 @@
 // Native Chromium eyedropper = the SCREEN half of the hybrid design. It
 // returns only { sRGBHex } — no coordinates, no hover events — which is why it
-// cannot carry the in-app session (spec §"Why the native EyeDropper cannot
-// carry the whole feature"). open() requires transient activation: call it
+// cannot carry the in-app session (docs/features.md § "Color picker
+// (eyedropper)"). open() requires transient activation: call it
 // from a click/keydown handler only.
 
 interface EyeDropperLike {

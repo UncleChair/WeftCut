@@ -45,11 +45,8 @@ export class ScrubCoalescer {
 
   requestSeek(tUs: number): void {
     this.pendingTarget = tUs;
-    // Quiet-period timer: reset each call so a pause fires promptly.
     if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => this.fire(), this.debounceMs);
-    // Ceiling timer: arm once per pending sequence; do NOT reset, so an
-    // unbroken drag still fires every `maxWaitMs`.
     if (this.maxWaitTimer === null) {
       this.maxWaitTimer = setTimeout(() => this.fire(), this.maxWaitMs);
     }

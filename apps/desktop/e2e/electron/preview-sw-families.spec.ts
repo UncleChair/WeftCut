@@ -5,8 +5,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
-// Phase-2 Plan A conformance for the non-ProRes blind-spot families that CAN be
-// synthesized: DNxHR (intra) and MPEG-2 (long-GOP). ProRes stays proven in
+// Conformance for the non-ProRes blind-spot families that CAN be synthesized:
+// DNxHR (intra) and MPEG-2 (long-GOP). ProRes stays proven in
 // preview-sw-conformance.spec.ts. VC-1/WMV3 have no ffmpeg encoder → covered by
 // the Rust routing test + codec-agnostic decoder, not here. Reuses the
 // decode-bench fixtures (e2e/scripts/gen-decode-bench-fixtures.mjs).

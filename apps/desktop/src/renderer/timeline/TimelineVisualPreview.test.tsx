@@ -29,7 +29,7 @@ vi.mock("../ipc", async (importOriginal) => {
 });
 
 // TimelineFilmstrip's tile engine reads these globals directly (not
-// injected) — stub them as in FilmstripTileProducer.test.ts / B4.
+// injected) — stub them as in FilmstripTileProducer.test.ts.
 vi.stubGlobal("fetch", vi.fn(async () => ({ blob: async () => new Blob() }) as unknown as Response));
 vi.stubGlobal(
   "createImageBitmap",

@@ -39,9 +39,7 @@ impl<S: Subscriber> Layer<S> for LogBusLayer {
             return;
         }
 
-        // Extract the formatted message + structured fields. We can't
-        // safely format inside the visitor (no `Debug` access without
-        // allocation), so use the simple `MessageVisitor` pattern.
+        // Message + structured fields are pulled out by `MessageVisitor`.
         let mut visitor = MessageVisitor::default();
         event.record(&mut visitor);
         let message = visitor.message.unwrap_or_else(|| meta.target().to_string());

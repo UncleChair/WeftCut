@@ -2,7 +2,7 @@
 // Focused MCP adapter routing tests: verifies that actor.mcpCall() correctly
 // routes tool names → mutations (valid calls succeed + state changes as expected)
 // and rejects malformed args with a structured error envelope (no throw).
-// Replaces the oracle-mcp differential (Task 13 deletes that). Coverage:
+// Coverage:
 // table-exec tools (add_track, delete_layer, trim_layer, move_layer,
 // groups_create, set_role_gain, undo/redo) and dedicated-exec tools
 // (add_color_layer, add_marker, split_layer, set_keyframe, add_track).
@@ -454,9 +454,7 @@ describe('MCP adapter routing — undo / redo (table)', () => {
 })
 
 // ── Dedicated-exec: set_keyframe ───────────────────────────────────────────────
-// Note: Color layers have no opacity or transform — use an add_marker's textual
-// layer as a vehicle. Instead, we add a Text layer via the table-exec add_track
-// path + dispatch, then set_keyframe on its opacity param (Text has opacity).
+// Color layers have no opacity param, so these keyframe a Text layer instead.
 
 describe('MCP adapter routing — set_keyframe (dedicated)', () => {
   it('valid call routes on a Text layer opacity param and track becomes Keyframed', () => {

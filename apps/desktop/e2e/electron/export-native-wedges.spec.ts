@@ -46,8 +46,8 @@ const TONES = path.resolve(MEDIA_DIR, 'test_tones_10s.wav')
 // fidelity: the wedge signal is `aligned`/`best_match_index`. The ProRes
 // master carries far more detail than a default-bitrate H.264/AV1 re-encode
 // retains — identity samples measure SSIM ≈ 0.57–0.63 on this fixture — so the
-// floor only rejects garbage. Fidelity has its own conformance gate (spec
-// Testing Decisions, ProRes SSIM + differential).
+// floor only rejects garbage. Fidelity has its own gate —
+// export-prores-fidelity.spec.ts (ProRes SSIM + differential).
 const SSIM_FLOOR = 0.5
 const OFFSET_US = 2_000_000
 const OFFSET_FRAMES = 60
@@ -108,9 +108,9 @@ async function readPerf(page: Page): Promise<NativePerf> {
 // mediaId (one fresh track each). Mirrors export_overlap_same_source.spec.ts —
 // re-importing would mint a new mediaId and dodge the shared-source decode
 // pipeline under test. Deliberately NO wait for the full proxy: native-routed
-// blind-spot sources skip the pre-export proxy wait (spec decision 8), so
-// exporting straight after placement is itself part of the gate — a routing
-// regression that re-enters the proxy wait shows up as an export stuck in
+// blind-spot sources skip the pre-export proxy wait (`proxyWaitScope`, ADR
+// 0033), so exporting straight after placement is itself part of the gate — a
+// routing regression that re-enters the proxy wait shows up as an export stuck in
 // "preparing" until the ProRes proxy lands (or a driveExport timeout).
 async function placeSameSourceClips(page: Page, extras: number[]): Promise<{ mediaId: string }> {
   const first = await importAndPlaceMedia(page, { mediaAbsPath: PRORES, tStartUs: 0 })
@@ -561,12 +561,12 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
   })
 
   // Gate (h): the same ramp to the second 10-bit target, AV1 (the software
-  // encoder is probe-picked — see hwencoder.rs software_encoder_candidates). No
+  // encoder is probe-picked — see encoder_registry.rs software_adapters). No
   // profile assertion — AV1's "Main" profile covers 10-bit, so pix_fmt is the
   // depth signal.
   test('10-bit ramp through the native route to AV1 10-bit keeps its step count', async () => {
-    // AV1 10-bit needs a sidecar built with libsvtav1. Block A pins the Linux
-    // sidecar to the BtbN n7.1 GPL build (fetch-ffmpeg.mjs), which carries
+    // AV1 10-bit needs a sidecar built with libsvtav1. The Linux sidecar is
+    // the BtbN n7.1 GPL build (fetch-ffmpeg.mjs), which carries
     // libsvtav1 (8/10-bit) — so the software-encoder probe picks it and this
     // gate runs on Linux too, alongside Windows.
     test.setTimeout(420_000)

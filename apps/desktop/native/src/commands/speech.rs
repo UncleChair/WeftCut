@@ -128,10 +128,9 @@ pub async fn settings_test_provider(
 /// marker for the one the transcription resolver would use given `preferred`.
 ///
 /// Generalizes [`settings_get_api_key_status`] (which lists cloud backends
-/// only) to cover local engines too — but that command is KEPT alongside this
-/// one so existing TS callers don't break. `preferred` is injected by Electron
-/// main from the TS-owned preferred-engine store (`"auto"` / absent → automatic
-/// fall-through).
+/// only) to cover local engines too; that command is kept alongside this one —
+/// see its doc. `preferred` is injected by Electron main from the TS-owned
+/// preferred-engine store (`"auto"` / absent → automatic fall-through).
 pub async fn settings_get_speech_backends(
     b: &Backend,
     preferred: Option<String>,

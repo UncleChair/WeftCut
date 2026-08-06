@@ -1,10 +1,9 @@
 //! MCP tool functions, transport-free. Each tool is a
 //! `pub(super) async fn <name>(b: &Backend, args: <Args>) -> Result<ToolResult, McpToolError>`.
-//! Each tool returns `ToolResult` / `McpToolError`. Errors map 1:1 onto the MCP
-//! error model in `wire.rs`.
+//! Errors map 1:1 onto the MCP error model in `wire.rs`.
 //!
-//! Only the native/compute/hybrid-compute tool handlers live here.
-//! The ~47 TS-executed mutation handlers are deleted; the TS actor serves them.
+//! Only the native/compute/hybrid-compute tool handlers live here; mutation
+//! tools are served by the TS actor.
 //! Cloud tools (transcribe/synthesize) are gated on `feature = "speech"`.
 
 use chrono::Utc;
@@ -30,11 +29,6 @@ use super::EmptyArgs;
 // Shared helpers
 // ============================================================
 
-// `agent_actor` + `map_command_error` (the Agent-actor stamp + the structured
-// CommandError→MCP error mapper) were used only by the deleted/stubbed mutation
-// handlers (add_*, import_media, install_motif, synthesize_speech). The kept
-// read/compute tools don't write the actor, so both are absent here.
-
 pub(super) fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpToolError> {
     Uuid::parse_str(s)
         .map_err(|e| McpToolError::invalid_params(format!("{field} not a UUID: {e}"), None))
@@ -47,10 +41,6 @@ pub(super) fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpToolError> {
 pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, McpToolError> {
     Ok(ToolResult::text("pong"))
 }
-
-// `begin_agent_session` routes to the TS actor (it is a `'ts'` MCP tool, so
-// `mergeMcpCatalog` filters it out of the Rust catalog and the TS def supplies
-// it). It has no Rust handler / args / catalog entry.
 
 // Track and layer mutation tools (add_track, remove_track, move_track,
 // add_color_layer, add_video_layer, update_layer, update_layer_params,
@@ -79,9 +69,7 @@ pub(super) struct ApplySubtitlesArgs {
 }
 
 /// `apply_subtitles` Rust handler is a stub — the tool routes through the hybrid
-/// orchestrator (parse_subtitles napi compute → TS-actor add_caption_track write);
-/// the schema stays so `listTools` advertises it, but the TS host intercepts the
-/// call before dispatch reaches this handler.
+/// orchestrator (parse_subtitles napi compute → TS-actor add_caption_track write).
 pub(super) async fn apply_subtitles(
     _b: &Backend,
     _args: ApplySubtitlesArgs,
@@ -321,9 +309,7 @@ pub(super) struct FrameRef {
     /// `keyframe_t_us` / `t_*_us` that `analyze_clip` returns, so a shot cover
     /// frame can be fed straight in.
     pub t_us: i64,
-    /// Injected by the TS MCP host (sole state owner) — the layer resolved by
-    /// `layer_id` and its `MediaItem`; see DetectSilencesArgs. `None` on a direct
-    /// Rust call → the handler produces the same not-found error.
+    /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
     #[serde(default)]
     #[schemars(skip)]
     pub layer: Option<crate::state::Layer>,
@@ -409,16 +395,6 @@ pub(super) async fn compare_frames(
     ToolResult::json(&jobs::shot::sim::compare_frames(&img_a, &img_b))
 }
 
-// Layer-mutation tools (update_layer, update_layer_params, move_layer,
-// split_layer, delete_layer, trim_layer), group mutation tools
-// (groups_create, groups_dissolve, groups_add_members, groups_remove_members,
-// groups_rename), duplicate_layer, keyframe tools (get_param_track, set_keyframe,
-// remove_keyframe, retime_keyframe, set_keyframe_easing, smooth_keyframes,
-// clear_keyframes, set_param_track), effect tools (add_effect, update_effect,
-// move_effect, remove_effect), composition tools (set_composition,
-// fit_composition_to_layers), and marker tools (add_marker, update_marker,
-// remove_marker) are absent — served by the TS actor.
-
 // ============================================================
 // Media tools
 // ============================================================
@@ -434,9 +410,7 @@ pub(super) struct ImportMediaArgs {
 }
 
 /// `import_media` Rust handler is a stub — the tool routes through the hybrid
-/// orchestrator (probe_media napi compute → TS-actor write); the schema stays so
-/// `listTools` advertises it, but the TS host intercepts the call before dispatch
-/// reaches this handler (the hybrid pattern).
+/// orchestrator (probe_media napi compute → TS-actor write).
 #[cfg(feature = "jobs")]
 pub(super) async fn import_media(
     _b: &Backend,
@@ -448,12 +422,8 @@ pub(super) async fn import_media(
     ))
 }
 
-// remove_media, undo, redo, lock_history, unlock_history, checkpoint,
-// list_checkpoints, restore_checkpoint, dry_run, set_role_gain, set_role_flags
-// are absent — served by the TS actor.
-
 // ============================================================
-// detect_silences peak-scan helpers (ported verbatim)
+// detect_silences peak-scan helpers
 // ============================================================
 
 /// Scan a peaks array and return timeline-absolute silence ranges. Splits the
@@ -693,10 +663,8 @@ mod tests {
         );
     }
 
-    // Tests for audio-role tools, add_track, and the apply_subtitles caption-track
-    // build are absent along with their handlers: those tools are
-    // TS-served or hybrid stubs. The subtitle cue-shift + parse path is covered by
-    // the subtitles module tests + the TS-side hybrid e2e.
+    // Subtitle cue-shift + parse coverage lives in the subtitles module tests +
+    // the TS-side hybrid e2e.
 }
 
 // ============================================================
@@ -1023,11 +991,8 @@ async fn transcribe_clip_inner(
         args.t_end_us,
     )?;
 
-    // Explicit `backend` arg → STRICT (that engine or an error naming its
-    // gap; never a silent substitute — the caller may have chosen local for
-    // privacy). Unknown tag → clean invalid_params, matched against the stable
-    // `as_str` wire tag (not the serde form), same idiom as
-    // commands::speech::parse_backend.
+    // Explicit `backend` → STRICT; unknown tag → clean invalid_params. Matched
+    // against the stable `as_str` wire tag (not the serde form).
     let explicit = match args.backend.as_deref() {
         None => None,
         Some(tag) => Some(
@@ -1085,11 +1050,6 @@ async fn transcribe_clip_inner(
         .transcribe(speech::TranscribeRequest {
             audio_path,
             language: args.language,
-            // Default TRUE: exact word timing costs the engine nothing extra
-            // (whisper.cpp computes token offsets regardless; `-ojf` just emits
-            // them), and word-level editing is the point of the normalized
-            // transcript. `false` is an explicit opt-down to SRT style;
-            // SRT-only backends (OpenAI) ignore the hint either way.
             want_word_timing: args.word_timestamps.unwrap_or(true),
         })
         .await
@@ -1427,7 +1387,7 @@ async fn describe_clip_inner(
     let dest = b.cache.description(&key);
 
     // Range-lazy: load the prior cache; if the window is already covered, reuse
-    // it with NO engine spawn (acceptance #2).
+    // it with NO engine spawn.
     let mut cache: vlm::DescriptionCache = match tokio::fs::read(&dest).await {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => vlm::DescriptionCache::default(),
@@ -1475,11 +1435,8 @@ async fn describe_clip_inner(
     ToolResult::json(&result)
 }
 
-/// TTS compute half of the `synthesize_speech` hybrid.
-/// Validates the text, picks the synthesizer, checks the content-addressed
-/// cache, synthesizes+writes the audio if needed, probes it for duration,
-/// and builds the `MediaItem`. Does NOT write to the project actor — that is
-/// the TS host's job. Returns `(MediaItem, cached)`.
+/// TTS compute half of the `synthesize_speech` hybrid. Does NOT write to the
+/// project actor — that is the TS host's job. Returns `(MediaItem, cached)`.
 #[cfg(feature = "speech")]
 pub(crate) async fn synthesize_speech_audio(
     b: &Backend,

@@ -1,5 +1,5 @@
 // Pure value-graph geometry for the inline keyframe curve editor. Maps the
-// stored per-segment cubic-bezier easing (Model B Bezier{p1,p2}) into the
+// stored per-segment cubic-bezier easing (Bezier{p1,p2}) into the
 // (time, value) pixel space of a timeline sub-lane, and back, for rendering
 // and in-place tangent-handle editing. DOM-free — all geometry is explicit
 // args so it unit-tests headless. UI-only (no Rust mirror).

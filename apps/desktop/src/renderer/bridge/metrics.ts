@@ -1,6 +1,5 @@
 // Process-tree resource snapshot, backed by the Electron main process
-// (app.getAppMetrics()). Always available in dev AND release — unlike the
-// dropped Rust `get_system_stats` command this replaces.
+// (app.getAppMetrics()); available in dev and release.
 
 import type { SystemStats } from '../../shared/ipc'
 

@@ -95,9 +95,7 @@ export function resolveDecodeEngine(i: DecodeResolveInputs): DecodeResolution {
     // unusable — report it unsupported rather than optimistically "ok" (the
     // settings UI grays out Standard when the component is absent, so this is
     // only reachable via a stale/migrated persisted setting or a DLL load
-    // failure). These engine-level gates return BEFORE the source/proxy
-    // handling — a pinned-but-unusable engine is unsupported regardless of
-    // source.
+    // failure).
     if (!i.componentAvailable) {
       return done("ffmpeg", "unsupported", null, "Standard (ffmpeg) engine unavailable — component not loaded");
     }

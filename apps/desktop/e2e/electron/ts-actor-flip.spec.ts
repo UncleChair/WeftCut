@@ -24,7 +24,7 @@ test('TS actor: edit → summary → undo/redo → save → workspace-switch rou
     // The production bridge is available on the startup screen — no editor/test hooks needed.
     await page.waitForFunction(() => !!(window as any).api?.backend?.invoke, undefined, { timeout: 30_000 })
 
-    // New workspace — served by the TS persistence orchestrator under the flag.
+    // New workspace — served by the TS persistence orchestrator.
     const projectDir = await invoke<string>(page, 'project_new_workspace', {
       parentFolder: ws, name: 'flip', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1,
     })

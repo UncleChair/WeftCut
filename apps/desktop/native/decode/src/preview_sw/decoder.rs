@@ -1,9 +1,9 @@
-//! Pure-software streaming decode → tightly-packed CPU frame bytes (8-bit NV12,
-//! or u16LE I420P10 for the export 10-bit lane). A strict simplification of
-//! `preview_gpu/decoder.rs`'s `VideoStream`: same open/pump/seek shape, but with
-//! the entire D3D11VA hardware path deleted (no `av_hwdevice_ctx_create`, no
-//! `get_format` override, no COM-pointer plumbing). libavcodec decodes to a CPU
-//! frame in its native pixel format (e.g. ProRes' `yuv422p10le`) and swscale
+//! Streaming decode → tightly-packed CPU frame bytes (8-bit NV12, or u16LE
+//! I420P10 for the export 10-bit lane). Both lanes land here: software, and the
+//! copy-back hardware lanes ([`DecodeAccel`]). Mirrors `preview_gpu/decoder.rs`'s
+//! `VideoStream` open/pump/seek shape, but never hands out a GPU texture — a
+//! hardware surface is transferred back to a CPU frame first. libavcodec decodes
+//! to a frame in its native pixel format (e.g. ProRes' `yuv422p10le`) and swscale
 //! packs it to the stream's target format in one pass.
 //!
 //! The `session` module consumes `seek`, the color tags, and the per-frame
@@ -71,17 +71,8 @@ pub enum DecodeAccel {
     /// libva's default device selection picks the wrong GPU on a multi-GPU
     /// machine, so the node is always explicit.
     ///
-    /// libva REQUIREMENT (validated on real hardware, issue #5 Block C): the BtbN
-    /// LGPL build lazily `dlopen`s `libva.so.2` via implib-gen, and the copy-back
-    /// (`av_hwframe_transfer_data` mapping the surface to CPU) calls `vaMapBuffer2`
-    /// — a libva 2.21 (2024-03) symbol the current stable distros' 2.20 lack (e.g.
-    /// Ubuntu 24.04). Against a libva without it the implib trampoline aborts the
-    /// process UNCATCHABLY on the first mapped frame (decode + the one-frame probe
-    /// succeed — they never map). We fix this by BUNDLING a >= 2.21 libva beside
-    /// the addon and pinning it so the implib resolves it (see
-    /// [`vaapi_copyback_supported`]); its `vaMapBuffer2` gracefully dispatches to
-    /// the system driver's `vaMapBuffer`. When the bundled libva can't load (glibc
-    /// too old), that guard declines VAAPI → software fallback, never a crash.
+    /// Copy-back needs a bundled libva >= 2.21 — see [`vaapi_copyback_supported`],
+    /// which pins it and declines the lane (software fallback) when it can't load.
     /// (NVDEC is unaffected: its implib'd `libcuda` comes from the current NVIDIA
     /// driver, which carries every symbol it needs.)
     Vaapi { device: String },
@@ -239,11 +230,7 @@ unsafe fn attach_hw_device(
     let hw_type = accel
         .hw_device_type()
         .ok_or_else(|| "attach_hw_device called for software".to_string())?;
-    // VAAPI copy-back (`av_hwframe_transfer_data`) calls `vaMapBuffer2` through the
-    // implib'd libva; against a libva without it the process aborts UNCATCHABLY on
-    // the first mapped frame. This call also pins the bundled >= 2.21 libva so the
-    // implib resolves it; if it can't (glibc too old), decline the lane up front —
-    // BEFORE creating the device — so the caller falls back to software instead.
+    // Decline VAAPI BEFORE creating the device — see `vaapi_copyback_supported`.
     if matches!(accel, DecodeAccel::Vaapi { .. }) && !vaapi_copyback_supported() {
         return Err(
             "bundled libva unavailable (no vaMapBuffer2); vaapi copy-back would abort".to_string(),
@@ -447,11 +434,11 @@ pub struct SwFrame {
     pub color: SwColorTags,
 }
 
-/// An open software decode session that yields successive CPU frames. Mirrors
-/// `preview_gpu`'s `VideoStream` packet-pump contract: each
-/// `self.ictx.packets().next()` reads the *next* packet because the read
-/// position lives inside the `AVFormatContext`, so a fresh iterator per call
-/// resumes where the previous one left off.
+/// An open decode session (software or a copy-back hardware lane) that yields
+/// successive CPU frames. Mirrors `preview_gpu`'s `VideoStream` packet-pump
+/// contract: each `self.ictx.packets().next()` reads the *next* packet because
+/// the read position lives inside the `AVFormatContext`, so a fresh iterator per
+/// call resumes where the previous one left off.
 pub struct SwVideoStream {
     ictx: ffmpeg_next::format::context::Input,
     decoder: ffmpeg_next::decoder::Video,
@@ -931,8 +918,7 @@ fn extract_nv12_planes(frame: &VideoFrame) -> Vec<u8> {
 /// bytes. One swscale pass straight from the decoder's native pix_fmt — NEVER
 /// through an 8-bit intermediate, which would quantize the samples this lane
 /// exists to preserve. 4:2:2 sources lose half their chroma rows to 4:2:0 here
-/// by design — a documented v2 limitation (export-decode engine spec,
-/// decision 4).
+/// by design — a known ceiling of this transport format (ADR 0033).
 fn frame_to_i420p10(
     frame: &VideoFrame,
     src_w: u32,
@@ -997,9 +983,9 @@ fn extract_i420p10_planes(frame: &VideoFrame) -> Vec<u8> {
 ///   scale_bench -- --ignored --nocapture
 /// ```
 ///
-/// It answers the question the playback-resolution ticket gates on: what does it
-/// cost to swscale a 4K frame DOWN on the decode thread, versus shipping it full
-/// size over IPC (~12.44 MB, ~12 ms at the measured ~1 GB/s ceiling)?
+/// It measures what backs the [`OutScale`] policy: the cost of swscaling a 4K
+/// frame DOWN on the decode thread, versus shipping it full size over IPC
+/// (~12.44 MB, ~12 ms at the measured ~1 GB/s ceiling).
 ///
 /// Synthetic frames, deliberately: swscale's cost is per-pixel and
 /// content-independent, so a real decode would only add noise and a fixture
@@ -1078,8 +1064,8 @@ mod scale_bench {
             println!("\n  src {label}");
             let src = synth(fmt, W, H);
 
-            // The NV12 fast path today's code takes when the decoder already
-            // emits NV12 (`frame_to_nv12`'s early return) — no swscale at all.
+            // The NV12 fast path `frame_to_nv12` takes when the decoder already
+            // emits NV12 (its early return) — no swscale at all.
             if fmt == Pixel::NV12 {
                 let ms = median_ms(|| {
                     black_box(extract_nv12_planes(&src));
@@ -1091,8 +1077,10 @@ mod scale_bench {
                 let (dw, dh) = scaled_dims(W, H, div);
                 let out_mb = (dw * dh + dw * dh / 2) as f64 / 1e6;
 
-                // TODAY'S SHAPE: a fresh sws context per frame (`Context::get` is
+                // Fresh context + fresh output per frame (`Context::get` is
                 // `sws_getContext`, not the cached variant) + scale + pack.
+                // Production builds the context per frame like this, but pools
+                // the destination (`ensure_scratch`).
                 let ms_fresh = median_ms(|| {
                     let mut sws =
                         SwsContext::get(fmt, W, H, Pixel::NV12, dw, dh, Flags::BILINEAR).unwrap();
@@ -1112,7 +1100,7 @@ mod scale_bench {
                     black_box(extract_nv12_planes(&out));
                 });
 
-                // SHIPPABLE SHAPE: context built once, output frame reused.
+                // Cached context + reused output frame.
                 let mut sws_c =
                     SwsContext::get(fmt, W, H, Pixel::NV12, dw, dh, Flags::BILINEAR).unwrap();
                 let mut out_c = VideoFrame::new(Pixel::NV12, dw, dh);

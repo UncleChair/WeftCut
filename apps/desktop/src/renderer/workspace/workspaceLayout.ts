@@ -1,8 +1,6 @@
 // Renderer-owned schema and validation for opaque Workspace layout slots.
-// Canonical snapshots contain only known singleton Panels and durable geometry;
-// transient focus/maximize state is excluded, while an intentionally empty
-// Workspace remains distinct from missing or corrupt data. Main never interprets
-// this shape; the persistence hook owns fallback selection and repair.
+// Main never interprets this shape; the persistence hook owns fallback
+// selection and repair.
 
 import type { SerializedDockview } from "dockview-react";
 
@@ -38,8 +36,7 @@ export interface WeftCutLayout {
   empty: boolean;
   /** The normalized Dockview tree. Null iff `empty`. */
   dockview: SerializedDockview | null;
-  /** Last-known placement of every Panel (open or closed) so a closed Panel
-   *  reopens deterministically after restart. May be empty. */
+  /** Last-known placement of every Panel, open or closed. May be empty. */
   placements: PanelPlacements;
 }
 

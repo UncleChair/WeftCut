@@ -230,12 +230,11 @@ describe('broad-op invariant fuzz', () => {
 })
 
 describe('rejected transition commands burn no ids (pre-mint failure paths)', () => {
-  // Ticket 05 secondary property. applyAddTransition mints its id AFTER the
-  // handle/kind/adjacency checks, so these rejections must consume NOTHING —
-  // replaying the same script without the failing calls yields byte-identical
-  // state AND the same next minted id. (Deliberately NOT covered: a downstream
-  // ValidationFailed burns one id by design — the known keystone landmine,
-  // gated elsewhere.)
+  // applyAddTransition mints its id AFTER the handle/kind/adjacency checks, so
+  // these rejections must consume NOTHING — replaying the same script without the
+  // failing calls yields byte-identical state AND the same next minted id.
+  // (Deliberately NOT covered: a downstream ValidationFailed burns one id by
+  // design — the known keystone landmine, gated elsewhere.)
   it('insufficient handle / audio participant / bad pairing / non-adjacent / unknown id consume no id', () => {
     type DispatchRes = ReturnType<ActorT['dispatch']>
     const err = (r: DispatchRes) => (r.ok ? null : r.error.error)

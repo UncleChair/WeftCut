@@ -1,19 +1,11 @@
 //! Content-addressable cache layout for media derivatives — proxies,
 //! thumbnails, waveforms, on-demand extracted frames.
 //!
-//! Per `docs/data-model.md`, the cache is rooted at `<workspace>/Cache/`.
-//! At app boot, before any workspace is opened or saved, `CacheLayout`
-//! points at the OS app-cache as a transitional fallback. When
-//! `project_save_as` or `project_open` lands, `set_workspace()` re-points
-//! the layout at the workspace's `Cache/` dir. Interior mutability via
-//! `RwLock<PathBuf>` lets consumers hold one shared `CacheLayout` while the
-//! root underneath moves; reads clone the current root each time, so the
-//! cost is one lock-acquire-and-clone per `proxies_dir()` / `thumbnail()`
-//! / ... call.
-//!
-//! Atomicity: every writer must write to `<final>.tmp` then rename. Skip-if-
-//! cached checks must verify both `exists()` AND non-zero size — interrupted
-//! ffmpeg leaves zero-byte files that look "done" to a naive check.
+//! Per `docs/data-model.md`, the cache is rooted at `<workspace>/Cache/`; the
+//! root moves under a shared `CacheLayout` via `set_workspace` (see the `root`
+//! field). The write-then-rename protocol every writer must follow is owned by
+//! the atomicity helpers at the bottom of this file (`cached_ok`,
+//! `claim_temp`, `promote_temp`).
 
 pub mod disk_lru;
 
@@ -28,8 +20,7 @@ use anyhow::{Context, Result};
 /// disk key: when a media's decode route changes (e.g. Bypass ->
 /// route-corrected Proxied), tiles from the old source stop matching and
 /// re-extract; the stale-source orphans age out via the disk LRU. The tag
-/// deliberately does NOT carry the proxy recipe version (see the design
-/// spec's non-goals).
+/// deliberately does NOT carry the proxy recipe version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FilmstripSrc {
     Orig,
@@ -76,8 +67,8 @@ impl CacheLayout {
 
     /// Swap the cache root to `<workspace>/Cache/` and create the dir tree
     /// at the new location. Idempotent: calling with the same workspace
-    /// twice does nothing extra. Per workspace-redesign Q3 this fires on
-    /// every `project_save_as` / `project_open`.
+    /// twice does nothing extra. Fires on every workspace switch: project
+    /// open, save-as, and new-workspace.
     pub fn set_workspace(&self, workspace_root: &Path) -> Result<()> {
         let new_root = workspace_root.join("Cache");
         {
@@ -171,10 +162,9 @@ impl CacheLayout {
         self.current_root().join("filmstrip")
     }
 
-    /// Reserved scaffolding for materializing caption text bodies to a
-    /// blake3-addressed file when a code path needs a real on-disk path.
-    /// Currently UNUSED: kept for a future ffmpeg subtitle burn-in export path,
-    /// where `subtitles=<file>` needs a filename.
+    /// Caption text bodies materialized to a blake3-addressed file, for a
+    /// caller that needs a real on-disk path (an ffmpeg `subtitles=<file>`
+    /// filter takes a filename, not a buffer).
     pub fn inline_subs_dir(&self) -> PathBuf {
         self.current_root().join("inline-subs")
     }
@@ -196,11 +186,11 @@ impl CacheLayout {
     }
 
     /// Fast preview-first proxy for a hashed media file. The `q4` segment is
-    /// the recipe version — bumped when the quick-proxy ffmpeg args change
-    /// (540p → 720p was q2; q3 switches to a short scrub GOP, ADR 0008; q4
-    /// asserts source color tags + writes the mp4 colr atom so proxy decodes
-    /// aren't misread as bt709/limited) so stale cached proxies are
-    /// regenerated, not reused.
+    /// the recipe version — bump it whenever the quick-proxy ffmpeg args
+    /// change, so stale cached proxies are regenerated rather than reused.
+    /// Current recipe: 720p cap, short scrub GOP (ADR 0008), and source color
+    /// tags asserted with the mp4 `colr` atom written so proxy decodes aren't
+    /// misread as bt709/limited.
     pub fn quick_proxy(&self, hash: &str) -> PathBuf {
         self.proxies_dir().join(format!("{hash}.quick-q4.mp4"))
     }
@@ -277,9 +267,8 @@ impl CacheLayout {
     }
 
     /// Deterministic shot-analysis reports (VSHOT) for the always-on shot layer
-    /// (`jobs::shot`). A SEPARATE namespace from `descriptions` (the opt-in
-    /// video-understanding layer) so the cheap deterministic layer and the
-    /// expensive opt-in layer never share a sidecar or block each other. The
+    /// (`jobs::shot`). A SEPARATE namespace from `descriptions` — see that
+    /// method for why the two layers never share a sidecar. The
     /// `key` is `jobs::shot::cache_key` (source content hash + the source tier
     /// the detector ran on + the detection params that change the report); the
     /// value is a WHOLE-source `ShotReport`
@@ -312,11 +301,12 @@ impl CacheLayout {
     /// Create the top-level cache directory tree. Idempotent. Called
     /// implicitly by `set_workspace`; the boot fallback also calls it once.
     ///
-    /// `Cache/preview/` and `Cache/raster/` are intentionally NOT created —
-    /// the cached + segmented preview paths and the offscreen rasterizer no
-    /// longer exist. Existing workspaces may have orphan trees from a prior
-    /// version; they're left in place rather than auto-deleted so a user
-    /// reverting to an older build keeps their cache.
+    /// Two dirs are absent by design. `Cache/raster/` is the renderer's motif
+    /// L2 pre-bake store — created and owned by
+    /// `renderer/render/motifs/frameCache.ts`, not by this layout.
+    /// `Cache/preview/` has no owner at all; a workspace carrying one is an
+    /// orphan tree, left in place rather than auto-deleted so a user reverting
+    /// to an older build keeps their cache.
     pub fn ensure_dirs(&self) -> Result<()> {
         let root = self.current_root();
         for p in [
@@ -375,10 +365,7 @@ pub fn touch_if_stale(path: &Path) {
     }
 }
 
-/// Atomic write helper: write into `<dest>.tmp` then rename onto `dest`. Caller
-/// supplies the writer function that produces the temp file (e.g. an ffmpeg
-/// invocation pointed at the temp path). On error, removes the partial temp
-/// file before bubbling up.
+/// The `<dest>.tmp` path used by the write-then-rename protocol.
 pub fn temp_path(dest: &Path) -> PathBuf {
     let mut s = dest.as_os_str().to_owned();
     s.push(".tmp");
@@ -702,7 +689,7 @@ mod tests {
     /// Windows-only: dest already landed and is held open by a reader (no
     /// FILE_SHARE_DELETE) → replace-rename is denied forever. The retry must
     /// ADOPT the landed file (content-addressed ⇒ equivalent) and discard the
-    /// redundant temp instead of erroring — the live 06:18 os-error-5 case.
+    /// redundant temp instead of erroring — the os-error-5 case.
     #[cfg(windows)]
     #[tokio::test]
     async fn promote_temp_retry_adopts_dest_held_by_reader() {

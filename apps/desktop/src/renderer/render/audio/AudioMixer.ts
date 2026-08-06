@@ -13,11 +13,8 @@
 // identical linear interpolation — `setValueCurveAtTime` here, per-sample
 // lerp in the export mixer.
 //
-// Clock: the Pixi ticker stays master. Chunks run on the AudioContext
-// clock against an anchor pair; each tick compares the audio-predicted
-// position with the engine position and re-anchors past 40 ms with a 5 ms
-// micro-fade (chunkSchedule.shouldReanchor). The audio-master upgrade is
-// specified in docs/audio.md §Out of scope.
+// Clock: chunks are scheduled against the engine's `ClockAnchor`, and an
+// anchor identity change triggers a micro-faded reschedule (see `lastAnchor`).
 
 import type { AudioView } from "../../ipc";
 import type { AudioGraph } from "./AudioGraph";

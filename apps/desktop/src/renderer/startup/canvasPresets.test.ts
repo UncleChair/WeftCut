@@ -18,8 +18,7 @@ const RATES = CANVAS_PRESETS.map(({ key, preset }) => [key, preset.fpsNum, prese
 describe("canvas presets", () => {
   it("covers the spec's rate matrix and stays under the two-digit frame-field ceiling", () => {
     const offered = new Set(RATES.map(([, num, den]) => `${num}/${den}`));
-    // spec § Gates and test assets. 24000/1001 and 60000/1001 are the two the
-    // pre-round-2 list was missing outright, alongside 24, 25 and 50.
+    // spec § Gates and test assets.
     for (const r of ["24000/1001", "24/1", "25/1", "30000/1001", "30/1", "50/1", "60000/1001", "60/1"]) {
       expect(offered, `rate matrix entry ${r} must be authorable`).toContain(r);
     }

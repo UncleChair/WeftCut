@@ -223,9 +223,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     expect(layer.t_end_us).toBe(10_000_000)
   })
 
-  // Regression: the zero-width guard used to floor at `tStart + 1` µs, which is
-  // off-grid — with validate's grid backstop that turned a silent 1 µs sliver into
-  // a REJECTED edit. Floor is one frame, and the result must survive validate.
+  // Floor is one frame, and the result must survive validate.
   it.each([
     { fps: { num: 30, den: 1 }, expected: 33_333 },
     { fps: { num: 30_000, den: 1001 }, expected: 33_367 },

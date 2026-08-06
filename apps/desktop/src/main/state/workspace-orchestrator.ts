@@ -66,7 +66,7 @@ export interface OrchestratorDeps {
   onGridRepair?: (repairs: readonly GridRepair[]) => void
 }
 
-/** project_open (persistence.rs:50-108). Pre-check sentinels → load (3b) →
+/** project_open. Pre-check sentinels → load →
  *  delete stale quick proxies → relink heal → commit_workspace (pre-broadcast)
  *  → onGridRepair report → replace_state → onRelink report → push_recent →
  *  (deferred) derivative re-fan-out. Both reports sit after commit_workspace
@@ -82,7 +82,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // CAPTURE the repair report, do not emit it here. The LogBus is per-workspace and
   // `commitWorkspace` below ROTATES it, so a row emitted during the parse lands in
   // the doomed pre-open bus (or nowhere at all on a fresh launch) and silently
-  // vanishes — the exact trap documented on the relink report further down. Object
+  // vanishes — the same trap `OrchestratorDeps.onRelink` documents. Object
   // identity cannot carry the report instead: `reconcileMediaPaths` and
   // `clearSessionQuickProxies` both spread into fresh objects, so a WeakMap keyed on
   // the parsed project is already dead by the time `replaceState` runs.
@@ -105,16 +105,14 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   }
 
   // Re-point cache + workspace BEFORE the state swap, so project:changed
-  // consumers see the workspace, not the boot fallback (persistence.rs:71-79).
+  // consumers see the workspace, not the boot fallback.
   await napi.commitWorkspace(dir)
   // Emitted BEFORE replace_state deliberately: the repair is what lets an older
   // project satisfy the backstop at all, so if the swap STILL fails validation this
   // row is the diagnostic that says what load already had to move.
   if (gridRepairs.length > 0) { try { deps.onGridRepair?.(gridRepairs) } catch { /* best-effort, never blocks the open */ } }
-  actor.replaceState(project)                 // throws CommandFailure on invalid; matches Rust replace_state Err
-  // Surface the relink report only NOW: the LogBus is per-workspace and
-  // commitWorkspace ROTATES it, so an emit during the heal lands in the doomed
-  // pre-open bus (or none on a fresh launch) and silently vanishes.
+  actor.replaceState(project)                 // throws CommandFailure on invalid
+  // After commitWorkspace — see OrchestratorDeps.onRelink.
   if (relinkReport) { try { deps.onRelink?.(relinkReport) } catch { /* best-effort, never blocks the open */ } }
   await napi.pushRecent(dir, project.metadata.name)
 
@@ -123,7 +121,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   deps.enqueueDerivatives?.(project)
 }
 
-/** project_save_as (persistence.rs:23-48). snapshot → write project.json →
+/** project_save_as. snapshot → write project.json →
  *  commit_workspace → push_recent. Never swaps state (the actor already holds it). */
 export async function saveProjectAs(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
@@ -150,7 +148,7 @@ export function makeEnqueueDerivatives(
   return (project) => { void napi.enqueueJobsForMedia(JSON.stringify(Object.values((serializeProject(project) as { media_pool: Record<string, unknown> }).media_pool))) }
 }
 
-/** project_new_workspace (persistence.rs:116-171). Validate → blank project with
+/** project_new_workspace. Validate → blank project with
  *  the canvas preset → write → commit_workspace → replace_state → push_recent +
  *  set_last_new_project_parent. Returns the created workspace path. */
 export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArgs): Promise<string> {

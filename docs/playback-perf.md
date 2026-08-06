@@ -189,6 +189,19 @@ force-waits every frame is the synchronous one wearing a hat, and the p50 alone
 cannot see it. Do not difference a `readback` p50 against a deferred one; they
 are not the same quantity.
 
+A deferred barrier's deadline (`FENCE_DEADLINE_MS`) is arbitrating the idle case
+only — 2–4 tracks force nothing at either bound — and for it, tighter is
+strictly better. On an idle GPU the fence never signals on its own, so widening
+converts no timeouts into natural signals; it only parks a pool slot longer and
+pays more per timeout:
+
+| 1080p, 1 track | deadline 33.3 ms | deadline 66.7 ms |
+|---|---|---|
+| `fenceWaitP50` | 34.9 ms | 88.5 ms |
+| `fenceForcedWaits` | 98 | 206 |
+| spin per 20 s window | 1.96 s | 4.12 s |
+| `tick p99` | 23.7 ms (smooth) | 34.1 ms (STUTTER) |
+
 The barrier is stamped **directly** around the drain. It used to be derived as
 `residentMs - gvfMs - cibMs`, which also absorbs `vf.close()` and the scheduling
 gap around the `createImageBitmap` await — that overstated it and made it invert

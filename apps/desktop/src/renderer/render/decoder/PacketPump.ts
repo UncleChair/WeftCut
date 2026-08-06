@@ -17,8 +17,8 @@ export const FORWARD_SEEK_RESET_US = 1_000_000;
 /// Decoder-queue backpressure cap. `VideoDecoder.decode()` queues
 /// internally; the OUTPUT callback fires async, so the ring stays empty
 /// within a single pump burst. We cap on the decoder's own queue depth.
-/// 24 matches the legacy pump (sized at the typical soft limit; keeps the
-/// queue fed across scrub pauses where the pump runs only ~every 50ms).
+/// 24 is the typical decoder soft limit; it keeps the queue fed across scrub
+/// pauses where the pump runs only ~every 50ms.
 export const MAX_QUEUE = 24;
 
 export interface ResetDecisionInput {
@@ -34,7 +34,7 @@ export interface ResetDecisionInput {
   ringFirstPtsUs: number | null;
 }
 
-/// Pure ADR-0003 reset decision, re-keyed from sample indices to µs.
+/// Pure ADR-0003 reset decision, in µs.
 /// Returns true only when the decoder cannot reach `targetUs` by
 /// continuing to pump forward and must reset + seek to a key packet:
 ///
@@ -165,13 +165,11 @@ export class PacketPump {
   /// that latch is keyed on the TARGET, and **during playback the target changes
   /// every single frame**. So it only ever protected a stationary playhead (a
   /// held position, a settled scrub) and gave zero protection under playback.
-  /// Once a clip fell a second behind under load, every pump pass saw a fresh
-  /// target, re-fired the far-forward arm, reset, flushed the ring, and re-seeked
-  /// to the SAME key up to a whole GOP back — then threw away the prefix it had
-  /// just decoded and did it again. Measured on 3 concurrent 1080p clips: 254
-  /// ring flushes in 20 s, 1722 frames decoded and refused, two rings that never
-  /// held a single frame while their decoders ran at 40 fps. A clip never
-  /// recovered, because falling behind is what caused it to fall further behind.
+  /// Once a clip falls behind under load, every pump pass sees a fresh target,
+  /// re-fires the far-forward arm, resets, flushes the ring, and re-seeks to the
+  /// SAME key up to a whole GOP back — throwing away the prefix it just decoded,
+  /// so the ring never fills and falling behind is what makes it fall further
+  /// behind.
   ///
   /// Keyed on the KEY PACKET instead, the check holds for a moving target: if the
   /// seek would land on the key we are already decoding forward from, it is a

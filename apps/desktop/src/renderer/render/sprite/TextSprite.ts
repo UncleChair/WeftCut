@@ -1,15 +1,5 @@
-// Text layer rendered via PixiJS native `Text`.
-//
-// Rendered via PixiJS native `Text` (canvas-backed glyphs). See docs/render.md.
-//
-// Implementation: a single `Text` object with a cached style
-// signature. Per-frame `update(view)` checks whether the content /
-// font / color / size / style actually changed; if not, no redraw
-// cost. If changed, `text` reassigns the content + style.
-//
-// Style fields rendered: fontWeight, fontStyle, align, fill, stroke
-// (from outline), dropShadow (from shadow). Anchor is set every
-// frame (cheap — no atlas rebuild).
+// Text layer rendered via PixiJS native `Text` (canvas-backed glyphs).
+// See docs/render.md.
 
 import { Text, TextStyle, type Container, type TextStyleFontWeight } from "pixi.js";
 

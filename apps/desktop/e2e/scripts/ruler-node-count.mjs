@@ -3,12 +3,11 @@
 // and measures, so it does not belong in the per-PR CI matrix.
 //
 // What it guards: the time ruler must paint a tick set bounded by the VIEWPORT,
-// never by composition length. Frame mode used to emit one absolutely-positioned
-// <div> per frame from zero to the end of the row — 216 001 nodes for a one-hour
-// 60 fps timeline and 5 184 001 for a 24 h one, even when twenty frames were on
-// screen. `renderer/timeline/rulerModel.ts` now windows the set; its unit tests
-// own the model, and this gate owns the WIRING: that the live app's scroll
-// offset really reaches the ruler and really bounds the DOM.
+// never by composition length — frame mode places one absolutely-positioned
+// <div> per tick, so a whole-row set is millions of nodes on a long timeline.
+// `renderer/timeline/rulerModel.ts` windows the set; its unit tests own the
+// model, and this gate owns the WIRING: that the live app's scroll offset really
+// reaches the ruler and really bounds the DOM.
 //
 // Run it after touching the ruler, the timeline scroll plumbing, or
 // state/timelineScrollStore.ts:
@@ -43,9 +42,9 @@ const MAIN = path.join(DESKTOP, 'out', 'main', 'index.js');
 
 /// Durations to compare. The invariant is that composition length does not enter
 /// the node count, so the assertion is equality across this list. ASCENDING on
-/// purpose: each step waits for a row at least as wide as its own content, and a
-/// row that were still stale would be a LONGER one — which biases the count
-/// upward, i.e. toward failing, never toward a false pass.
+/// purpose: each step waits for a row at least as wide as its own content, so a
+/// row still stale from the previous step is NARROWER, fails that predicate, and
+/// keeps the gate polling — a false pass off a stale row cannot occur.
 const DURATIONS_US = [
   ['10 s', 10_000_000],
   ['1 h', 3_600_000_000],

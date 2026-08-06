@@ -7,7 +7,7 @@ function hyphenate32(hex: string): string {
 }
 
 /** Deterministic generator: id #n = Uuid::from_u128(n). Byte-identical to the
- *  Rust replay driver's deterministic mode (native/src/state/ids.rs).
+ *  Rust `det` mode in apps/desktop/native/src/state/ids.rs.
  *
  *  `start` is the FIRST value yielded (default 1). The no-arg form is the
  *  Rust-parity entry point: it matches the Rust `det` counter, which always

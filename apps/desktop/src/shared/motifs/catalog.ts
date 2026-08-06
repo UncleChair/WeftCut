@@ -1,17 +1,11 @@
-// Shared TS motif catalog — the single source of motif validation + duration
-// resolution, consumed by both Electron-main and the renderer. (The Rust motif
-// modules this once mirrored were deleted when motifs moved fully to TS.)
+// Shared TS motif catalog — the single source of manifest validation, prop
+// canonicalization, and duration resolution, consumed by both Electron-main and
+// the renderer. Owns none of the plumbing: React subscription lives in
+// renderer/render/motifs/catalog.ts, disk persistence in main/motif/.
 //
-// Canonicalization rules (load-bearing — motif capture and the catalog must
-// agree on these for a draft to validate + render identically):
-//   - Key order: prop maps emitted with Object.keys sorted ascending.
-//   - String max_length: counted as UNICODE SCALAR VALUES (Array.from(s).length),
-//     not UTF-16 code units (str.length).
-//   - Color regex: ^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$
-//   - Number min/max: inclusive on both ends. Values must be finite JS numbers.
-//   - resolveMotifTEndUs None-branch: Math.trunc.
-//   - resolveMotifMaxDurUs EXCLUDES content_duration_s (the layer cap resolver);
-//     resolveMotifContentDurationUs INCLUDES it (seek span).
+// Canonicalization is load-bearing — motif capture and the catalog must agree on
+// it for a draft to validate + render identically. Each rule is documented at the
+// site that enforces it. See docs/motifs.md.
 
 import countdownJson from "./builtin/countdown/manifest.json";
 import lowerThirdJson from "./builtin/lower-third/manifest.json";
@@ -128,7 +122,7 @@ function propValueValid(key: string, spec: PropSpec, value: unknown): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Strict prop canonicalizer. Mirrors Rust `Motif::canonicalize_props`.
+ * Strict prop canonicalizer.
  * - null/undefined provided → treated as empty object (all defaults).
  * - Non-object (not null) → throws MotifPropError.
  * - Unknown keys → throws MotifPropError.
@@ -166,9 +160,8 @@ export function canonicalizeProps(
 }
 
 /**
- * Lenient prop canonicalizer. Mirrors Rust `Motif::canonicalize_props_lenient`.
- * Never throws. Unknown keys are dropped; missing keys filled from defaults;
- * values that fail validation fall back to their default.
+ * Lenient prop canonicalizer. Never throws. Unknown keys are dropped; missing
+ * keys filled from defaults; values that fail validation fall back to default.
  * Keys in the returned object are sorted alphabetically (BTreeMap order).
  */
 export function canonicalizePropsLenient(
@@ -193,7 +186,6 @@ export function canonicalizePropsLenient(
 
 /**
  * Resolve a motif layer's length cap (µs) from its manifest + current props.
- * Mirrors Rust `resolve_motif_max_dur_us` in native/src/motifs/catalog.rs.
  *
  * EXCLUDES `content_duration_s` — that field does NOT cap the layer (freely
  * extendable holdable overlays). Use `resolveMotifContentDurationUs` for the
@@ -222,12 +214,11 @@ export function resolveMotifMaxDurUs(
 }
 
 /**
- * Compute the layer's end time for `add_motif`. Mirrors Rust
- * `resolve_motif_t_end_us` in native/src/commands/motifs.rs.
+ * Compute the layer's end time for `add_motif`.
  *
  * When t_end_us is null, the duration is derived as:
  *   Math.trunc(default_duration_s * 1_000_000) + t_start_us
- * TRUNCATION (Math.trunc) mirrors the Rust `as i64` cast (not round).
+ * TRUNCATED, never rounded.
  *
  * When max_duration_us is present and the computed length exceeds it,
  * the result is clamped to t_start_us + max_duration_us.
@@ -242,11 +233,10 @@ export function resolveMotifTEndUs(
   if (tEndUs !== null) {
     end = tEndUs;
   } else {
-    // Mirror Rust: (default_duration_s * 1_000_000.0) as i64 → truncate.
     const durationUs = Math.trunc(defaultDurationS * 1_000_000);
     end = tStartUs + durationUs;
   }
-  // No saturating_add (Rust): JS numbers are exact to 2^53, safe for realistic µs timestamps; diverges only on absurd values.
+  // No overflow guard: JS numbers are exact to 2^53, safe for realistic µs timestamps.
   if (maxDurUs !== null && end - tStartUs > maxDurUs) {
     return tStartUs + maxDurUs;
   }
@@ -255,7 +245,6 @@ export function resolveMotifTEndUs(
 
 /**
  * Resolve the motif's seekable content/animation duration (µs).
- * Mirrors the renderer's `resolveMotifContentDurationUs`.
  * INCLUDES `content_duration_s` (intentionally diverges from
  * `resolveMotifMaxDurUs` which excludes it).
  *
@@ -287,7 +276,7 @@ export function resolveMotifContentDurationUs(
 export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx"];
 const DRAFTS_DIR = "drafts";
 
-/** Slugify a name → safe single path-segment id. Mirrors Rust `sanitize_id`. */
+/** Slugify a name → safe single path-segment id. */
 export function sanitizeId(name: string): string {
   let out = "";
   let prevDash = false;
@@ -304,7 +293,7 @@ export function sanitizeId(name: string): string {
   return trimmed === "" ? "motif" : trimmed;
 }
 
-/** Unique id from `name`, avoiding `taken`, built-ins, and `drafts`. Mirrors `assign_unique_id`. */
+/** Unique id from `name`, avoiding `taken`, built-ins, and `drafts`. */
 export function assignUniqueId(name: string, taken: string[]): string {
   const base = sanitizeId(name);
   const reserved = (id: string): boolean =>
@@ -340,22 +329,21 @@ export const BUILTIN_MANIFESTS: ReadonlyMap<string, Manifest> = new Map([
 ]);
 
 // ---------------------------------------------------------------------------
-// Manifest island parse / compose (ports native/src/motifs/{catalog,authoring}.rs)
+// Manifest island parse / compose
 // ---------------------------------------------------------------------------
 
 const ISLAND_MARKER = 'id="motif-manifest"';
 
 /**
  * Extract + JSON-parse the `<script type="application/json" id="motif-manifest">`
- * island from a Motif's HTML, WITHOUT executing the page. Mirrors Rust
- * `parse_manifest_island`. Throws MotifPropError on a missing island or bad JSON.
+ * island from a Motif's HTML, WITHOUT executing the page. Throws MotifPropError
+ * on a missing island or bad JSON.
  */
 export function parseManifestIsland(html: string): Manifest {
   const idMarker = html.indexOf(ISLAND_MARKER);
   if (idMarker < 0) throw new MotifPropError("no motif-manifest island found in HTML");
-  // Constraint (mirrors Rust): the island's opening <script> tag must not contain
-  // a `>` inside an attribute value — we control the writer (composeMotifHtml), so this holds.
-  // End of the opening <script ...> tag: first '>' at or after the marker.
+  // Constraint: the island's opening <script> tag must not contain a `>` inside
+  // an attribute value — we control the writer (composeMotifHtml), so this holds.
   const gt = html.indexOf(">", idMarker);
   if (gt < 0) throw new MotifPropError("no motif-manifest island found in HTML");
   const tagEnd = gt + 1;
@@ -411,8 +399,7 @@ export function coreManifestForHash(m: Manifest): Record<string, unknown> {
  * Compose the canonical single-file Motif HTML: strip any existing island, then
  * inject a fresh pretty-JSON island (with `<` escaped as < so a string
  * field can't close the island early) right after the opening <head> (or at the
- * top if none). Mirrors Rust `compose_motif_html`. Round-trips through
- * `parseManifestIsland`.
+ * top if none). Round-trips through `parseManifestIsland`.
  */
 export function composeMotifHtml(manifest: Manifest, html: string): string {
   const stripped = stripManifestIsland(html);
@@ -433,12 +420,12 @@ export function composeMotifHtml(manifest: Manifest, html: string): string {
 const MAX_DIMENSION = 8192;
 const MAX_PROPS = 64;
 
-/** Validate a default value against its own spec. Mirrors `validate_default_for`. */
+/** Validate a default value against its own spec. */
 export function validateDefaultFor(key: string, spec: PropSpec): void {
   validateProp(key, spec, specDefault(spec));
 }
 
-/** Semantic manifest validation beyond JSON shape. Mirrors `validate_manifest`. */
+/** Semantic manifest validation beyond JSON shape. */
 export function validateManifest(m: Manifest): void {
   if (m.name.trim() === "") throw new MotifPropError("name must not be empty");
   const [w, h] = m.size;
@@ -475,7 +462,7 @@ export function validateManifest(m: Manifest): void {
 }
 
 /**
- * Capture content duration in SECONDS. Mirrors Rust `motif_ctx_duration_s`:
+ * Capture content duration in SECONDS:
  * content_duration_s → max_duration_prop live value → max_duration_s → default_duration_s.
  */
 export function motifCtxDurationS(manifest: Manifest, props: Record<string, unknown>): number {
@@ -516,7 +503,6 @@ export class MotifCatalog {
   constructor(private readonly resolveMissing?: (id: string) => Manifest | null) {}
 
   get(id: string): Manifest | undefined {
-    // Built-ins win, then the cached user layer, then the store fallback.
     return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id) ?? this.resolveMissing?.(id) ?? undefined;
   }
 
@@ -525,7 +511,6 @@ export class MotifCatalog {
   }
 
   list(): Manifest[] {
-    // Built-ins first, then user entries (excluding any shadowed by a built-in).
     const out: Manifest[] = [...BUILTIN_MANIFESTS.values()];
     for (const [id, m] of this._user) {
       if (!BUILTIN_MANIFESTS.has(id)) {

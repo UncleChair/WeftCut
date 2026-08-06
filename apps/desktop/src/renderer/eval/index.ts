@@ -1,8 +1,10 @@
 // Single source of truth for the WYSIWYG math: thin typed wrappers over the
-// weftcut-eval wasm module (compiled from native/eval — the SAME crate the actor
-// + export link natively). Tracks are uploaded once per (handle, version) into a
-// resident buffer and evaluated per-frame with scalar-only calls. `initEval()`
-// must be awaited before any wrapper is called (the renderer bootstrap does so).
+// weftcut-eval wasm module (compiled from native/eval — the SAME crate the native
+// audio and state code link natively; the main-process TS actor re-exports these
+// same wrappers through `main/state/snap.ts`). Tracks are uploaded once per
+// (handle, version) into a resident buffer and evaluated per-frame with
+// scalar-only calls. `initEval()` must be awaited before any wrapper is called
+// (the renderer bootstrap does so).
 import { EVAL_WASM_BASE64 } from './evalWasm.generated'
 
 interface Exports {
@@ -267,7 +269,8 @@ export function panCoeff(pan: number, channels: number, idx: number): number {
   return E().pan_coeff(pan, channels, idx)
 }
 
-/** Fade ramp multiplier — leaf-sourced twin of `audio/mix.rs` fade_multiplier. */
+/** Fade ramp multiplier — the leaf's `fade_multiplier`, which the native side
+ * reaches through `audio/envelope.rs`. */
 export function fadeMul(
   tUs: number,
   spanUs: number,

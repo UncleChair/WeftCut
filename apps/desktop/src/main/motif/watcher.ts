@@ -13,8 +13,7 @@ import { mkdirSync, watch, type FSWatcher } from 'node:fs'
 export const DEBOUNCE_QUIET_MS = 400
 
 /** Coalesce raw watch events into one onChange after a quiet window. Split from
- *  spawnMotifWatcher so the debounce is testable with fake timers (no OS watch).
- *  Mirrors watcher.rs debounce_loop. */
+ *  spawnMotifWatcher so the debounce is testable with fake timers (no OS watch). */
 export class Debouncer {
   private timer: ReturnType<typeof setTimeout> | null = null
   constructor(private readonly quietMs: number, private readonly onChange: () => void) {}

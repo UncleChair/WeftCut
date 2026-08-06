@@ -1,16 +1,5 @@
-// e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload.
-//
-// Three sections:
-//   A. Authoring: write_motif_draft → install_motif → list_motifs shows it
-//      installed → delete_motif removes it.
-//
-//   B. Staleness: place a v1 layer → write v2 directly to disk → reopen the
-//      project → motif_staleness_report returns the row →
-//      acknowledge_motif_staleness returns count > 0.
-//
-//   C. File watch: write a user Motif directly on disk (no app command) →
-//      add a layer → confirm red accent pixels on the live compositor →
-//      overwrite with green on disk → compositor turns green with no UI action.
+// e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload —
+// sections A, B and C below, in that order.
 //
 // userData path: minted per test via tmpDir() and handed to launchApp as an
 // explicit userDataDir — user motifs live under the default data root of that
@@ -79,8 +68,8 @@ function invoke(page: import('@playwright/test').Page, channel: string, args: un
 }
 
 // Poll the catalog (via IPC) until a motif with `motifId` appears (or deadline).
-// Needed after disk writes: the Rust store reads from disk on each call so no
-// watcher event is required; just retry until the write is visible.
+// Needed after disk writes: the TS UserMotifStore re-reads disk on each call so
+// no watcher event is required; just retry until the write is visible.
 async function waitForMotifInCatalog(
   page: import('@playwright/test').Page,
   motifId: string,
@@ -101,7 +90,7 @@ test('motif authoring: write_motif_draft → install → list → delete', async
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
-    // write_motif_draft — napi expects { args: { manifest, html } }
+    // write_motif_draft — the motif tool expects { args: { manifest, html } }
     const manifest = {
       id: 'e2e-lifecycle-draft', // overwritten by app; just needs a name field
       name: 'E2E Lifecycle Draft',
@@ -122,7 +111,7 @@ test('motif authoring: write_motif_draft → install → list → delete', async
     expect((draftId as string).length).toBeGreaterThan(0)
     console.log('[lifecycle] draft id:', draftId)
 
-    // install_motif (New mode) — napi expects { args: { draft_id, mode: { kind: "new" } } }
+    // install_motif (New mode) — the motif tool expects { args: { draft_id, mode: { kind: "new" } } }
     const publishedId = await invoke(page, 'install_motif', {
       args: { draft_id: draftId, mode: { kind: 'new' } },
     })
@@ -141,7 +130,7 @@ test('motif authoring: write_motif_draft → install → list → delete', async
     expect(found!.status).toBe('installed')
     console.log('[lifecycle] list_motifs found installed motif:', found!.id)
 
-    // delete_motif — napi expects { id }
+    // delete_motif — the motif tool expects { id }
     await invoke(page, 'delete_motif', { id: publishedId })
 
     // Confirm gone from catalog.
@@ -159,8 +148,6 @@ test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', as
   test.setTimeout(120_000)
   const STALE_ID = 'e2e-stale-' + Date.now()
   const PROJECT_PARENT = tmpDir('weftcut-e2e-stale-proj-')
-  // Isolated userData profile: user motifs live under the default data root
-  // (<userData>/data/motifs — see src/main/dataRoot.ts), NOT <userData>/motifs.
   const userData = tmpDir('weftcut-e2e-stale-userdata-')
 
   const { app: appHandle, page } = await launchApp({ userDataDir: userData })
@@ -185,7 +172,7 @@ test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', as
     console.log('[stale] workspace dir:', projectPath)
     expect(typeof projectPath).toBe('string')
 
-    // Wait for the motif to appear in the catalog (Rust reads from disk directly).
+    // Wait for the motif to appear in the catalog (it re-reads disk on each call).
     await waitForMotifInCatalog(page, STALE_ID)
 
     // Place two layers at v1.
@@ -266,8 +253,6 @@ test('motif file-watch: disk-placed Motif renders; external rewrite hot-reloads'
   const PROJECT_PARENT = tmpDir('weftcut-e2e-watch-proj-')
   const RED = '#e02424'
   const GREEN = '#1ea64a'
-  // Isolated userData profile: user motifs live under the default data root
-  // (<userData>/data/motifs — see src/main/dataRoot.ts), NOT <userData>/motifs.
   const userData = tmpDir('weftcut-e2e-watch-userdata-')
 
   const { app: appHandle, page } = await launchApp({ userDataDir: userData })
@@ -287,7 +272,7 @@ test('motif file-watch: disk-placed Motif renders; external rewrite hot-reloads'
     await waitForHook(page, 'addMotifLayer')
     await waitForHook(page, 'weftcutSampleComposite')
 
-    // 3. Wait for the motif to appear in the Rust catalog (reads from disk directly).
+    // 3. Wait for the motif to appear in the catalog (it re-reads disk on each call).
     await waitForMotifInCatalog(page, WATCH_ID)
 
     // 4. Place the user Motif.

@@ -9,8 +9,8 @@ export const SINGLE_MEDIA_CHANNELS: ReadonlySet<string> = new Set([
 
 /** Map renderer `{ mediaId, ...rest }` args to `{ item, ...rest }` the Rust fn
  *  now expects — `rest` carries channel-specific args (e.g. a tile request's
- *  level/channel/range) straight through untouched. Throws the same
- *  "not found" error surface the old Rust lookup produced. */
+ *  level/channel/range) straight through untouched. Throws
+ *  `media {id} not found` when the pool has no such item. */
 export function resolveSingleMediaArgs(
   args: { mediaId?: string } & Record<string, unknown>,
   pool: Record<string, MediaItem>,

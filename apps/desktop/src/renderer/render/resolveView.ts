@@ -4,9 +4,9 @@
 // resolution point — preview and the export Worker share it, so
 // keyframed properties hold preview==export by construction.
 //
-// Fallback constants mirror the Rust view builder's per-property defaults
-// when a track is absent (x/y/rotation -> 0, scale/opacity -> 1,
-// gain/pan -> 0, text WHITE, color BLACK).
+// Fallback constants mirror the view builder's per-property defaults
+// (`src/main/state/summary.ts`) when a track is absent (x/y/rotation -> 0,
+// scale/opacity -> 1, text WHITE, color BLACK).
 import type {
   ColorView,
   ImageOverlayView,
@@ -72,9 +72,8 @@ const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 
 /// The transform+opacity resolution shared by all four visual kinds. One
-/// function rather than a copy per kind: the four used to be identical bodies,
-/// and adding the anchor pair to three of them would have been a silent
-/// kind-specific pivot difference.
+/// function rather than a copy per kind, so the anchor pair can't diverge into
+/// a silent kind-specific pivot difference.
 function resolveTransform(
   v: Pick<VideoClipView, TransformTrackKey>,
   tInLayerUs: number,

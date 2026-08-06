@@ -1,8 +1,7 @@
-// Native-GPU `DecodeTransport` — the MessagePort + shared-texture path.
-// Extracted from the original native-GPU decode handle (Stage 2 of
-// decode-bench; see docs/decode-bench.md
-// for the full transport recap): `window.api.previewGpu.{open,requestFrameAt,close,
-// requestPort}` are the only IPC-shaped calls; they carry session commands,
+// Native-GPU `DecodeTransport` — the MessagePort + shared-texture path (see
+// docs/decode-bench.md for the full transport recap):
+// `window.api.previewGpu.{open,requestFrameAt,close,requestPort}` are the only
+// IPC-shaped calls; they carry session commands,
 // never frame bytes. Decoded frames (and eof/error pokes) arrive on a
 // `MessagePort` the PRELOAD hands to this main-world context via
 // `window.postMessage` in response to `requestPort()` — a port can't cross
@@ -56,10 +55,8 @@ interface PortFrameMsg {
   barrierMs?: number;
   barrierDrawMs?: number;
   barrierReadMs?: number;
-  /// The barrier that actually RAN for this frame, which is not always the one
-  /// configured: the preload falls back from `gpuflush` to `readback` when
-  /// WebGL2 is missing. A bench leg labelled by intent instead of by outcome
-  /// silently reports the wrong variant's cost.
+  /// The barrier that actually RAN — never the configured label. See
+  /// `barrierModeObserved` in handoffTimings.ts.
   barrierApplied?: HwBarrierMode;
   /// Health of the deferred-ack fence path, present only while it is running.
   /// The wait it defers is NOT in `barrierMs` — that stays the blocking cost, so
@@ -103,7 +100,7 @@ export class GpuTransport implements DecodeTransport {
   /// Stream identity supplied by the caller's `open()` call, stamped on every
   /// `previewGpu` call and every port message this transport should accept.
   /// FfmpegSource mints a fresh id per open, so no local uniqueness suffix is
-  /// needed here (unlike the old handle's ctor-derived `native-gpu:` prefix).
+  /// needed here.
   private streamId = "";
 
   private port: MessagePort | null = null;

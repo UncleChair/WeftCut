@@ -6,14 +6,10 @@
 // `appSettingsSet` IPC; main emits `app_settings:changed` which
 // `wireAppSettingsStream` listens for and writes back into the store.
 //
-// This store also bridges the UI language ↔ i18next: `language` is now an
-// app-settings field (moved off browser localStorage), so `wireAppSettingsStream`
-// applies the persisted locale to i18next on boot and `setLocale` writes both.
+// It owns the UI language ↔ i18next bridge too — see `setLocale`.
 //
-// IMPORTANT (per `feedback_zustand_composite_selector`): consumers MUST
-// use the atomic selector hooks exported below. Never spread the whole
-// store object in a selector — that trips `useSyncExternalStore`'s
-// reference equality and infinite-loops.
+// IMPORTANT: consumers MUST read through the atomic selector hooks exported
+// below, never a composite selector — see the note there.
 
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
@@ -64,8 +60,9 @@ export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>
   }),
 );
 
-// Atomic selectors. Each picks one field — composite object selectors
-// would re-render every subscriber on any change.
+// Atomic selectors. Each picks one field: a composite selector builds a fresh
+// object per call, which trips `useSyncExternalStore`'s reference equality and
+// infinite-loops (`feedback_zustand_composite_selector`).
 export const useDisplayMode = (): DisplayMode =>
   useAppSettingsStore((s) => s.settings.display_mode);
 export const useDeltaWindowUs = (): number =>
@@ -76,8 +73,9 @@ export const useTailSnapStrengthPx = (): number =>
   useAppSettingsStore((s) => s.settings.tail_snap_strength_px);
 /// Preview-gizmo snapping. The gizmo itself does NOT use these hooks — its
 /// gestures are pointer-rate and imperative, so `TransformGizmo` reads the
-/// values off `useAppSettingsStore.getState()` at pointerdown (see D26: the
-/// whole target set is frozen there). These are for the settings UI.
+/// values off `useAppSettingsStore.getState()` at pointerdown (the whole snap
+/// target set is frozen there — see `docs/features.md`, "On-canvas transform
+/// (gizmo)"). These are for the settings UI.
 export const usePreviewSnapEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.preview_snap_enabled);
 export const usePreviewSnapStrengthPx = (): number =>
@@ -126,10 +124,10 @@ export async function toggleDisplayMode(): Promise<AppSettings> {
 }
 
 /// Change the UI language AND persist it to app_settings.json — the single
-/// source of truth since language moved off browser localStorage. i18next is
-/// updated synchronously so the UI switches immediately; the disk write is
-/// fire-and-forget (the `app_settings:changed` echo re-applies it — a no-op
-/// here, but the path that syncs the change to OTHER windows).
+/// source of truth for language. i18next is updated synchronously so the UI
+/// switches immediately; the disk write is fire-and-forget (the
+/// `app_settings:changed` echo re-applies it — a no-op here, but the path that
+/// syncs the change to OTHER windows).
 export function setLocale(next: Locale): void {
   void i18n.changeLanguage(next);
   void setAppSettings({ language: next });
@@ -190,8 +188,8 @@ export async function wireAppSettingsStream(): Promise<UnlistenFn> {
     const initial = await appSettingsGet();
     if (!eventSeen) {
       useAppSettingsStore.getState().hydrate(initial);
-      // Language lives here now (moved off localStorage): apply the persisted
-      // choice to i18next, or migrate a legacy `weftcut.locale` on first upgrade.
+      // Apply the persisted language choice to i18next, or migrate a legacy
+      // `weftcut.locale` on first upgrade.
       if (initial.language) applyPersistedLocale(initial.language);
       else migrateLegacyLocale();
     }

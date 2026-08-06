@@ -29,8 +29,8 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('preview_motif_draft')).toBe('rust')
   })
   it('routes the live rust-native tools to rust', () => {
-    // groups_list / groups_get are gone: group reads now come from the project
-    // summary resource (project://current includes `groups`), not an MCP tool.
+    // Group reads come from the project://current summary resource (it includes
+    // `groups`), not an MCP tool.
     for (const t of ['ping', 'detect_silences', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
@@ -54,9 +54,8 @@ describe('routeMcpTool', () => {
 })
 
 describe('merged ListTools is a clean catalog↔handler bijection', () => {
-  // Simulate the Rust-advertised set: in 4a it still includes the TS-executed
-  // names; in 4b it is the post-split native+hybrid set. Either way the merge
-  // must be a duplicate-free union where every name routes to exactly one engine.
+  // Simulate a Rust catalog that still advertises TS-executed names — the merge
+  // must stay a duplicate-free union where every name routes to exactly one engine.
   const rust4a = [...MCP_TOOLS].map((n) => ({ name: n })).concat(
     [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'get_motif_source' }, { name: 'preview_motif_draft' },
      { name: 'detect_silences' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },

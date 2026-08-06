@@ -1,8 +1,7 @@
 import type { Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 
-/** Remove a track. TrackNotFound → TrackNotRemovable (reserved tracks) →
- *  TrackNotEmpty (unless force) → splice. */
+/** Remove a track; reserved tracks are not removable, non-empty ones need `force`. */
 export function applyDeleteTrack(p: Project, id: Uuid, force: boolean): void {
   const idx = p.tracks.findIndex((t) => t.id === id)
   if (idx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: id })

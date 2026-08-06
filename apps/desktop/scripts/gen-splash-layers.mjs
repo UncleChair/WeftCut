@@ -18,17 +18,11 @@
 //                                                  boundary: fill + stroke 24)
 //   src/renderer/public/splash/w-paint@2x.png      the blue W (#6696E6) as-is
 //
-// The wedge shapes and the W-cutout band overlap. The original single mask
-// cuts the overlap during the W-cut sweep, so the overlap is assigned solely
-// to the w-cut filler; the wedge filler subtracts the cutout at its true
-// boundary. Otherwise the wedge filler would keep painting film color over
-// the swept region until the middle-open phase ("ghost" pixels).
-//
-// Geometry is copied verbatim from the frozen snapshot
-// .scratch/splash-compare/HEAD-SplashScreen.tsx (the live component is being
-// rewritten concurrently — do not read it). HEAD-icon.svg in the same dir is
-// the canonical icon with identical geometry shifted by -100 in x; it is used
-// as an independent cross-check of the path transcription.
+// Geometry provenance: src/renderer/public/icons/icon.svg is the canonical
+// mark — the same geometry shifted -100 in x — and check 4 renders it as an
+// independent cross-check of the path transcription below. W_SHAPE is also
+// byte-identical to `#splash-w-shape` in startup/SplashScreen.tsx, which clips
+// the pulse trace to the painted W: touch one and the other must follow.
 //
 // Rasterization follows gen-icons.mjs: Electron's Chromium renders each SVG
 // into a hidden window's <canvas> (true alpha) and returns PNG bytes. This
@@ -37,17 +31,9 @@
 // rendering; the parent then verifies the layers with pngjs and writes
 // verification composites to .scratch/splash-layers/.
 //
-// Verification (mandatory, runs on every invocation):
-//   1. film-final + w-paint composited == final-reference (original final
-//      frame: masked film + blue W), rendered with the same rasterizer.
-//   2. film-final + w-cut-filler + wedge-filler composited == intact film.
-//   3. film-final + wedge-filler composited (w-cut-filler omitted) ==
-//      mid-animation original (reveal fully open, middle clip scaleY(0)).
-//   4. final-reference == HEAD-icon.svg render shifted by +200px (cross-check
-//      of all path data against the canonical icon).
-// Expected: all at 0 differing pixels (modulo ±1 rounding, the documented
-// icon-rounding residue, and a few pixels where wedge and cutout AA edges
-// cross in check 3).
+// Verification (mandatory, runs on every invocation): four composite checks in
+// verify(), each described at its own `Check N` site, all expected at 0
+// differing pixels modulo the AA/rounding residues documented there.
 //
 // Note on check 2: splitting the film into kept/removed pieces along an
 // anti-aliased cut edge cannot recombine exactly under source-over — kept
@@ -83,7 +69,7 @@ const VH = 440
 const FILM_COLOR = '#5B7196'
 const W_COLOR = '#6696E6'
 
-// --- Path data, verbatim from .scratch/splash-compare/HEAD-SplashScreen.tsx ---
+// --- Path data, transcribed from the canonical icon (see header) -------------
 
 const FILM_PATH =
   'M505 0C524.33 0 540 15.67 540 35V405C540 424.33 524.33 440 505 440H135C115.67 440 100 424.33 100 405V35C100 15.67 115.67 0 135 0H505ZM158 336C151.373 336 146 341.373 146 348V390C146 396.627 151.373 402 158 402H200C206.627 402 212 396.627 212 390V348C212 341.373 206.627 336 200 336H158ZM299 336C292.373 336 287 341.373 287 348V390C287 396.627 292.373 402 299 402H341C347.627 402 353 396.627 353 390V348C353 341.373 347.627 336 341 336H299ZM440 336C433.373 336 428 341.373 428 348V390C428 396.627 433.373 402 440 402H482C488.627 402 494 396.627 494 390V348C494 341.373 488.627 336 482 336H440ZM158 38C151.373 38 146 43.373 146 50V92C146 98.627 151.373 104 158 104H200C206.627 104 212 98.627 212 92V50C212 43.373 206.627 38 200 38H158ZM299 38C292.373 38 287 43.373 287 50V92C287 98.627 292.373 104 299 104H341C347.627 104 353 98.627 353 92V50C353 43.373 347.627 38 341 38H299ZM440 38C433.373 38 428 43.373 428 50V92C428 98.627 433.373 104 440 104H482C488.627 104 494 98.627 494 92V50C494 43.373 488.627 38 482 38H440Z'
@@ -462,13 +448,13 @@ function verify(require) {
       `(${d3.countTight} with |Δ|>1, max |Δ|=${d3.maxDelta})` +
       (d3.bbox ? ` bbox=${d3.bbox}` : ''),
   )
-  // Upstream reality: the frozen component and the frozen icon differ by
-  // Figma-export rounding (icon uses x.001 / 0.000488281-style coordinates
-  // where the component rounds to integers). That yields exactly 7 pixels of
-  // AA difference — one at each of the 6 perforation-hole corners and one on
-  // the W's left edge — all |Δ| ≤ 32. The component is the source of truth
-  // (check 1 proves the layers match it exactly), so tolerate that known
-  // residue but fail on anything larger (e.g. a transcription error).
+  // The canonical icon and the paths transcribed here differ by Figma-export
+  // rounding (the icon carries x.001 / 0.000488281-style coordinates where the
+  // transcription rounds to integers), leaving a handful of AA pixels — at the
+  // perforation-hole corners and on the W's left edge — all |Δ| ≤ 32. The
+  // paths here are the source of truth for the layers (check 1 proves the
+  // layers match them exactly), so tolerate that known residue but fail on
+  // anything larger (e.g. a transcription error).
   if (d3.countTight > 10 || d3.maxDelta > 64) fail('check 4: geometry deviates from the canonical icon')
 
   // Per-layer dark-background previews for eyeballing.

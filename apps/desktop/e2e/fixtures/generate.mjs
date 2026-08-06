@@ -134,7 +134,7 @@ function pngChunk(type, data = Buffer.alloc(0)) {
 }
 
 function encodeChartPng(width, height, patches) {
-  // RGBA matches the Go image.RGBA source that this replaces.
+  // RGBA, 8-bit.
   const bytesPerPixel = 4
   const stride = 1 + width * bytesPerPixel
   const raw = Buffer.alloc(stride * height)
@@ -227,8 +227,7 @@ export function runFfmpeg(args, { cwd = process.cwd(), spawn = spawnSync } = {})
 }
 
 /// Pick the AV1 encoder the ffmpeg on PATH actually ships. SVT-AV1 is the
-/// preferred 10-bit AV1 encoder, but lean builds may lack it (the old macOS
-/// evermeet sidecar had none; the pinned martin-riedl arm64 build ships it) —
+/// preferred 10-bit AV1 encoder, but lean ffmpeg builds may lack libsvtav1 —
 /// fall back to libaom-av1 in constant-quality mode. Either produces the same
 /// AV1 10-bit ramp shape; the gates key on codec/depth, not the encoder.
 /// Probed once per process.
@@ -604,8 +603,7 @@ function generateGradient(entry, outputDir, run) {
 /// The interframe 8-bit H.264 clip the lane-parameterized preview HW
 /// conformance gates decode (preview-hw-conformance.spec.ts): 1080p30, 2 s,
 /// one-second GOPs so a mid-clip seek exercises real interframe decode on
-/// every HW lane (NVDEC/VAAPI/d3d11va/VideoToolbox). Same CLI shape the spec
-/// historically documented for hand-generation, now a matrix recipe.
+/// every HW lane (NVDEC/VAAPI/d3d11va/VideoToolbox).
 function generateH264Interframe(outputDir, run) {
   const output = 'test_1080p_h264.mp4'
   const args = [

@@ -2,7 +2,7 @@
 // be unit-checked without importing the orchestrator (which launches Electron on
 // import). See docs/decode-bench.md.
 
-/// The native pool sizes swept in --pool-sweep mode (Stage 3). 12 x 1080p NV12 ~= 48MB.
+/// The native pool sizes swept in --pool-sweep mode. 12 x 1080p NV12 ~= 48MB.
 export const SWEEP_POOL_SIZES = [3, 6, 9, 12];
 
 /// Validate a --pool-size value. `undefined`/absent is allowed (product default 3

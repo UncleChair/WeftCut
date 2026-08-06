@@ -1,14 +1,13 @@
-//! weftcut-eval: the pure, dependency-light "WYSIWYG math" shared by the
-//! actor + export (native build) and the renderer (wasm32 build). No imbl /
-//! uuid / napi / tokio / serde / schemars in the shipped artifact.
+//! weftcut-eval: the pure, dependency-light "WYSIWYG math" shared by the napi
+//! crate's state/audio helpers and export (native build) and by the renderer +
+//! TS actor (wasm32 build). No imbl / uuid / napi / tokio / serde / schemars in
+//! the shipped artifact.
 //! See docs/adr/0025-shared-eval-wasm-leaf-crate.md
 //!
-//! `no_std` ONLY on wasm32: the wasm artifact must stay minimal and std-free,
-//! and the wasm build (run on every task) is what enforces the "core/libm only"
-//! discipline. Natively the crate links std so its `cdylib`/`rlib`/test targets
-//! build without a hand-rolled panic handler or eh_personality — it is consumed
-//! by the napi crate purely as an `rlib`, and the wasm `cdylib` is the only
-//! std-free artifact we actually ship.
+//! `no_std` ONLY on wasm32: the wasm `cdylib` is the only std-free artifact we
+//! ship, and the wasm build (run on every task) is what enforces the "core/libm
+//! only" discipline. Natively the crate links std and is consumed by the napi
+//! crate purely as an `rlib`.
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
 // On wasm32 the crate is no_std and links as a standalone cdylib, so it must
@@ -27,13 +26,12 @@ mod wasm;
 
 // ===========================================================================
 // Frame grid. Time is `i64` microseconds (the napi crate aliases `TimeUs = i64`
-// and wraps these). Frame rate crosses as the primitive pair `(num, den)`: the
-// actor's `Rational` carries serde + schemars derives for the project schema and
-// so stays in the napi crate (`state/time.rs`); the wasm/TS sides pass the same
-// two integers. Only the i128 ALGORITHM is shared here — that is the value
-// that must never drift across the renderer↔Rust boundary. Pure integer math;
-// no std needed. Callers pass a valid rate (den/num != 0); degenerate-fps guards
-// live in the wrappers (TS `renderer/frames.ts`).
+// and wraps these). Rates cross as the primitive pair `(num, den)`; `Rational`
+// stays in the napi crate (`state/time.rs`). Only the i128 ALGORITHM is shared
+// here — that is the value that must never drift across the renderer↔Rust
+// boundary. Pure integer math; no std needed. Callers pass a valid rate
+// (den/num != 0); degenerate-fps guards live in the wrappers (TS
+// `renderer/frames.ts`).
 //
 // Two orthogonal policies, deliberately split into separate functions: an INDEX
 // policy (`frame_index_floor` / `_round` / `_ceil`) picks *which* frame, and the
@@ -50,9 +48,10 @@ pub const US_PER_MS: i64 = 1_000;
 ///
 /// THE output policy — a grid time is canonical iff it came from here, and there
 /// is no truncating variant. Half-up (not truncation) because it matches the
-/// demuxer's source-PTS rounding (`render/decoder/PacketPump.ts`:
-/// `Math.round(pts * 1e6)`), so a composition frame and the source frame it
-/// displays agree on the same integer µs.
+/// demuxer's source-PTS rounding — the integer µs mediabunny mints per packet,
+/// which decode carries verbatim (`render/decoder/decodeClock.ts`) — so a
+/// composition frame and the source frame it displays agree on the same
+/// integer µs.
 ///
 /// LANDMINE: this expression is golden-pinned through `snap_frame_round`
 /// (`src/renderer/snapFrameGolden.fixture.json`, asserted from both languages).
@@ -293,7 +292,7 @@ fn linear_to_oklab(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
     )
 }
 
-/// OkLab → linear sRGB (inverse of `linear_to_oklab`; `x^3` is `x*x*x`).
+/// OkLab → linear sRGB (inverse of `linear_to_oklab`).
 fn oklab_to_linear(ll: f64, aa: f64, bb: f64) -> (f64, f64, f64) {
     let l_ = ll + 0.3963377774 * aa + 0.2158037573 * bb;
     let m_ = ll - 0.1055613458 * aa - 0.0638541728 * bb;
@@ -309,12 +308,10 @@ fn oklab_to_linear(ll: f64, aa: f64, bb: f64) -> (f64, f64, f64) {
 }
 
 impl Interpolate for Rgba8 {
-    /// Premultiplied-alpha OkLab interpolation (CSS Color 4 §12.3): convert each
-    /// endpoint sRGB→linear→OkLab, premultiply (L,a,b) by that endpoint's alpha,
-    /// lerp the premultiplied components and alpha straight, un-premultiply by the
-    /// result alpha, then OkLab→linear→sRGB. Premultiplication is why a fade to
-    /// transparent keeps its hue instead of darkening toward black. `u==0.0`
-    /// returns `a` and `u==1.0` returns `b` exactly (the scalar lerp gives this).
+    /// Premultiplied-alpha OkLab interpolation (CSS Color 4 §12.3).
+    /// Premultiplication is why a fade to transparent keeps its hue instead of
+    /// darkening toward black. `u==0.0` returns `a` and `u==1.0` returns `b`
+    /// exactly (the scalar lerp gives this).
     fn lerp(a: Rgba8, b: Rgba8, u: f64) -> Rgba8 {
         // Endpoint → (L,a,b) in OkLab + alpha in [0,1].
         let to_lab = |c: Rgba8| -> (f64, f64, f64, f64) {
@@ -440,14 +437,12 @@ pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
     sample_y(t)
 }
 
-/// Generic slice-form keyframe evaluator. Empty slice ⇒ `default`; one key ⇒
-/// that key's value; `t_us` before-first/after-last clamps to the end key; else
-/// locate the segment `kf[i].t_us <= t < kf[i+1].t_us` and apply `kf[i].interp`
-/// (Hold → left value; Linear → lerp; EaseIn/EaseOut → CSS cubic eases; Bezier →
-/// `unit_bezier(p1, p2)`). Keyframes must be sorted by `t_us` (the actor stores
-/// them normalized). MIRRORS `render/animated.ts::resolveAnimated`.
-/// The only type-specific operation is `T::lerp` at the very tail; all segment
-/// search, clamp, and easing logic is shared across value types.
+/// Generic slice-form keyframe evaluator. Empty slice ⇒ `default`; `t_us`
+/// before-first/after-last clamps to the end key. Segment interpolation follows
+/// [`Interpolation`]. PRECONDITION: keyframes sorted by `t_us` (the actor stores
+/// them normalized). `render/animated.ts::resolveAnimated` calls this through
+/// wasm. The only type-specific operation is `T::lerp` at the very tail; all
+/// segment search, clamp, and easing logic is shared across value types.
 pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
     if kfs.is_empty() {
         return default;

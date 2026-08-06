@@ -220,10 +220,8 @@ describe("UnderrunTracker", () => {
   });
 
   it("carries an unexpired grace across beginPlay into the session it was armed for", () => {
-    // play() arms the warm-up gate up to 250 ms before the master clock is
-    // released, so a seek inside that window arms grace for exactly the ring
-    // rebuild this session opens with. beginPlay clearing it would let that
-    // rebuild score dropped frames the grace was armed against.
+    // Grace armed during the pre-clock warm-up must survive beginPlay — see
+    // underrunTracker.ts `beginPlay`.
     const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
     tracker.noteSeekWhilePlaying(); // t=0 → grace deadline t=1000
     advance(100);
@@ -307,10 +305,8 @@ describe("UnderrunTracker", () => {
 /// a count here can only have come from the tick interval.
 describe("UnderrunTracker late ticks", () => {
   it("trips at the measured judder interval, not the healthy one", () => {
-    // Default 30 fps budget → 33.3 + 4 ms slack = 37.3 ms threshold.
-    // Both intervals are measured playback-perf figures: 17.4 ms is the
-    // p95 of the passing 1080p WebCodecs cell, 38.8 ms the p99 of the
-    // 3-track 1080p ffmpeg-hw cell that reports 0.00 % drops.
+    // The two intervals are the measured playback-perf cells `TICK_SLACK_MS`
+    // is sized against — see its doc for where they come from.
     const { tracker, advance } = makeTracker();
     tracker.beginPlay();
     tracker.judgeSweep(false, 0);

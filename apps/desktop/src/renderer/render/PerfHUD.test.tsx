@@ -139,9 +139,6 @@ describe("PerfTelemetryBridge", () => {
     });
     expect(compositor.getPerfSnapshot).toHaveBeenCalledTimes(2);
     expect(mocks.getSystemStats).toHaveBeenCalledOnce();
-    // The HW-session budget rides the same slow poll as the process stats, and
-    // reaches the monitor on the broadcast — a lane column with no budget beside
-    // it cannot say WHY a clip is on software.
     expect(mocks.getPreviewGpuBudget).toHaveBeenCalledOnce();
     expect(mocks.emit).toHaveBeenCalledWith(
       "weftcut://perf-hud-snapshot",

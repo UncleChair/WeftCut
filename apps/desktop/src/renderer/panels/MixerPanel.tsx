@@ -71,11 +71,8 @@ function MixerFlagButton({ active, activeClass, label, onToggle, children }: {
 
 /// One Role channel: fader + numeric dB entry + mute/solo + reset. Owns a shared
 /// gain draft so the fader and the number field track each other during an edit
-/// (mirrors KeyframeField). Gain is recorded — the fader auditions live through a
-/// renderer-local override during the drag and commits exactly one `setRoleGain`
-/// on release; the number field commits on blur/Enter; reset commits 0 dB; and
-/// Escape cancels an in-flight fader gesture back to the committed sound and
-/// value without recording. Mute/solo go through the unrecorded `updateRoleFlags`.
+/// (mirrors KeyframeField). Gain is recorded; mute/solo go through the
+/// unrecorded `updateRoleFlags`.
 function RoleChannel({ role, mix, onMutated }: {
   role: AudioRole;
   mix: RoleMixView;

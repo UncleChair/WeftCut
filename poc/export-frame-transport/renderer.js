@@ -1,7 +1,4 @@
 // Renderer — thin relay + Web Worker host.
-//   - arm0 frames come from main over ipc; relayed into the worker (same-process transfer).
-//   - the main<->worker MessageChannelMain port is forwarded straight into the worker.
-//   - worker status/acks/results are relayed back to main over ipc.
 const { ipcRenderer } = require('electron')
 
 const worker = new Worker('worker.js')

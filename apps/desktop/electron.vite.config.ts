@@ -11,7 +11,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // only (`apply: 'build'`) so the Vite dev server / HMR (which needs inline +
 // eval + ws) is untouched. The renderer loads no remote content; this blocks
 // the real XSS vector (inline / remote <script>) while still allowing wasm
-// (jassub, mediabunny), blob workers (export/jassub), data: fonts/images, and
+// (mediabunny), blob workers (export), data: fonts/images, and
 // the app's own privileged schemes (weftcut-media:, motif:).
 //
 // `'unsafe-eval'` is allowed because PixiJS generates shader/uniform code with

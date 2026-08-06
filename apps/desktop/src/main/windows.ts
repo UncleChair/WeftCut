@@ -161,10 +161,7 @@ export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
     broadcastEvent(BrowserWindow.getAllWindows(), WIN_OPENED_EVENT, { label })
     return
   }
-  // secondaryWindowConfig decides the frame: a window passing `decorations:false`
-  // is frameless and draws its OWN titlebar + <WindowControls/> (the Performance
-  // Monitor); everything else gets the native OS frame by default. See
-  // windowConfig.ts.
+  // Frame policy lives in windowConfig.ts.
   win = new BrowserWindow({
     ...secondaryWindowConfig(opts),
     webPreferences: {

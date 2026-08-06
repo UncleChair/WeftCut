@@ -1,10 +1,8 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ActionId } from "../shortcuts/defs";
 
-/// The unified user-invocable command surface. Today's actions live in two
-/// disconnected places — App.tsx's shortcut HandlerMap and menu `on*`
-/// props; providers registered here are the one catalog the search
-/// palette (and, later, menus) read. Module-level, playbackStore-style:
+/// The unified user-invocable command surface: providers registered here are
+/// the one catalog the search palette reads. Module-level, playbackStore-style:
 /// readers don't thread props; components register providers on mount.
 export interface CommandDef {
   /// Unique id. Shortcut-backed commands reuse their ActionId string so

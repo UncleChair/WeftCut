@@ -82,12 +82,6 @@ export async function handleCallTool(
     // Clip compute (detect_silences / transcribe_clip audio; describe_clip
     // video) routes to 'rust', but the Rust core holds no state: resolve the
     // { layer, media } slice from the actor (sole state owner) and forward it.
-    // NOTE: describe_clip additionally reads an injected `vlm_config` snapshot
-    // (its config is stateless, ADR 0024). Wiring that snapshot in from the
-    // vlm-config store + cloud keys is the one remaining integration step (it
-    // lives in index.ts, out of this change's scope); until then describe_clip
-    // resolves against an empty config and returns the actionable
-    // "no video-understanding backend available" error.
     // Two-slice compute (compare_frames): resolve BOTH nested { a, b } clip
     // slices from the actor and forward. Kept separate from the single-slice
     // branch below, which reads a top-level `layer_id`.

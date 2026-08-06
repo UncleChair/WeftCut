@@ -19,9 +19,7 @@ use super::backend::{Locality, SpeechBackend};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendConfig {
     /// A cloud backend's API key (secret). Inserted by `Backend::set_cloud_key`
-    /// under the backend tag — this is the OpenAI path, byte-for-byte unchanged
-    /// from before the generalization, which is what keeps existing users'
-    /// `cloud_keys.json` resolving.
+    /// under the backend tag; the persisted shape is `cloud_keys.json`.
     ApiKey(String),
     /// A local sidecar's on-disk config: the CLI binary + model file, with
     /// optional device / thread hints. Populated from the TS config store via
@@ -56,8 +54,8 @@ pub enum Availability {
 /// Decide whether `backend` can run given its (optional) config map entry.
 ///
 /// - **Cloud** → `Available` iff an [`BackendConfig::ApiKey`] entry is present,
-///   else `NeedsKey`. (Presence only — matches the pre-generalization
-///   `has_key` semantics; an empty string still counts as "a key is set".)
+///   else `NeedsKey`. (Presence only — an empty string still counts as "a key
+///   is set".)
 /// - **Local** → `NeedsBinary` if the binary path is missing, then `NeedsModel`
 ///   if the model path is missing, then — for FunASR only — `NeedsModel` again
 ///   if its `tokens.txt` is unset/absent (tokens are part of the model bundle,
@@ -83,10 +81,6 @@ pub fn availability(backend: SpeechBackend, cfg: Option<&BackendConfig>) -> Avai
                 } else if backend == SpeechBackend::FunAsr
                     && tokens.as_deref().map_or(true, |t| !t.exists())
                 {
-                    // FunASR's sherpa-onnx Paraformer additionally needs a
-                    // `tokens.txt` beside the model; a missing/unset one is part
-                    // of the model bundle → NeedsModel (no new variant).
-                    // whisper.cpp leaves `tokens: None` and never reaches here.
                     Availability::NeedsModel
                 } else {
                     Availability::Available

@@ -642,7 +642,7 @@ type MigrateState =
   | { kind: "success"; mode: "adopt" | "copy"; newPath: string }
   | { kind: "error"; message: string };
 
-/// "Data location" section — shows the effective data root, drives the ticket-03
+/// "Data location" section — shows the effective data root, drives the
 /// copy/adopt migration (Change…), opens the folder, and — after a relaunch onto
 /// a new root — offers to delete the old copy. Exported for the component test.
 export function DataLocationSection({

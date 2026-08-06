@@ -191,20 +191,14 @@ describe("displayedFrameStartUs", () => {
   });
 });
 
-// `snapFrameFloor` is now the leaf's `snap_frame_floor` (it used to be a local
-// TS twin that rounded its output half-up while the leaf truncated). These
-// expectations are the OLD twin's, kept deliberately: the canonical values it
-// produced still hold under the leaf, which is the evidence that the canonical
-// half-up output policy is the right one and the leaf's truncating output was
-// the bug. The one exception is called out inline.
+// The invariant these pin: canonical (half-up) frame starts, asserted against
+// the leaf's `snap_frame_floor`.
 describe("snapFrameFloor", () => {
   it("returns the canonical (half-up) start of the frame containing tUs", () => {
     // Frame 299 at 30 fps is canonical 9_966_667 (exact 9_966_666.667 → up).
     expect(snapFrameFloor(9_966_667, 30, 1)).toBe(9_966_667);
     expect(snapFrameFloor(9_999_999, 30, 1)).toBe(9_966_667);
-    // DIVERGENCE from the deleted TS twin, which answered 9_966_667 here — a
-    // "floor" one µs ABOVE its own input. 9_966_666 is below frame 299's
-    // canonical start, so it belongs to frame 298.
+    // 9_966_666 is below frame 299's canonical start, so it belongs to frame 298.
     expect(snapFrameFloor(9_966_666, 30, 1)).toBe(9_933_333);
     expect(timeUsAtFrame(298, 30, 1)).toBe(9_933_333);
   });
@@ -223,8 +217,7 @@ describe("snapFrameFloor", () => {
   });
 
   it("handles 29.97 NDF: half-up rounding gives 33_367 at frame 1", () => {
-    // Frame 1 exact start = 1·1001/30000 s = 33_366.667 µs → 33_367. This is
-    // the value the leaf's truncating output policy used to miss (33_366).
+    // Frame 1 exact start = 1·1001/30000 s = 33_366.667 µs → 33_367.
     expect(snapFrameFloor(33_367, 30_000, 1001)).toBe(33_367);
     expect(snapFrameFloor(40_000, 30_000, 1001)).toBe(33_367);
   });

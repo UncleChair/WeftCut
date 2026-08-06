@@ -4,12 +4,10 @@ import type { CanvasPreset } from "../ipc";
 /// picker, because `set_composition { fps }` locks once the timeline holds a layer
 /// (spec R2-D1) and there is no custom-rate entry.
 ///
-/// That coupling is why the list must cover every standard rate rather than the
-/// three it started with: an incomplete list plus an irreversible choice is a trap.
-/// It also closed a live gap against export, which already offered 60/50/30/25/24
-/// (`exportSettings.ts` STANDARD_FPS) while new-project offered only 30/60/29.97 —
-/// so a PAL or 24p shooter had to edit on a 30 fps timeline and rate-convert on
-/// export, which is exactly the judder case.
+/// That coupling is why the list must cover every standard rate, export's
+/// `STANDARD_FPS` (`exportSettings.ts`) included: an incomplete list plus an
+/// irreversible choice is a trap — a PAL or 24p shooter would have to edit on a
+/// 30 fps timeline and rate-convert on export, which is exactly the judder case.
 ///
 /// No custom entry is also what keeps `formatTimecode`'s frame field two digits:
 /// the ceiling here is 60 fps (R2-D5). Fractional rates carry the exact rational —

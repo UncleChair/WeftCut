@@ -39,9 +39,9 @@ export interface AppInputProps extends NativeInputProps {
 
 /// The one text-like input for every WeftCut form. Replaces bare
 /// `<input type="text|password|search">`: one `.app-input` skin (focus ring,
-/// invalid/mono/center modifiers) instead of ~8 per-scope CSS rules. Spreads
-/// remaining native input props (placeholder, maxLength, onBlur, onKeyDown,
-/// id, spellCheck…) so it is a drop-in for the rename/search/timecode sites.
+/// invalid/mono/center modifiers). Spreads remaining native input props
+/// (placeholder, maxLength, onBlur, onKeyDown, id, spellCheck…) so it is a
+/// drop-in for the rename/search/timecode sites.
 export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(
   function AppInput(
     { value, onValueChange, type = "text", invalid, mono, align, clearable, clearAriaLabel, ariaLabel, className, onCancel, onKeyDown, ...rest },
@@ -80,7 +80,7 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(
     return (
       // A focus group: the ✕ below is a satellite of this input, so a press on
       // it must not read as "the user left the field". The `onMouseDown`
-      // preventDefault there is no longer sufficient on its own —
+      // preventDefault there is not sufficient on its own —
       // `useFocusRegions` listens in the capture phase and would run first.
       <span className="app-input-wrap" {...{ [FOCUS_GROUP_ATTR]: "" }}>
         {control}

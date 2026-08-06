@@ -15,12 +15,8 @@ export interface ThroughputSample {
 /// already turns rAF timestamps into intervals — a delta over a window
 /// rather than a value the producer has to maintain.
 ///
-/// Returns 0 for the first sample (no prior to diff against), for a
-/// non-positive time delta (the clock didn't advance), on a stall (no
-/// new frames — reads as 0 rather than a stale rate), and when the
-/// counter went backwards (a decoder rebuild reset it). The stall case
-/// is the whole point: a decoder wedged at 60 fps must read 0, not its
-/// last healthy rate.
+/// Returns 0 whenever a rate can't be derived — notably on a stall, so a
+/// decoder wedged at 60 fps reads 0 rather than its last healthy rate.
 export function throughputFps(
   prev: ThroughputSample | undefined,
   cur: ThroughputSample,

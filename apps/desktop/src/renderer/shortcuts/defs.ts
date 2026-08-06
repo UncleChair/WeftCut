@@ -135,9 +135,9 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   toggleBladeMode: { defaultKeys: ["C"],                   labelKey: "actions.toggle_blade_mode" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
-  // `docs/data-model.md` R.8: bare-letter `T` flips the app-level
-  // display_mode (AB ↔ Show All). Rebindable through Settings →
-  // Keyboard. Bare-letter chords don't fire in text inputs by default.
+  // Bare-letter `T` flips the app-level `display_mode` (AB ↔ Show All, see
+  // `shared/app-settings.ts`). Rebindable through Settings → Keyboard.
+  // Bare-letter chords don't fire in text inputs by default.
   toggleDisplayMode: { defaultKeys: ["T"],                 labelKey: "actions.toggle_display_mode" },
   focusNextPanel: {
     defaultKeys: ["Ctrl+Shift+Period"],

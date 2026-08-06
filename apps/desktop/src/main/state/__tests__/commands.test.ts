@@ -1,6 +1,5 @@
 // apps/desktop/src/main/state/__tests__/commands.test.ts
 // Unit tests for production param builders in commands.ts.
-// TDD: written to fail before the exports exist; green after Step 3 impl.
 import { describe, it, expect } from 'vitest'
 import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS, parseMechanical } from '../commands'
 import type { Project } from '../model'
@@ -239,12 +238,6 @@ describe('pickFreeOverlayTrack', () => {
 })
 
 // ── add_media_layer auto-pair ─────────────────────
-// TDD: written to fail before Step 6 implementation. Verifies:
-//   1. A Video+audio media item produces Video layer + Audio (role=dialogue)
-//      layer on the SAME track with the SAME span.
-//   2. Exactly one group contains both layer ids (3-commit fan-out).
-//   3. Video-only media produces no pair (autoPairAudio=null).
-//   4. auto_pair_audio_on_import=false suppresses the pair.
 describe('add_media_layer auto-pair', () => {
   function makeActorWithMedia(withAudio: boolean, autoPairSetting = true) {
     const idGen = seededGen()

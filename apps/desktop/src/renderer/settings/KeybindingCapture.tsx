@@ -26,10 +26,10 @@ interface CaptureProps {
   ownerId: ActionId;
   onCommit: (binding: string) => void;
   onCancel: () => void;
-  /// Lets the parent suspend the global keydown dispatcher while a
-  /// capture is active. The chip mounts, sets `true`; unmounts, sets
-  /// `false`. Without this the user's chord would also fire the
-  /// currently-bound action mid-rebind.
+  /// Capture-active signal: `true` on mount, `false` on unmount. Nothing
+  /// has to act on it — the chip's capture-phase listener already consumes
+  /// the chord before the global dispatcher — so the only consumer today
+  /// no-ops it; it's here for a surface that needs to suspend something.
   onActiveChange: (active: boolean) => void;
 }
 
@@ -64,11 +64,11 @@ export function KeybindingCapture({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // Escape always cancels — the dispatcher is suspended via
-      // `onActiveChange(true)` so this can't conflict with any bound
-      // shortcut. stopPropagation: this capture-phase window listener
-      // runs before the Settings dialog's Escape-close; without it one
-      // Escape would cancel the capture AND close the whole dialog.
+      // Escape always cancels — this capture-phase window listener sees
+      // the key before any bound shortcut, so it can't conflict with one.
+      // stopPropagation: the same listener runs before the Settings
+      // dialog's Escape-close; without it one Escape would cancel the
+      // capture AND close the whole dialog.
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -99,9 +99,8 @@ export function KeybindingCapture({
       }
       onCommitEvent(binding);
     }
-    // `capture: true` so we beat any local input that might also
-    // listen — but the global dispatcher is already suspended so
-    // there's nothing else to fight in practice.
+    // `capture: true` so we beat any local input that might also listen,
+    // and the global shortcut dispatcher, which runs on the bubble phase.
     window.addEventListener("keydown", onKey, { capture: true });
     return () =>
       window.removeEventListener("keydown", onKey, { capture: true } as any);

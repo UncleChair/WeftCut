@@ -196,10 +196,6 @@ export async function launchApp(
   // Chromium derives navigator.language from the process locale despite
   // --lang, so set both inputs for deterministic accessible names.
   const args = [`--lang=${locale}`]
-  // Default isolation: with no caller-provided userDataDir, mint a fresh one
-  // for this launch (registered below; removed on close / at process exit).
-  // A spec that relaunches over the SAME userData passes its own dir, which
-  // the driver never removes.
   let mintedUserDataDir: string | null = null
   if (opts.userDataDir) {
     args.push(`--user-data-dir=${opts.userDataDir}`)
@@ -209,10 +205,6 @@ export async function launchApp(
   }
   args.push(MAIN)
   const app = await electron.launch({
-    // `--user-data-dir` is always passed: the caller's fixed dir (a spec that
-    // relaunches over the SAME userData, so app-level state such as
-    // <userData>/workspaces.json survives a restart) or the per-launch dir
-    // minted above.
     args,
     // The elevated-run notice is a modal dialog; suppress it so it can't block the
     // (often elevated) e2e/CI Electron process. `env` replaces process.env, so
@@ -275,9 +267,9 @@ export async function newProject(
 }
 
 /// Invoke a backend command through the renderer bridge and return its result.
-/// `api.backend.invoke` is the single generic command channel into the Rust
-/// dispatcher that the renderer and every e2e spec use. Rejects (failing the
-/// test) when the backend command errors.
+/// `api.backend.invoke` is the single generic command channel into the
+/// main-process router (TS actor for state, Rust for compute) that the renderer
+/// and every e2e spec use. Rejects (failing the test) when the command errors.
 export async function invokeCmd<T = unknown>(
   page: Page,
   cmd: string,
@@ -344,8 +336,8 @@ export interface DriveResult {
 }
 
 /// Fire-and-forget an export hook, then poll window.__e2eExportDone to
-/// settlement. Mirrors e2e/helpers/export.mjs::driveExport for Playwright.
-/// `hook` defaults to "exportClip"; pass "exportTimeline" for the timeline path.
+/// settlement. `hook` defaults to "exportClip"; pass "exportTimeline" for the
+/// timeline path.
 export async function driveExport(
   page: Page,
   args: Record<string, unknown>,

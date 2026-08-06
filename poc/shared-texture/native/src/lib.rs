@@ -1,18 +1,12 @@
-//! Minimal POC native side.
+//! Minimal POC native side: the D3D11 producer behind
+//! `sharedTexture.importSharedTexture()`. Every entry point creates or fills a
+//! shareable D3D11 texture and returns its process-local NT HANDLE to JS.
 //!
-//! Creates a 256x256 synthetic shared D3D11 texture — `bgra` (checkerboard) or
-//! `nv12` (Y bright-top/dark-bottom, neutral chroma) — and returns its
-//! process-local NT HANDLE to JS so the main process can
-//! `sharedTexture.importSharedTexture()` it and display it in the renderer.
-//!
-//! Step 1a of the ffmpeg path: prove an NV12 (YUV) shared texture round-trips,
-//! before wiring real ffmpeg d3d11va decode (which produces NV12).
-//!
-//! Raw `ID3D11Device::CreateTexture2D` only accepts a shareable NT-handle texture
-//! when created with `SHARED_NTHANDLE | SHARED_KEYEDMUTEX` together (proven by the
-//! earlier flag-combo probe), so every texture here carries a keyed mutex and the
-//! upload is bracketed in `AcquireSync(0)`/`ReleaseSync(0)`. The texture is written
-//! once and never mutated, so no further sync is needed for this probe.
+//! Owns: the synthetic `bgra`/`nv12` patterns and the `rgba` probe pattern;
+//! one-shot ffmpeg decode of a first frame into a shared texture (CPU-bounce and
+//! zero-copy variants); the reusable slot pool driving the streaming and
+//! persistent-import modes; the NV12→BGRA convert entry point. Decode itself
+//! lives in `decoder`, the color convert in `convert`.
 //!
 //! Windows-only by design.
 
@@ -343,10 +337,10 @@ pub fn poc_create_rgba_probe_texture(width: u32, height: u32) -> Result<PocShare
     )
 }
 
-/// Step 1b-i: ffmpeg-decode the first frame of `path` to NV12 (hardware decode
-/// when available, then GPU→CPU transfer), then upload it into a shared NV12
-/// texture. Proves the ffmpeg→shared-texture→renderer pipeline; 1b-ii will
-/// replace the CPU bounce with a GPU `CopySubresourceRegion`.
+/// ffmpeg-decode the first frame of `path` to NV12 (hardware decode when
+/// available, then GPU→CPU transfer), then upload it into a shared NV12 texture.
+/// The variant that skips the CPU bounce is
+/// `poc_create_texture_from_video_zerocopy`.
 #[napi]
 pub fn poc_create_texture_from_video(path: String) -> Result<PocSharedTexture> {
     let (w, h, nv12) = decoder::decode_first_frame_nv12(&path)
@@ -479,20 +473,17 @@ pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedT
 
 /// Result 6: native NV12→BGRA color convert + zero-copy share. Hardware-decode
 /// the first frame to a D3D11 NV12 surface, then on ffmpeg's own device convert
-/// it to BGRA with the BT.601 limited-range matrix (custom pixel shader, no
-/// primaries remap) into a shared BGRA texture, and share THAT. Because the
-/// shared texture is already RGB (matrix:'rgb', range:'full'), the WebGPU
-/// ingestion that mis-colored raw NV12 (Result 5) has no YUV→RGB to mishandle.
+/// it to BGRA with the limited-range matrix selected by `matrix` ("601" default,
+/// or "709") into a shared BGRA texture, and share THAT. Because the shared
+/// texture is already RGB (matrix:'rgb', range:'full'), the WebGPU ingestion that
+/// mis-colored raw NV12 (Result 5) has no YUV→RGB to mishandle.
 ///
 /// The decoder's NV12 frame lives in a `BIND_DECODER` texture ARRAY, which can't
 /// carry shader-resource views; so we first `CopySubresourceRegion` the decoded
 /// slice into a plain `BIND_SHADER_RESOURCE` NV12 texture (subresource 0), then
 /// SRV+convert that.
 ///
-/// `matrix` selects the YUV→RGB matrix the convert shader applies ("601"
-/// default, or "709"); it MUST match the source's colorimetry tag (a real
-/// integration reads it from the stream). Result 6 showed the wrong matrix
-/// yields a wrong-but-self-consistent color.
+/// `matrix` MUST match the source's colorimetry tag — see `convert::YuvMatrix`.
 #[napi]
 pub fn poc_create_bgra_from_video_zerocopy(
     path: String,
@@ -745,9 +736,10 @@ pub fn poc_open_video_stream(path: String, pool_size: u32) -> Result<PocStreamIn
     Ok(PocStreamInfo { width, height, pool_size })
 }
 
-/// Status of a `poc_stream_next_frame` call. Exactly one of `frame` / `eof` /
-/// `busy` is the meaningful field (a `#[napi(object)]` can't be a Rust enum, so
-/// this is a small tagged struct JS branches on).
+/// Status of a `poc_stream_next_frame` call: `status` is one of
+/// "frame" | "eof" | "busy", and `frame` is populated only for "frame". A
+/// `#[napi(object)]` can't be a Rust enum, so this is a small tagged struct JS
+/// branches on.
 #[napi(object)]
 pub struct PocStreamResult {
     /// "frame" — `frame` is populated; "eof" — stream finished; "busy" — every
@@ -875,9 +867,7 @@ pub fn poc_free_slot(slot: u32) {
 // These functions reuse the streaming `STREAM`/pool (open with
 // `poc_open_video_stream`, tear down with `poc_close_video_stream`) but DROP the
 // free-slot/allReferencesReleased gating: the producer writes whichever slot it
-// is told, whenever it likes. That is the whole point — the producer and the
-// persistent import are deliberately NOT coordinated via slot ownership; only the
-// keyed mutex serialises the GPU write against Chromium's read.
+// is told, whenever it likes.
 // ===========================================================================
 
 #[napi(object)]

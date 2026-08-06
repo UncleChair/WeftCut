@@ -40,14 +40,8 @@ import { InspectorAnimField } from "./InspectorAnimField";
 import { ScaleFields } from "./ScaleFields";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
-// render via `InspectorAnimField`, the inspector adapter over the shared
-// `KeyframeField` (components/KeyframeField.tsx): the field shows the value
-// evaluated at the playhead and edits auto-key through `updateLayerParamTrack`,
-// with each param's control (number/slider/readout), step, and bounds sourced
-// from its `ParamDescriptor` (keyframe/descriptors.ts). Non-animatable rows
-// (fades/flip/mute/content/font, Text color, Motif props) keep the scalar
-// `commit` -> `updateLayerParams` path. Slider commits are debounced inside
-// `KeyframeField`.
+// render via `InspectorAnimField`; every other row (fades/flip/mute/content/
+// font, Text color, Motif props) commits scalars through `updateLayerParams`.
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
@@ -847,10 +841,10 @@ function MotifFields({
     ? Object.entries(motif.manifest.props_schema)
     : [];
 
-  // Partial props patch: send ONLY the changed key so the backend's field-wise
-  // merge (imbl::HashMap insert — keeps all other keys untouched) applies it
-  // correctly. Sending the full spread risks a stale v.props racing against a
-  // concurrent field edit and silently dropping the earlier write.
+  // Partial props patch: send ONLY the changed key so the state actor's
+  // key-wise props merge keeps all other keys untouched. Sending the full
+  // spread risks a stale v.props racing against a concurrent field edit and
+  // silently dropping the earlier write.
   const commitProp = (key: string, next: unknown) =>
     commit({ kind: "Motif", props: { [key]: next } });
 
@@ -1091,13 +1085,13 @@ function MotifLifecycleRow({
   );
 }
 
-/// In-app source editor for a selected DRAFT Motif layer (upload-design §6).
+/// In-app source editor for a selected DRAFT Motif layer. See docs/motifs.md.
 /// Deliberately minimal: a plain textarea of the draft's full composed source
 /// (manifest island + body). "Apply" funnels through `amendMotifDraft`, which
 /// re-parses the island, forces the stable id, re-composes, and emits
 /// `motifs:changed` → the catalog resyncs (new content_hash) → the canvas
-/// preview re-captures. Only shown for drafts; editing an installed Motif (which
-/// seeds a fresh draft) is a later stage.
+/// preview re-captures. Only shown for drafts — editing an installed Motif goes
+/// through `MotifLifecycleRow`, which seeds a draft and swaps the layer onto it.
 function MotifSourcePanel({ motifId }: { motifId: string }) {
   const { t } = useTranslation();
   // Re-resolve status reactively (same notifier the lifecycle row uses) so this
@@ -1153,11 +1147,11 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
   );
 }
 
-/// One editable motif prop, switched on `PropSpec.type`. Mirrors the
-/// motif picker's `PropField` (string / color / number), but commits each
-/// change field-wise via `onCommit`. The string/number variants delegate to
-/// dedicated sub-components so each can hold the local-state hooks at the top
-/// of its body (rules-of-hooks; the color variant needs no local state).
+/// One editable motif prop, switched on `PropSpec.type`. Mirrors the motif
+/// picker's `PropField`, but commits each change field-wise via `onCommit`.
+/// The string/number variants delegate to dedicated sub-components so each can
+/// hold the local-state hooks at the top of its body (rules-of-hooks; the
+/// color variant needs no local state).
 /// Props colors are plain hex strings (e.g. `#ff3366`), NOT `Rgba` — handled
 /// as strings, not via the `rgbaToHex` / `hexToRgba` helpers.
 function MotifPropField({
@@ -1415,10 +1409,9 @@ function ColorFields({
           ariaLabel={t("property_panel.width")}
           min={1}
           step={1}
-          // width is u32 on the Rust side — min/round keep it a positive
-          // integer (the old `parseInt(...) || v.width` rejected 0 and fractions).
-          // Commit on debounce/Enter/blur (not every keystroke) — Base UI
-          // self-buffers the typed text; onCommit avoids flooding the actor.
+          // width/height are u32 on the Rust side — min/round keep them positive
+          // integers. Commit on debounce/Enter/blur (not every keystroke) — Base
+          // UI self-buffers the typed text; onCommit avoids flooding the actor.
           onValueChange={() => {}}
           onCommit={(n) => commit({ kind: "Color", width: Math.round(n) })}
         />
@@ -1429,10 +1422,6 @@ function ColorFields({
           ariaLabel={t("property_panel.height")}
           min={1}
           step={1}
-          // height is u32 on the Rust side — min/round keep it a positive
-          // integer (the old `parseInt(...) || v.height` rejected 0 and fractions).
-          // Commit on debounce/Enter/blur (not every keystroke) — Base UI
-          // self-buffers the typed text; onCommit avoids flooding the actor.
           onValueChange={() => {}}
           onCommit={(n) => commit({ kind: "Color", height: Math.round(n) })}
         />
@@ -1638,7 +1627,6 @@ function hexToRgba(hex: string, a: number): Rgba {
  * would feel laggy.
  */
 function useDebouncedCommit<P>(commit: (p: P) => Promise<void>) {
-  // useRef without import — closure-stable timer slot.
   const slot: { current: ReturnType<typeof setTimeout> | null } = useMemo(
     () => ({ current: null }),
     [],

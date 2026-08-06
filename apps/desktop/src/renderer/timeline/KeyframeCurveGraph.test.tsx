@@ -90,8 +90,7 @@ describe("KeyframeCurveGraph", () => {
     fireEvent.pointerMove(window, { clientX: 30, clientY: 35 });
     fireEvent.pointerMove(window, { clientX: 40, clientY: 30 });
     fireEvent.pointerMove(window, { clientX: 50, clientY: 25 });
-    // No commit mid-drag: a per-move commit spams the actor (async IPC round
-    // trip per move) and floods the undo stack with one entry per pointermove.
+    // No commit mid-drag.
     expect(onSetInterp).not.toHaveBeenCalled();
     fireEvent.pointerUp(window);
     // Exactly one commit on release → one undo step, carrying the final coeffs.

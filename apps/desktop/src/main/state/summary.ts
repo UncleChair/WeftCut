@@ -35,11 +35,10 @@ export interface MotifView {
 }
 export type LayerParamsView = VideoClipView | ImageOverlayView | TextView | ColorView | AudioView | MotifView
 
-/** commands/mod.rs:586 layer_kind — the LayerParams discriminant. */
 export function layerKind(params: LayerParams): string { return params.kind }
 
-/** commands/mod.rs:607 derive_track_kind_label — visual-class wins; audio-only →
- *  "Audio"; empty → "Video" (so blank A/B-roll rows still style as video lanes). */
+/** Visual-class wins; audio-only → "Audio"; empty → "Video" (so blank A/B-roll
+ *  rows still style as video lanes). */
 export function deriveTrackKindLabel(track: Track): string {
   let hasVisual = false, hasAudio = false
   for (const l of track.layers) {
@@ -54,8 +53,7 @@ export function deriveTrackKindLabel(track: Track): string {
 const hex2 = (n: number): string => n.toString(16).padStart(2, '0')
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n))
 
-/** commands/mod.rs:647 hsl_to_hex. Plain f64 (cosmetic; only hue 0 is gated — see
- *  the color-hint landmine in the plan). h is a non-negative integer hue. */
+/** Cosmetic; only hue 0 is gated. h is a non-negative integer hue. */
 export function hslToHex(h: number, s: number, l: number): string {
   const c = (1 - Math.abs(2 * l - 1)) * s
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
@@ -74,9 +72,9 @@ export function hslToHex(h: number, s: number, l: number): string {
 
 function rgbaHex(c: Rgba): string { return `#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}` }
 
-/** commands/mod.rs:629 layer_color_hint — Color clip → its exact rgba (Static, or
- *  the first keyframe value, BLACK if none); else a stable hue from the uuid's
- *  first two bytes (hex-parsed from the UUID string). */
+/** Color clip → its exact rgba (Static, or the first keyframe value, BLACK if
+ *  none); else a stable hue from the uuid's first two bytes (hex-parsed from
+ *  the UUID string). */
 export function layerColorHint(layer: Layer): string {
   if (layer.params.kind === 'Color') {
     const a = layer.params.color
@@ -90,11 +88,10 @@ export function layerColorHint(layer: Layer): string {
   return hslToHex(hue, 0.55, 0.55)
 }
 
-/** commands/mod.rs:430 marker color_hint — `#rrggbb`. */
+/** A marker's color hint is plain `#rrggbb` — no alpha on the wire. */
 export function markerColorHint(c: Rgba): string { return rgbaHex(c) }
 
-/** commands/mod.rs:333 media label — explicit label, else path basename, else the
- *  whole path. Mirrors the `or_else`/`unwrap_or_else` chain. */
+/** Explicit label, else path basename, else the whole path. */
 export function mediaLabel(item: MediaItem): string {
   if (item.label != null) return item.label
   const p = item.path_abs
@@ -108,8 +105,8 @@ function mediaLabelFor(id: Uuid, pool: Record<Uuid, MediaItem>): string {
   return m ? mediaLabel(m) : id
 }
 
-/** commands/mod.rs:487 layer_params_view — kind-matched UI projection. NOTE: the
- *  Motif arm is unit-tested only (no Motif layers in the corpus), matching Rust. */
+/** Kind-matched UI projection. NOTE: the Motif arm is covered by unit tests
+ *  only (summary.test.ts) — no integration fixture builds a Motif layer. */
 export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaItem>): LayerParamsView {
   switch (params.kind) {
     case 'VideoClip': {
@@ -150,7 +147,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
   }
 }
 
-// ── top-level view types (mirror commands/mod.rs:150-238 + build_project_summary) ──
+// ── top-level view types ──
 
 export interface CompositionSummary {
   width: number; height: number; fps_num: number; fps_den: number; duration_pinned: boolean
@@ -196,15 +193,16 @@ export interface ProjectSummary {
   media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; groups: GroupSummary[]; audio_roles: RoleMixView[]
 }
 
-// commands/mod.rs:395-401 — TrackRole kebab wire form (matches Rust match arms verbatim).
+// The kebab wire form of TrackRole — what renderer/ipc/index.ts declares. The
+// serialized project keeps the PascalCase variant; this spelling is view-only.
 const TRACK_ROLE_WIRE: Record<string, string> = { ARoll: 'a-roll', BRoll: 'b-roll', AudioA: 'audio-a', AudioB: 'audio-b', Caption: 'caption' }
 
-// commands/mod.rs:446 — AudioRole::ALL order; default-filled per role.
+// `AudioRole::ALL` order (state/audio_role.rs); default-filled per role.
 const ROLE_ORDER = ['dialogue', 'music', 'sfx', 'voiceover'] as const
 const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
 
-/** commands/mod.rs:322 build_project_summary — the read-only IPC view the renderer
- *  pulls on project:changed. Pure; `fileExists` is injected (filesystem fields). */
+/** The read-only IPC view the renderer pulls on project:changed. Pure;
+ *  `fileExists` is injected (filesystem fields). */
 export function buildProjectSummary(p: Project, history: HistoryStatus, fileExists: (absPath: string) => boolean): ProjectSummary {
   const layer_count = p.tracks.reduce((n, t) => n + t.layers.length, 0)
 

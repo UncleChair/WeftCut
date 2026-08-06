@@ -17,10 +17,9 @@ export interface Envelope {
   values: number[];
 }
 
-// dbToLinear (10^(db/20)) now comes from the shared weftcut-eval wasm — ONE
-// formula across renderer preview, the actor, and export (was a hand-mirrored
-// Math.pow). Re-exported so the role-gate twin and docs/audio.md's envelope
-// contract keep a single source.
+// dbToLinear (10^(db/20)) comes from the shared weftcut-eval wasm — ONE
+// formula across renderer preview, the actor, and export. Re-exported so the
+// role-gate twin and docs/audio.md's envelope contract keep a single source.
 export { dbToLinear };
 
 /// Fade multiplier at layer-local `tUs` — now the leaf `fade_mul` (wasm), the

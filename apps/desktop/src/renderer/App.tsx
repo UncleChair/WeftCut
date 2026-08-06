@@ -142,9 +142,9 @@ export function App({ onCloseProject }: AppProps) {
   const systemNotices = useAppNotices();
   const logReady = useLogStore((state) => state.ready);
   const loggedSystemNoticeCodes = useRef(new Set<string>());
-  // The project preview is a DOM `<video>` driven by `<PreviewSurface>`
-  // (docs/data-model.md Q10). The transport buttons here delegate to its
-  // imperative handle (play / pause / seek); playhead state flows back up via callbacks.
+  // The project preview is the Pixi compositor behind `<PreviewSurface>` (see
+  // docs/preview.md). The transport buttons here delegate to its imperative
+  // handle (play / pause / seek); playhead state flows back up via callbacks.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
   // Timeline-local clipboard. It intentionally remembers the copied layer,
   // independent of later selection changes; App remounts for each project.
@@ -212,14 +212,13 @@ export function App({ onCloseProject }: AppProps) {
   }, [workspaceController]);
 
   // Fresh project session → playhead 0. The store is module-global and would
-  // otherwise carry the previous project's position across a close/open
-  // (the pre-store `useState(0)` reset with the App mount).
+  // otherwise carry the previous project's position across a close/open.
   useEffect(() => {
     setPlayheadTimeUs(0);
     clearLayerSelection();
   }, []);
 
-  // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
+  // Centralised playhead clamp — see "Boundary semantics" in docs/data-model.md.
   // Every UI seek funnels through here so callers can pass raw boundary
   // values (`duration_us`, `playheadTimeUs() + step`, parsed timecode) and
   // the upper bound is enforced once. Lower bound at 0; upper at
@@ -422,7 +421,7 @@ export function App({ onCloseProject }: AppProps) {
     openRenderPlayPopup,
   } = useExportFlow({ previewRef, proxyStateRef, decodeProbeMemo });
 
-  // ---- Menu-bar action handlers (extracted from former inline onClicks). ----
+  // ---- Menu-bar action handlers ----
 
   const saveProjectNow = useCallback(async () => {
     await run(() => projectSave());
@@ -493,15 +492,8 @@ export function App({ onCloseProject }: AppProps) {
     );
   }, [workspaceController]);
 
-  // No React-side preview init: the Rust `preview::PreviewRenderer` task
-  // subscribes to actor commits and writes `<workspace>/Cache/preview/<hash>.mp4`;
-  // PreviewSurface listens for the resulting events and swaps its `<video src>`.
-
-  // Delete the currently-selected layer. Previously a local keydown
-  // effect inside `Timeline.tsx`; lifted here so the shortcuts
-  // registry owns every app-level binding. No-ops when nothing is
-  // selected — the `useShortcuts` dispatcher fires the handler
-  // regardless and we cheaply ignore.
+  // Delete the selected layer; no-ops when nothing is selected (the
+  // `useShortcuts` dispatcher fires the handler regardless).
   const deleteSelected = useCallback(async () => {
     if (!primaryLayerId) return;
     try {
@@ -529,11 +521,6 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [refresh]);
 
-  // Wire all v1 shortcut bindings. The handler map is rebuilt each
-  // render — fine, because `useShortcuts` reads through a ref so the
-  // window listener never reattaches just because handler identities
-  // changed. The listener only reattaches when the resolved binding
-  // entries change (i.e. when user overrides land later).
   const toggleLogConsole = useCallback(() => {
     setSystemStatusOpen(false);
     setLogConsoleOpen((open) => !open);
@@ -683,6 +670,10 @@ export function App({ onCloseProject }: AppProps) {
     () => keybindings as OverrideMap,
     [keybindings],
   );
+  // The handler map is rebuilt each render — fine, because `useShortcuts` reads
+  // through a ref so the window listener never reattaches just because handler
+  // identities changed. It only reattaches when the resolved binding entries
+  // change (i.e. when user overrides land).
   useShortcuts({
     handlers: shortcutHandlers,
     overrides: shortcutOverrides,
@@ -936,9 +927,10 @@ export function App({ onCloseProject }: AppProps) {
                   durationUs: summary.duration_us,
                   durationPinned: summary.composition.duration_pinned,
                   // The floor for a user-set duration: `max(layer.t_end_us)`
-                  // across every track/layer. Mirrors the Rust-side
-                  // `apply_duration_autofit` overflow guard so the UI can
-                  // pre-validate before invoking `set_composition`.
+                  // across every track/layer. Mirrors the
+                  // `applyDurationAutofit` overflow guard in
+                  // main/state/mutations/helpers.ts so the UI can pre-validate
+                  // before invoking `set_composition`.
                   layersMaxEndUs: summary.tracks
                     .flatMap((t) => t.layers.map((l) => l.t_end_us))
                     .reduce((a, b) => Math.max(a, b), 0),

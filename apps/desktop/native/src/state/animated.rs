@@ -42,14 +42,14 @@ impl<T: Clone> Animated<T> {
 
     /// True iff the value actually changes over time — `Keyframed` with
     /// at least two keyframes. `Static`, empty `Keyframed`, and
-    /// single-keyframe `Keyframed` all read as not animated. The
-    /// renderer's static-vs-keyframed routing rule consults this:
-    /// animated tracks force html-cap rendering on the owning
-    /// layer/group; non-animated tracks can take the fast ffmpeg path.
+    /// single-keyframe `Keyframed` all read as not animated. Audio
+    /// envelope sampling (`audio::envelope`) branches on it: a
+    /// non-animated gain/pan track collapses to a constant envelope
+    /// instead of a per-step sampled one.
     ///
     /// Doesn't compare values — `[t=0: v=5, t=10: v=5]` reports
-    /// animated even though it's effectively static. False positives
-    /// just route to html-cap unnecessarily; tightening to "any two
+    /// animated even though it's effectively static. A false positive
+    /// only costs the caller the general path; tightening to "any two
     /// adjacent keyframes have distinct values" is a follow-up if it
     /// matters.
     pub fn is_animated(&self) -> bool {
@@ -60,7 +60,6 @@ impl<T: Clone> Animated<T> {
     }
 
     /// Shift every keyframe's `t_us` by `delta_us` (no-op on `Static`).
-    /// Used by IN-edge trim and split to keep keyframes glued to content.
     pub fn shift_keyframes(&mut self, delta_us: TimeUs) {
         if let Animated::Keyframed(kfs) = self {
             *kfs = kfs
@@ -96,9 +95,8 @@ impl<T: Clone> Animated<T> {
     }
 
     /// Keep only keyframes whose `t_us` satisfies `keep` (no-op on `Static`).
-    /// Used by split to partition keyframes between the two halves. If `keep`
-    /// filters out every keyframe, the result is an EMPTY `Keyframed` track —
-    /// the caller (e.g. split) is responsible for collapsing that to `Static`,
+    /// If `keep` filters out every keyframe, the result is an EMPTY `Keyframed`
+    /// track — the caller is responsible for collapsing that to `Static`,
     /// since an empty `Keyframed` is rejected by `normalize_keyframes` and
     /// reads as the fallback in `value_at`.
     pub fn retain_keyframes(&mut self, keep: impl Fn(TimeUs) -> bool) {
@@ -163,7 +161,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// the layer span. No live consumer; re-audit against out-of-range keys
     /// before wiring one up.
     ///
-    /// See `docs/data-model.md` §3.
+    /// See `docs/data-model.md` § Animated values.
     pub fn animating_runs(&self) -> Vec<(TimeUs, TimeUs)> {
         let Animated::Keyframed(kfs) = self else {
             return Vec::new();
@@ -192,8 +190,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// Owner-local timestamps where a Hold-step occurs — the value
     /// changes from one constant level to another at exactly
     /// `kf[i+1].t_us` because `kf[i].interp == Hold` AND
-    /// `kf[i].value != kf[i+1].value`. The gap fragmenter consults
-    /// this so each fragmented static gap has a single held value.
+    /// `kf[i].value != kf[i+1].value`.
     ///
     /// NOTE: like `animating_runs`, may now return times outside `[0, duration]`
     /// (out-of-range keyframes are valid). No consumer today; re-audit if revived.

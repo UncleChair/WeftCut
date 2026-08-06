@@ -1,7 +1,6 @@
 // apps/desktop/src/main/state/__tests__/restore-log-parity.test.ts
-// TDD: verify that host.mcpCall + host.handleInvoke emit the correct LogBus
+// Verify that host.mcpCall + host.handleInvoke emit the correct LogBus
 // pin-row for restore_checkpoint, checkpoint, and begin_agent_session.
-// RED before the host-level mcpCall wrapper + emitLog dep exist; GREEN after.
 import { describe, it, expect, vi } from 'vitest'
 import { createTsActorHost } from '../ts-actor-host'
 

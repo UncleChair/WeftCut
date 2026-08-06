@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
-// Covers the ticket-04 "Data location" Settings section (exported from
-// SettingsPanel.tsx). The ticket-03 IPC wrappers are stubbed and the
+// Covers the "Data location" Settings section (exported from
+// SettingsPanel.tsx). The data-root IPC wrappers are stubbed and the
 // `evt:dataRoot:progress` stream is mocked at the bridge so the copy-progress
 // bar can be driven deterministically.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 
 import type { DataRootMigrateResult } from "../ipc";
 
-// Stubbed ticket-03 wrappers. `importActual` keeps DATA_ROOT_EVENTS + types real
+// Stubbed data-root IPC wrappers. `importActual` keeps DATA_ROOT_EVENTS + types real
 // so the component and the test agree on the `dataRoot:progress` event name.
 const ipc = vi.hoisted(() => ({
   dataRootCurrent: vi.fn(),

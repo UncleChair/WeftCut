@@ -3,15 +3,10 @@
 // u16LE sample) with NEAREST sampling — bilinear would interpolate the two
 // bytes independently and produce garbage. Chroma is upsampled nearest.
 //
-// Dual-backend (GLSL + WGSL), mirroring Nv12Ingest: the 10-bit EXPORT worker
-// forces WebGL (rgba16float render target — the f16 compositing ADR 0022
-// depends on), but the PREVIEW compositor prefers WebGPU, and the 10-bit
-// VideoToolbox preview lane (issue #10 ticket 03) rings TenBitFrames there
-// too. On WebGPU the pass stores to bgra8unorm — Pixi v8's WebGPU pipelines
-// hard-code bgra8unorm color targets (see the LANDMINE in Nv12Ingest), and
-// the preview canvas is 8-bit regardless — the 10-bit NORMALIZATION math
-// (876/896 limited-range scales, owned BT.709 matrix) still runs at full
-// float precision in the shader on both backends.
+// Dual-backend (GLSL + WGSL), mirroring Nv12Ingest: the 10-bit export worker
+// runs on WebGL, the preview compositor on WebGPU. The render-target format is
+// per-backend — see `build()`. The 10-bit normalization math (limited-range
+// scales, owned BT.709 matrix) runs at full float precision on both.
 //
 // NOTE: VERT and FRAG below are duplicated verbatim in the 10-bit GL-parity
 // gate (see apps/desktop/e2e) — keep both copies in sync.
@@ -164,9 +159,9 @@ export class TenBitIngest {
     }
   }
 
-  /// Convert `tb` (if not already current) and return the clip's RGBA16F
-  /// texture. Keyed by layerId; textures are ingest-owned (callers must not
-  /// destroy them).
+  /// Convert `tb` (if not already current) and return the clip's converted RGB
+  /// texture (rgba16float on WebGL, bgra8unorm on WebGPU). Keyed by layerId;
+  /// textures are ingest-owned (callers must not destroy them).
   textureFor(key: string, tb: TenBitFrame): Texture {
     let s = this.states.get(key);
     if (s && (s.w !== tb.width || s.h !== tb.height)) {
@@ -201,7 +196,7 @@ export class TenBitIngest {
     const u = planeSource(tb.data.subarray(tb.uOffset, tb.uOffset + cw * ch * 2), cw, ch);
     const v = planeSource(tb.data.subarray(tb.vOffset, tb.vOffset + cw * ch * 2), cw, ch);
     // WebGL keeps rgba16float — the 10-bit export's f16 compositing depends
-    // on it. WebGPU stores 8-bit: Pixi's WebGPU pipelines hard-code
+    // on it (ADR 0022). WebGPU stores 8-bit: Pixi's WebGPU pipelines hard-code
     // bgra8unorm color targets (Nv12Ingest's LANDMINE — any other RT format
     // trips Dawn's attachment validation and the pass silently draws
     // nothing), and only the 8-bit preview canvas consumes this path there.

@@ -7,24 +7,16 @@
 //! `<t s>` text markers — spike-proven that MiniCPM-V needs no `temporal_ids`),
 //! and differ only in which [`RawDescription`] style the output is tagged as.
 //!
-//! ## Command shape — validated by `spike/spike.mjs`, non-negotiable
+//! ## Command shape
 //!
 //! ```text
 //! llama-mtmd-cli -m MODEL --mmproj MMPROJ --image "p1,p2,..." -p PROMPT \
 //!   --temp 0.1 -n 768 -ngl 999 -c 8192 --repeat-penalty 1.15 --repeat-last-n 320
 //! ```
 //!
-//! Landmines (each silently breaks output if missed):
-//! - **Multiple images = ONE comma-separated `--image`.** Repeated `--image` is
-//!   deprecated and keeps only the LAST image.
-//! - **No `--no-display-prompt`** in this build (invalid arg) — omit it; the
-//!   parser strips the prompt echo by scanning for the JSON array.
-//! - **Must cap `-c`** — the default follows Qwen3-VL's ~256K native context and
-//!   OOMs the KV cache even with free VRAM; `-c 8192` fits the downscaled frames
-//!   + generation.
-//! - **`--repeat-penalty 1.15 --repeat-last-n 320`** — at low temp the model
-//!   degenerates into repeating the last segment until `-n`, truncating the JSON;
-//!   the penalty curbs the loop (and the parser salvages a truncated array).
+//! Every knob here is load-bearing and each one's why lives at its own site:
+//! [`build_args`] for the `--image` and `--no-display-prompt` landmines, `CTX`
+//! and `REPEAT_PENALTY` for the two decoding guards.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -44,7 +36,11 @@ use super::parser::RawDescription;
 const TEMP: &str = "0.1";
 const N_PREDICT: &str = "768";
 const NGL: &str = "999"; // offload all layers when the build has a GPU backend
-const CTX: &str = "8192"; // cap KV cache (default follows the model's ~256K ctx → OOM)
+// MUST cap: the default follows the model's ~256K native ctx and OOMs the KV
+// cache even with free VRAM; 8192 fits the downscaled frames + generation.
+const CTX: &str = "8192";
+// At low temp the model degenerates into repeating the last segment until `-n`,
+// truncating the JSON; the penalty curbs the loop (the parser salvages the rest).
 const REPEAT_PENALTY: &str = "1.15";
 const REPEAT_LAST_N: &str = "320";
 /// MTMD default media marker; images substitute in order where it appears.
@@ -139,6 +135,9 @@ pub fn build_prompt(frames: &[TimedFrame], focus: Focus) -> String {
 /// the CLI contract — comma-joined `--image`, the capped `-c`, the repeat
 /// penalty — is unit-testable without a running binary (the only automated pin
 /// on this contract; the end-to-end run needs a GPU + a multi-GB model).
+///
+/// Landmine: never add `--no-display-prompt` — it is an invalid arg in this
+/// build and the child fails; the parser strips the prompt echo instead.
 pub fn build_args(
     model: &Path,
     mmproj: &Path,

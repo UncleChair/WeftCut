@@ -54,7 +54,7 @@ interface Props {
 
 /// Top-level entry surface per workspace-redesign Q7. Every editor session
 /// starts here; the user must pick Create / Open / Recent to advance into
-/// the editor. There is no "blank-on-boot" editor surface anymore.
+/// the editor.
 export function StartupScreen({ onWorkspaceReady }: Props) {
   const { t, i18n } = useTranslation();
   const [recents, setRecents] = useState<RecentEntry[] | null>(null);
@@ -206,7 +206,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
     <div className="startup-screen">
       {/* Frameless window: the startup screen has no app header, so a
           slim strip along the top carries the drag region + caption
-          buttons (and the locale toggle, which used to float here). */}
+          buttons. */}
       <div className="startup-titlebar" data-drag-region>
         {/* Top-left app-level affordances: settings apply below-project
             scope, so they're reachable before a workspace exists. The
@@ -385,9 +385,9 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   );
 }
 
-/// How many recents to show before the disclosure toggle appears. The
-/// backend caps the store at 10 (see `recents.rs::MAX_RECENTS`), so the
-/// "expanded" view reveals at most 7 additional entries.
+/// How many recents to show before the disclosure toggle appears. Main caps
+/// the store at 10 (`main/recents.ts::MAX_RECENTS`), so the "expanded" view
+/// reveals at most 7 additional entries.
 const COLLAPSED_RECENT_COUNT = 3;
 
 

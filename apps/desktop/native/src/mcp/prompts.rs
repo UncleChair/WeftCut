@@ -1,16 +1,9 @@
-//! MCP prompts surface — `cut-silences`, `auto-caption`, `voiceover`.
+//! MCP prompts surface — `cut-silences`, `auto-caption`, `voiceover`. Owns the
+//! advertised prompt catalog (`catalog`) and the per-call expansion (`expand`);
+//! the cloud-backed `auto-caption` / `voiceover` exist only under
+//! `#[cfg(feature = "speech")]`.
 //!
-//! Prompts in MCP are user-invokable templates: when the user runs
-//! `/cut-silences` in their MCP client, the agent receives the messages
-//! produced by `expand` as the next user instruction. This one is a recipe
-//! around the `detect_silences` + `split_layer` + `delete_layer` tools — the
-//! value is the recipe, not new capability.
-//!
-//! The `auto-caption` / `voiceover` prompts reference cloud tools and are
-//! enabled under `#[cfg(feature = "speech")]`.
-//!
-//! Argument schemas declared in `catalog()` flow back to clients via
-//! `prompts/list`; the per-call interpolation happens in `expand_*`.
+//! Design: `docs/mcp.md`.
 
 use serde_json::Map;
 use serde_json::Value;
@@ -25,7 +18,7 @@ pub const NAME_AUTO_CAPTION: &str = "auto-caption";
 #[cfg(feature = "speech")]
 pub const NAME_VOICEOVER: &str = "voiceover";
 
-/// Static prompt catalog. Mirrored 1:1 in `list_prompts`.
+/// Static prompt catalog; re-exported as `list_prompts`.
 pub(crate) fn catalog() -> Vec<PromptDef> {
     let mut prompts = vec![PromptDef {
         name: NAME_CUT_SILENCES.into(),

@@ -54,7 +54,7 @@ test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one 
   // This test opens the normally-closed Caption Panel, whose arrangement the
   // app autosaves — the bare launchApp()'s per-launch throwaway userData keeps
   // that layout mutation from leaking into the dock-workspace baseline specs
-  // that assert the default six-Panel set.
+  // that assert the default Panel set.
   const { app, page } = await launchApp();
   try {
     const parent = tmpDir("weftcut-caption-");

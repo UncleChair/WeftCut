@@ -31,19 +31,13 @@ function emit(level: LogEntryInput["level"], message: string): void {
   });
 }
 
-/// Record a successful transport open, and emit iff the lane CHANGED. Three
-/// rules, applied in this order:
+/// Record a successful transport open, and emit iff the lane CHANGED.
 ///
-/// - An explicit `from` (the two in-place HW→SW fallbacks) overrides the trail.
-///   Load-bearing for the open-time budget throw: that hardware open THREW, so
-///   it never recorded "hardware", and a trail-only comparison would read the
-///   software open as the clip's first and stay silent on exactly the
-///   transition worth logging.
-/// - No `from` and no prior entry — a clip's first open. That is the resolution
-///   trail's business; a lane is not a transition until it changes.
-/// - Prior entry equals `lane` — silent. This is what keeps
-///   `setPlaybackScaleDiv`'s same-lane re-open quiet, and what bounds emission
-///   at one row per actual transition however often a source re-opens.
+/// An explicit `from` (the two in-place HW→SW fallbacks) overrides the trail.
+/// Load-bearing for the open-time budget throw: that hardware open THREW, so it
+/// never recorded "hardware", and a trail-only comparison would read the
+/// software open as the clip's first and stay silent on exactly the transition
+/// worth logging.
 export function noteLaneOpen(o: {
   layerId: string;
   mediaId: string;

@@ -2,9 +2,7 @@
 // create gesture, the hardcoded 1 s frame-snapped default duration, chip
 // geometry, and (kind, direction) wire-arg pairing for add/update_transition.
 // Pure functions only — the components stay thin and these get unit tests.
-//
-// Playhead discipline: nothing here reads playhead state. Chips are static
-// per project version (spec § UI); geometry depends only on the summary.
+// See ADR 0035.
 
 import type {
   LayerSummary,
@@ -19,9 +17,8 @@ import type { LayerSlice } from "./geometry";
 
 const US_PER_SEC = 1_000_000;
 
-/// Click-tolerance band around the zero-width seam, in px (spec § UI: "a few
-/// pixels"). Matches LayerBlock's EDGE_ZONE_PX so the two edge affordances
-/// feel like one.
+/// Click-tolerance band around the zero-width seam, in px. Matches
+/// LayerBlock's EDGE_ZONE_PX so the two edge affordances feel like one.
 export const CUT_CLICK_TOLERANCE_PX = 6;
 
 export type TransitionKindName = TransitionKindView["kind"];
@@ -51,7 +48,7 @@ export interface TransitionCut {
 /// Find the cut nearest to `tUs` within `toleranceUs`, or null. Only exact
 /// adjacency counts (a pair already overlapped by a transition no longer
 /// shares a boundary, so it naturally stops matching). Audio layers never
-/// participate (spec § Participants).
+/// participate (ADR 0035 § Placement, participants, and handle).
 export function findCutNear(
   layers: readonly LayerSummary[],
   tUs: number,
@@ -78,7 +75,7 @@ export function findCutNear(
 }
 
 /// Default duration: 1 second snapped DOWN to a whole composition-frame
-/// count, minimum 1 frame (spec § UI, hardcoded — no settings entry).
+/// count, minimum 1 frame. Hardcoded — no settings entry.
 ///
 /// The µs value comes from `timeUsAtFrame`, not local arithmetic, so the UI
 /// proposes a whole-frame duration that `applyAddTransition`'s own grid snap

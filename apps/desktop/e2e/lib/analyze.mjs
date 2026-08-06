@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-// HERE is apps/desktop/e2e/lib — four levels below the repo root, hence the four `..`.
 const REPO = path.resolve(HERE, "..", "..", "..", "..");
 
 // Runs the media_conformance bin and returns the parsed JSON report. The bin

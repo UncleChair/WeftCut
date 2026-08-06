@@ -209,9 +209,7 @@ export interface ScaleSnapResult {
 /// the line — no second pass.
 ///
 /// Masked by `drives`, and that mask is load-bearing for CORRECTNESS here rather
-/// than for cursors: `solveScale` returns the frame's own scale unchanged on an
-/// axis the handle does not drive, so a horizontal target offered to an `r`
-/// handle would be solved, drawn as a guide, and then silently discarded.
+/// than for cursors — see `gizmoGeometry.handleDrives`.
 export function snapScaleTarget(
   target: Pt,
   drives: DrivenAxes,

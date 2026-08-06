@@ -18,10 +18,12 @@
 // distributable, so a runtime swapped out from under the packager still cannot
 // slip a non-compliant build into a shipped artifact.
 //
-// The LGPL shared objects themselves ride co-located beside the .node in
-// app.asar.unpacked/ (electron-builder.yml files + asarUnpack); only the
-// license text + manifest land in resources/native-decode/ (extraResources),
-// which is the platform-uniform path this hook reads via getResourcesDir().
+// Where the runtime itself lands is per-OS: on Linux/macOS the .so/.dylib ride
+// co-located beside the .node in app.asar.unpacked/ (electron-builder.yml files
+// + asarUnpack), while Windows copies its *.dll into resources/native-decode/.
+// The license text + manifest always land in resources/native-decode/
+// (extraResources) — the platform-uniform path this hook reads via
+// getResourcesDir().
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertLgplBanner } from './fetch-ffmpeg-lgpl.mjs'

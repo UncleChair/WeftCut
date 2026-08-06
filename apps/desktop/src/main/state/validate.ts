@@ -83,8 +83,8 @@ function validateMarkers(p: Project): void {
 // ── Per-transition invariant — ONE predicate, TWO callers ─────────────────────
 // validateTransitions fails on it; reconcileTransitions drops on it. Keeping the
 // logic in a single function is the design's anti-drift guarantee (Policy B,
-// spec § Edit-interaction policy): validate and reconcile can never disagree
-// about what a healthy transition looks like.
+// ADR 0035 § Ordinary edits reconcile transitions on commit): validate and
+// reconcile can never disagree about what a healthy transition looks like.
 
 /** layer id → {track, start, end, kind} geometry snapshot for the predicate. */
 type TransitionLayerIndex = Map<Uuid, { track: Uuid; start: number; end: number; kind: LayerParams['kind'] }>
@@ -186,7 +186,7 @@ function checkSrcRange(p: Project, layer: Uuid, media: Uuid, srcIn: number, srcO
 }
 
 function validateLayerParams(p: Project, layer: Layer): void {
-  // Out-of-range keyframes are intentionally NOT checked (validate.rs:495-509).
+  // Out-of-range keyframes are intentionally NOT checked.
   // Neither are OFF-GRID keyframe times, and for a sharper reason: content-glued
   // rebases (`trim.ts` shiftLayerKeyframes, `split.ts` shiftKeyframes) move keys by
   // a DELTA, and the difference of two canonical times is not canonical at
@@ -232,7 +232,7 @@ function validateTrack(p: Project, track: Project['tracks'][number], authorized:
         fail({ rule: 'LayerOverlap', track: track.id, a: prev.id, a_start: prev.t_start_us, a_end: prev.t_end_us, b: layer.id, b_start: layer.t_start_us, b_end: layer.t_end_us })
     }
     // Track the longest-reaching prior layer of this class (handles a long
-    // clip starting earlier than a short one — validate.rs:365-383).
+    // clip starting earlier than a short one).
     if (cls === 'visual') prevVisual = prevVisual && prevVisual.t_end_us >= layer.t_end_us ? prevVisual : layer
     else prevAudio = prevAudio && prevAudio.t_end_us >= layer.t_end_us ? prevAudio : layer
   }

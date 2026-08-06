@@ -23,19 +23,14 @@
 
 /// Total retained decoded-frame bytes across all live rings.
 ///
-/// This is a **safety ceiling for the pathological case, not a tuning knob** —
-/// and that framing is a measured correction, not caution. A first attempt set
-/// it to 512 MiB, which clamps hard at 1080p too. Memory did fall as designed
-/// (4K one clip 1.84 → 0.76 GB, two clips 3.96 → 1.71 GB), but every outcome got
-/// WORSE: 1080p three clips went from 7.2 % drops to 55.5 % and its tick p99
-/// from 18.9 to 53.3 ms, while **decode throughput ROSE 40 %** (32 → 45 fps per
-/// clip). A shallower ring means frames are evicted and immediately
-/// re-requested, and on the bench's 240-frame (8 s) GOP a single re-seek
-/// re-decodes the whole GOP prefix. Clamping bytes without flow control buys
-/// memory and pays for it in churn. (The software lane has that flow control now
-/// — its native pump continues forward instead of re-seeking, and `FfmpegSource`
-/// honours `isLookaheadFull` — so this ceiling could be re-tuned against a
-/// re-measured churn cost. The WebCodecs lane's re-seek cost is unchanged.)
+/// This is a **safety ceiling for the pathological case, not a tuning knob**.
+/// LANDMINE: do not tighten it below ~1 GiB. A shallower ring re-requests the
+/// frames it just evicted, and on a long GOP one re-seek re-decodes the whole
+/// GOP prefix — memory falls while drops and tick p99 get much worse (numbers:
+/// docs/playback-perf.md). The software lane has flow control now — its native
+/// pump continues forward instead of re-seeking, and `FfmpegSource` honours
+/// `isLookaheadFull` — so this ceiling could be re-tuned against a re-measured
+/// churn cost. The WebCodecs lane's re-seek cost is unchanged.
 ///
 /// So: sized to leave the cases that measure well ALONE and only bound the
 /// multi-gigabyte ones, at 30 fps (1080p frame = 8.29 MB, 4K = 33.2 MB):

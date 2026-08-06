@@ -133,10 +133,8 @@ export function useTimelineView(opts: {
 
   // -------- Ctrl+wheel zoom (cursor-anchored) --------
 
-  // We capture { scrollLeft, cursorXInViewport, oldPxPerSec } when the
-  // wheel fires, kick off `setPxPerSec`, and apply the new scrollLeft
-  // in a useLayoutEffect once React has re-rendered with the new
-  // px/sec. Doing it inline in the handler reads stale state and
+  // Re-anchoring happens in a layout effect, after React has re-rendered with
+  // the new px/sec. Doing it inline in the wheel handler reads stale state and
   // produces a one-frame jitter.
   const wheelPendingRef = useRef<{
     scrollLeft: number;
@@ -175,9 +173,6 @@ export function useTimelineView(opts: {
       // project extent (before the deliberate post-roll edit padding)
       // fills the visible width. Recomputed every tick so it tracks
       // viewport resize + project growth.
-      // The sticky header column occupies the first HEADER_COL_PX of
-      // the viewport; only the remaining lane area should fit the
-      // whole timeline at min zoom.
       const viewportWidth = root.clientWidth - HEADER_COL_PX;
       const totalSec = Math.max(
         durationUsRef.current / 1_000_000,

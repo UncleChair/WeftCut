@@ -65,8 +65,7 @@ describe('isAllowed', () => {
   })
 
   it('accepts a path under the data root (backend cache + Motifs)', () => {
-    // The former <userData>/Cache role moved here to <dataRoot>/cache; user
-    // Motifs live at <dataRoot>/motifs.
+    // Backend cache lives at <dataRoot>/cache; user Motifs at <dataRoot>/motifs.
     expect(isAllowed(path.join(DATA, 'cache', 'x'), roots)).toBe(true)
     expect(isAllowed(path.join(DATA, 'motifs', 'm', 'index.html'), roots)).toBe(true)
   })

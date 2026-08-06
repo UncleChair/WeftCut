@@ -321,9 +321,9 @@ test.describe('export range + audio settings (Electron)', () => {
 
   test('keyframe interval setting controls the GOP cadence', async () => {
     test.setTimeout(240000)
-    // Whole-clip export with a 2 s keyframe interval. The WebCodecs path forces
-    // a keyframe every round(fps×2) frames, so ffprobe should see keyframes
-    // ~2 s apart — clearly not the 1 s default.
+    // Whole-clip export with a 2 s keyframe interval. The export sink forces a
+    // keyframe every round(fps×2) frames (gopFrames), so ffprobe should see
+    // keyframes ~2 s apart — clearly not the 1 s default.
     const output = path.join(tmpDir('weftcut-e2e-gop-'), 'gop.mp4')
 
     await bootAndExport({ output, settings: { keyframeIntervalSec: 2 } })
@@ -414,8 +414,9 @@ test.describe('export range + audio settings (Electron)', () => {
 
   test('software encoder export stays frame-aligned with low loss', async () => {
     test.setTimeout(240000)
-    // hwAccel:"software" forces the WebCodecs prefer-software H.264 path. Assert
-    // it works in the real renderer and stays frame-aligned + faithful (SSIM).
+    // hwAccel:"software" forces the native sink's software H.264 encode (these
+    // settings leave encoderEngine on "auto", which resolves native). Assert it
+    // works in the real renderer and stays frame-aligned + faithful (SSIM).
     test.skip(!existsSync(VIDEO_SOURCE), `video source not found at ${VIDEO_SOURCE}`)
     const output = path.join(tmpDir('weftcut-e2e-sw-'), 'sw.mp4')
 

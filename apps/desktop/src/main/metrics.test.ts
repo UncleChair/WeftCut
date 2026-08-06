@@ -3,9 +3,8 @@ import { collectMetrics } from './metrics'
 
 describe('collectMetrics', () => {
   it('sums whole-machine CPU% and RSS across the Electron process tree', () => {
-    // percentCPUUsage is already whole-machine normalized on Electron 42
-    // (probed: 1 fully-busy core of 16 → 6.0%), so cpu_percent is the plain sum.
-    // workingSetSize is in KB.
+    // percentCPUUsage is whole-machine normalized — see the LANDMINE in
+    // metrics.ts; cpu_percent is the plain sum. workingSetSize is in KB.
     const m = [
       { type: 'Browser', cpu: { percentCPUUsage: 6 }, memory: { workingSetSize: 100_000 } },
       { type: 'GPU', cpu: { percentCPUUsage: 2 }, memory: { workingSetSize: 50_000 } },

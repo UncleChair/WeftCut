@@ -54,11 +54,9 @@ function drawAndVerify(frame) {
 
 // ---------------------------------------------------------------------------
 // Result 3 — streaming sync (renderer side). The SAME receiver fires once per
-// streamed frame. For each: draw to canvas, read back the average luma of a
-// center patch, and record {frameIndex, luma}. The producer's verification clip
-// ramps luma monotonically with frame index, so on PASS the recorded luma must
-// increase in lockstep with the (in-order, gapless) frame indices — proving no
-// stale-frame reuse, no tearing, no duplicates.
+// streamed frame. The producer's verification clip ramps luma monotonically with
+// frame index, so luma rising in lockstep with the (in-order, gapless) frame
+// indices proves no stale-frame reuse, no tearing, no duplicates.
 // ---------------------------------------------------------------------------
 // Frame indices arrive on their own IPC channel just before each send; queue
 // them so the per-frame receiver can pair one up. We ALSO read the VideoFrame's
@@ -147,8 +145,8 @@ function persistReceiver(data) {
   if (el) el.textContent = `persist: imported slot ${slot} (${persistImports.filter(Boolean).length} held)`
 }
 
-// One pull pass: for each persistent import, getVideoFrame(), sample luma, close
-// the frame but KEEP the imported. Records a time series for the advance check.
+// One pull pass over every persistent import; the imported is deliberately never
+// released.
 function persistPullOnce() {
   for (let slot = 0; slot < persistImports.length; slot++) {
     const imported = persistImports[slot]
@@ -190,8 +188,8 @@ ipcRenderer.on('poc-persist-done', (_e, info) => {
   const firstLuma = lumas.length ? lumas[0] : null
   const lastLuma = lumas.length ? lumas[lumas.length - 1] : null
   // ADVANCED = the persistent import clearly reflected updated content: many
-  // distinct luma values AND a clear rise from the first sample (the ramp clip
-  // goes 20→235). A frozen/stale import would show 1 distinct value, max≈min.
+  // distinct luma values AND a >=40 spread between min and max luma (the ramp
+  // clip goes 20→235). A frozen/stale import would show 1 distinct value, max≈min.
   const advanced =
     distinct.size >= 3 && maxLuma != null && minLuma != null && maxLuma - minLuma >= 40
 
@@ -261,16 +259,12 @@ ipcRenderer.on('poc-persist-done', (_e, info) => {
 // Result 5 — renderer color paths (POC_COLOR=1, renderer side).
 //
 // For each imported VideoFrame (tagged bt601, then bt709), ingest the SAME
-// content three ways and read back a center-patch average RGB:
-//   1. 2D canvas drawImage + getImageData       (honors colorSpace -> reference)
-//   2. WebGPU device.queue.copyExternalImageToTexture (Pixi's documented path)
-//   3. WebGPU device.importExternalTexture + textureSampleBaseClampToEdge (spec
-//      video path) — the key unknown: does Electron honor BT.601 here?
+// content through every colorPath* helper below and read back a center-patch
+// average RGB. The key unknown: does Electron honor BT.601 on the WebGPU spec
+// video path?
 //
-// getVideoFrame() on the persistent import is a live view (Result 4), so we call
-// it fresh per path; importExternalTexture requires the frame valid within the
-// current task, so path 3 does import+draw+submit synchronously and reads back
-// async afterward.
+// getVideoFrame() on the persistent import is a live view (Result 4), so each
+// path calls it fresh.
 // ---------------------------------------------------------------------------
 
 // Average RGB of a center patch from an RGBA byte buffer (row-major, 4 bytes/px).
@@ -305,11 +299,9 @@ function colorPath2dDrawImage(frame, w, h) {
 
 // Path 4 (Result 7): createImageBitmap(videoFrame) — the integration's CHOSEN
 // non-zero-copy path. Snapshot the VideoFrame into an ImageBitmap, then draw +
-// read back through the same color-managed 2D path as the reference. Result 5
-// only ASSERTED (by analogy to drawImage) that this honors the colorSpace tag;
-// this measures it. If it matches the drawImage reference (~[20,220,40]) and not
-// the broken WebGPU value (~[58,217,38]), the re-baselined design's color claim
-// holds for raw NV12.
+// read back through the same color-managed 2D path as the reference. Honoring
+// the colorSpace tag means matching the drawImage reference (~[20,220,40]), not
+// the broken WebGPU value (~[58,217,38]).
 async function colorPathCreateImageBitmap(frame, w, h) {
   const bmp = await createImageBitmap(frame)
   const cv = document.getElementById('cv')
@@ -335,8 +327,8 @@ async function getGpuDevice() {
 
 // Render a sampled texture (either a copied rgba8 texture, or an external
 // texture) to an offscreen rgba8unorm target, then copyTextureToBuffer +
-// mapAsync and average the center patch. `bindEntries`/`fragmentWgsl` differ for
-// the two WebGPU paths; the rest is shared.
+// mapAsync and average the center patch. The WebGPU paths differ only in
+// `fragmentWgsl`/`makeBindGroup`; the rest is shared.
 async function renderSampledAndReadback(device, w, h, fragmentWgsl, makeBindGroup, sampler) {
   const target = device.createTexture({
     size: { width: w, height: h },
@@ -513,7 +505,6 @@ async function colorReceiver(data) {
     result.size = [w, h]
     probe.close()
 
-    // Path 1 — 2D drawImage (reference).
     try {
       const f1 = imported.getVideoFrame()
       result.drawImage = colorPath2dDrawImage(f1, w, h)
@@ -524,7 +515,6 @@ async function colorReceiver(data) {
 
     const device = await getGpuDevice()
 
-    // Path 2 — copyExternalImageToTexture (Pixi path).
     try {
       const f2 = imported.getVideoFrame()
       result.copyExternal = await colorPathCopyExternal(device, f2, w, h)
@@ -533,7 +523,6 @@ async function colorReceiver(data) {
       result.copyExternalError = String((e && e.message) || e)
     }
 
-    // Path 3 — importExternalTexture (spec video path; the key unknown).
     try {
       const f3 = imported.getVideoFrame()
       result.importExternal = await colorPathImportExternal(device, f3, w, h)
@@ -542,7 +531,6 @@ async function colorReceiver(data) {
       result.importExternalError = String((e && e.message) || e)
     }
 
-    // Path 4 (Result 7) — createImageBitmap, the re-baselined design's chosen path.
     try {
       const f4 = imported.getVideoFrame()
       result.createImageBitmap = await colorPathCreateImageBitmap(f4, w, h)
@@ -551,8 +539,7 @@ async function colorReceiver(data) {
       result.createImageBitmapError = String((e && e.message) || e)
     }
 
-    // Control (once, on the bt601 pass): prove the WebGPU readback path is clean
-    // by round-tripping a KNOWN sRGB color through the same copy+render+readback.
+    // Control, once, on the bt601 pass.
     if (tag === 'bt601') {
       try {
         result.rgbaControl = await colorPathRgbaControl(device, w, h)
@@ -587,9 +574,6 @@ ipcRenderer.on('poc-color-done', () => {
 //            via copyExternalImageToTexture (the WebGPU path that mangled raw
 //            NV12 in Result 5) AND via 2D drawImage (sanity) AND
 //            importExternalTexture (extra cross-check).
-//
-// Reuses the Result-5 ingestion helpers (colorPath2dDrawImage,
-// colorPathCopyExternal, colorPathImportExternal, getGpuDevice).
 // ---------------------------------------------------------------------------
 const bgraTagQueue = []
 ipcRenderer.on('poc-bgra-tag', (_e, tag) => bgraTagQueue.push(tag))
@@ -656,16 +640,12 @@ ipcRenderer.on('poc-bgra-done', () => {
 
 // ---------------------------------------------------------------------------
 // Result 7 — Claim B: createImageBitmap coherence under consume-ack
-// (POC_CIB_PERSIST=1, renderer side).
+// (POC_CIB_PERSIST=1, renderer side). Renderer half of the
+// write -> frameReady -> snapshot -> ack protocol main.js's Result 7 header
+// describes end to end.
 //
-// Hold each slot's persistent import (imported ONCE, never released). On each
-// 'poc-cib-frame-ready', getVideoFrame() on that slot's import, snapshot it with
-// the ASYNC createImageBitmap (the path the integration ships), sample the
-// center-patch luma, then ACK so the producer may overwrite the slot. The ramp
-// clip's luma is a known function of frameIndex, so we check each snapshot caught
-// the CORRECT frame (measured ~ expected) and that no per-slot read stepped back
-// (tearing). A fresh OffscreenCanvas per call keeps concurrent (pool>=2) snapshots
-// from racing on one shared canvas.
+// A fresh OffscreenCanvas per call keeps concurrent (pool>=2) snapshots from
+// racing on one shared canvas.
 // ---------------------------------------------------------------------------
 const cibImports = [] // slot -> SharedTextureImported (persistent, kept alive)
 const cibSlotQueue = []
@@ -970,8 +950,8 @@ ipcRenderer.on('poc-stream-done', (_e, info) => {
     if (i > 0) {
       const prev = streamLog[i - 1]
       if (frameIndex !== prev.frameIndex + 1) gaps++
-      // Luma must advance with the ramp; allow equality only as a soft check
-      // but a true stale-frame reuse would show a NON-advancing or backward luma.
+      // Luma must advance with the ramp — equal luma also fails: a stale-frame
+      // reuse shows a non-advancing or backward luma.
       if (!(luma > prev.luma)) orderedAndAdvancing = false
       if (frameIndex <= prev.frameIndex) orderedAndAdvancing = false
     }

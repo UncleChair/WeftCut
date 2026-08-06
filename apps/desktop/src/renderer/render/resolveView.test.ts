@@ -66,7 +66,7 @@ describe("resolveView", () => {
     };
     const v: ColorView = { color: colorTrack, width: 1920, height: 1080 };
     const resolved = resolveColorView(v, 500_000);
-    // OkLab midpoint red→green: anchored Task-3 value {208,168,0,255}, ±1 per channel.
+    // OkLab midpoint red→green: anchored {208,168,0,255}, ±1 per channel.
     // Crucially, it must NOT be the first keyframe red {255,0,0,255}.
     expect(resolved.color.r).not.toBe(255);
     expect(resolved.color.r).toBeGreaterThanOrEqual(207);

@@ -46,17 +46,16 @@ export const MATRIX = [
   // regression).
   { gradientH264: true },
   { gradientH264Bf: true },
-  // 10-bit ramp as AV1 10-bit (SVT-AV1, libaom-av1 fallback when the ffmpeg on
-  // PATH lacks it — lean/system builds; every pinned sidecar now ships it) —
-  // the AV1-10 source admission probe + export gate (the second
-  // tenBitExportCapable codec).
+  // 10-bit ramp as AV1 10-bit — the AV1-10 source admission probe + export
+  // gate (the second tenBitExportCapable codec). Encoder choice and its
+  // fallback: `pickAv1Encoder` in generate.mjs.
   { gradientAv1: true },
   // The H.264 High10 ramp at 3840x2160 — the 4K ring-cap export gate
   // (resolution-derived ten-bit high-water clamps to its entry floor).
   { gradientH2644k: true },
   // 8-bit interframe H.264 (1080p30, 1s GOPs) — the lane-parameterized preview
   // HW conformance gates (preview-hw-conformance.spec.ts: NVDEC/VAAPI/d3d11va/
-  // VideoToolbox). Previously hand-generated per a CLI documented in the spec.
+  // VideoToolbox).
   { h264Interframe: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
   // media-import.spec.ts. The png is the canonical existence check; the

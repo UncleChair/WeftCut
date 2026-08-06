@@ -142,12 +142,8 @@ interface QuickActionButtonProps {
   item: QuickActionItem;
   command: CommandDef;
   state: QuickActionState;
-  /// The owning section's mode, which decides how this button reports state:
-  /// `radio` members report `aria-checked` inside a `radiogroup`; independent
-  /// toggles report `aria-pressed`; `command` items report neither, because a
-  /// momentary action has no state to report. Screen readers narrate the three
-  /// differently, and that difference is exactly what the section split
-  /// encodes.
+  /// The owning section's mode, which picks the ARIA state attribute below.
+  /// See `QuickActionSection.mode` in quickActions.ts.
   mode: QuickActionSection["mode"];
   tabbable: boolean;
   onFocus: () => void;
@@ -198,8 +194,8 @@ function QuickActionButton({
 
 /**
  * The Quick Actions strip — a single row or single column of icon buttons for
- * the commands worth one click, split into a modal tool section and an
- * independent-toggle section.
+ * the commands worth one click, split into three sections: modal tools,
+ * independent toggles, and momentary in/out commands.
  *
  * Layout invariant: NEVER wraps. Whatever doesn't fit scrolls, with the ends
  * fading to advertise that there is more.
@@ -222,8 +218,6 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
     orientation,
   );
 
-  // One snapshot per render feeds every item's pure `active`/`hint`
-  // predicate — hooks can't be called per row.
   const state: QuickActionState = { tool, displayMode, hasRange };
 
   // Buttons resolve against the command registry, so a command whose provider

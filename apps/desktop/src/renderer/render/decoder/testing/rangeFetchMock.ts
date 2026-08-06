@@ -19,11 +19,11 @@ export interface RangeFetchMock {
 }
 
 export interface RangeFetchMockOptions {
-  /// Per-206-response body cap in bytes. Models the `weftcut-media://`
-  /// Range handler, which truncates each partial response to a
-  /// fixed ceiling (~1 MB observed) regardless of how many bytes the
-  /// `Range` header asked for. When set, a request spanning more than
-  /// `cap` bytes gets a SHORT 206 (only `cap` bytes, with a matching
+  /// Per-206-response body cap in bytes. Models the SHORT 206 a
+  /// `weftcut-media://` fetch is observed to return — a fixed ceiling (~1 MB)
+  /// regardless of how many bytes the `Range` header asked for; the workaround
+  /// lives in `MediaRangeSource`'s `read`. When set, a request spanning more
+  /// than `cap` bytes gets only `cap` bytes back (with a matching
   /// `Content-Range`), so the reader must issue follow-up requests to
   /// fulfill the full window. Defaults to unlimited.
   cap?: number;

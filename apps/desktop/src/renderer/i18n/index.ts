@@ -39,12 +39,9 @@ i18n
     nonExplicitSupportedLngs: true,
     load: "currentOnly",
     detection: {
-      // Language now persists in app_settings.json (owned by the Electron main
-      // process), NOT browser localStorage. The detector only DETECTS the OS
-      // default for a genuine first launch (navigator → <html lang>); `caches:
-      // []` stops it writing anywhere, so it can't fight the persisted value the
-      // app applies once app_settings hydrates (see settings/appSettingsStore.ts,
-      // which also migrates the old `weftcut.locale` key on first upgrade).
+      // The detector only DETECTS the OS default for a genuine first launch
+      // (navigator → <html lang>); `caches: []` stops it writing anywhere, so it
+      // cannot fight the persisted value (see settings/appSettingsStore.ts).
       order: ["navigator", "htmlTag"],
       caches: [],
     },

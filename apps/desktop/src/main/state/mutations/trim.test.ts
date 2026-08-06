@@ -54,9 +54,8 @@ describe('trim', () => {
     const l = p.tracks[0].layers.find((x) => x.id === a)!
     expect(l.t_start_us).toBe(1_500_000); expect(l.t_end_us).toBe(3_000_000)
   })
-  // Ticket 03 (`.scratch/timeline-frame-grid`): the cap used to be `dur - 1`, so an
-  // over-trim landed a 1 µs off-grid sliver that validate's `start < end` accepted.
-  // The floor is now one composition frame and both edges stay canonical.
+  // Over-trim clamps to one composition frame, not one microsecond — both edges
+  // stay canonical.
   it('clamps an IN over-trim to one composition frame, not one microsecond', () => {
     const { p, a } = setup()
     applyTrimLayer(p, a, 'In', 9_000_000, false) // way past t_end
@@ -69,8 +68,7 @@ describe('trim', () => {
     applyTrimLayer(p, a, 'Out', 4_000_000, false)
     expect(p.tracks[0].layers.find((x) => x.id === a)!.t_end_us).toBe(4_000_000)
     // Trimming OUT to the current end returns via the no-op path, NOT an error.
-    // Trimming OUT down to t_start would invert: clamped to the frame after t_start
-    // (was t_start + 1 µs before ticket 03).
+    // Trimming OUT down to t_start would invert: clamped to the frame after t_start.
     const { p: p2, a: a2 } = setup()
     applyTrimLayer(p2, a2, 'Out', 1_000_000, false)
     const l2 = p2.tracks[0].layers.find((x) => x.id === a2)!
@@ -102,10 +100,10 @@ describe('trim', () => {
   })
 })
 
-// ── Ticket 03: trim bounds live in composition-frame space ───────────────────
+// ── trim bounds live in composition-frame space ──────────────────────────────
 // Every clamp path must land a canonical endpoint (`timeUsAtFrame(i)`) and leave
 // at least one whole frame, at every rate in the spec matrix — the two rational
-// families are where a µs-based bound used to go off grid.
+// families are where an off-grid bound would surface.
 
 const RATES: ReadonlyArray<readonly [number, number]> = [
   [24000, 1001], [24, 1], [25, 1], [30000, 1001],

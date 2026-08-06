@@ -337,7 +337,7 @@ const enUS = {
     toggle_keyframe_lanes: "Expand keyframe lanes",
     mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
     mode_all_hint: "Showing all tracks. Click to filter to A/B-roll only.",
-    // V.7 context-menu entries for the right-click menu on layers.
+    // Context-menu entries for the right-click menu on layers.
     separate_audio: "Separate audio to new track",
     prebake_now: "Pre-bake now",
     rename: "Rename",

@@ -4,6 +4,13 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import path from 'node:path'
 import { launchApp, newProject, invokeCmd, summary, driveExport, tmpDir } from './helpers/driver'
 
+// Effect gates on the live compositor. Every test here is GPU-dependent, so
+// all of them are local-only (mirrors motif-export.spec.ts): the Pixi
+// BlurFilter is a no-op under the Linux headless software-GL runner
+// (xvfb/llvmpipe), so `blur` reads back byte-identical to `sharp`, and the
+// export legs need WebCodecs H.264 hardware encode. Each `test.skip` below
+// carries only what is extra for that test.
+
 interface McpInfo {
   url: string
   bearer_token: string
@@ -64,11 +71,6 @@ async function sampleAt(page: import('@playwright/test').Page, tUs: number, x: n
 }
 
 test('effects: add a blur via MCP renders + persists, undo removes it', async () => {
-  // GPU-dependent, so local-only (mirrors motif-export.spec.ts): the blur
-  // pixel-diff assertion needs faithful WebGL filtering — the Pixi BlurFilter
-  // is a no-op under the Linux headless software-GL runner (xvfb/llvmpipe), so
-  // `blur` reads back byte-identical to `sharp` — and the export leg needs
-  // WebCodecs H.264 hardware encode. Neither is available on headless CI.
   test.skip(
     process.env.WEFTCUT_E2E_NO_EXPORT === '1',
     'blur pixel-diff + export need a real GPU not on headless CI; verified locally',
@@ -139,9 +141,9 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
   }
   console.log('EFFECTS_SMOKE blur(warm, effect on) =', JSON.stringify(blurSample))
 
-  // EXPORT with the blur ON — the user reported the exported video was black
-  // too. Drive the real timeline export; a follow-up ffmpeg frame-extract
-  // confirms the encoded output isn't empty.
+  // EXPORT with the blur ON — the blur must survive into the export Worker's
+  // own composite, not just the preview. driveExport throwing is logged, not
+  // fatal: nothing here inspects the encoded file.
   const exportOut = path.join(parent, 'export-blur.mp4')
   try {
     const exp = await driveExport(page, { outputAbsPath: exportOut }, { hook: 'exportTimeline', timeout: 150_000 })
@@ -178,11 +180,8 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
 })
 
 test('effects: blur on a Motif layer renders + exports + undo', async () => {
-  // GPU-dependent, so local-only (mirrors motif-export.spec.ts): the blur
-  // pixel-diff needs faithful WebGL filtering (no-op under the Linux headless
-  // software-GL runner), the export needs WebCodecs H.264 hardware encode, and
-  // the motif capture can exceed the 5s CDP budget on slow CI runners. None of
-  // these hold on headless CI.
+  // Extra beyond the file-level GPU requirement: the motif capture can exceed
+  // the 5s CDP budget on slow CI runners.
   test.skip(
     process.env.WEFTCUT_E2E_NO_EXPORT === '1',
     'blur pixel-diff + motif export need a real GPU not on headless CI; verified locally',
@@ -256,10 +255,9 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
   }
   console.log('MOTIF_EFFECTS blur(warm, effect on) =', JSON.stringify(blurSample))
 
-  // EXPORT with the blur ON (8-bit). Confirms the rewritten loop filters the
-  // Motif sprite in the export Worker too (it binds baked frames to the same
-  // Pixi Sprite). driveExport throwing is logged, not fatal, mirroring the
-  // sibling test.
+  // EXPORT with the blur ON (8-bit). The export Worker binds baked motif frames
+  // to the same Pixi Sprite, so the filter chain has to reach them there too.
+  // driveExport throwing is logged, not asserted, mirroring the sibling test.
   const exportOut = path.join(parent, 'export-motif-blur.mp4')
   try {
     const exp = await driveExport(page, { outputAbsPath: exportOut }, { hook: 'exportTimeline', timeout: 150_000 })
@@ -285,9 +283,6 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
 })
 
 test('effects UI: add/edit/reorder/remove a blur from the inspector panel', async () => {
-  // GPU-dependent, so local-only (mirrors motif-export.spec.ts): the final
-  // blur-vs-sharp pixel-diff needs faithful WebGL filtering, which the Pixi
-  // BlurFilter does not deliver under the Linux headless software-GL runner.
   test.skip(
     process.env.WEFTCUT_E2E_NO_EXPORT === '1',
     'blur pixel-diff needs a real GPU not on headless CI; verified locally',
@@ -325,8 +320,7 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   // Select the layer so the inspector renders its EffectsSection.
   await page.evaluate((id) => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId)
   // Bring the Effect tab forward: the pristine baseline docks it inactive behind
-  // Attribute, which leaves effect-add rendered but hidden. (This test used to
-  // pass only because a leaked shared-userData layout had the tab active.)
+  // Attribute, which leaves effect-add rendered but hidden.
   await page.locator('.weft-dock-tab-label', { hasText: 'Effect' }).click()
   // Wait for the panel to render before clicking Add (guards the selection→render race).
   await page.getByTestId('effect-add').waitFor({ state: 'visible' })
@@ -371,7 +365,6 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   // target the first (visible) one explicitly.
   // Base UI NumberField treats Enter as a navigation key (no commit); blur() fires onBlur
   // which triggers onValueCommitted synchronously.
-  // Use triple-click to select all existing text, then type the new value.
   const strength = page.getByTestId(`effect-param-${effectId}-strength`).locator('input').first()
   await strength.click({ clickCount: 3 })
   await strength.pressSequentially('30')

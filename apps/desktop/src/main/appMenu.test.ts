@@ -104,8 +104,6 @@ describe('macOS application menu template', () => {
   })
 
   it('hand-builds the App menu so Settings gets its conventional slot', () => {
-    // `role: 'appMenu'` has no Settings slot, so this one menu is assembled
-    // from individual roles plus our item — every OTHER entry stays a role.
     const template = buildApplicationMenuTemplate({ projection: fullProjection(), dispatch: noop, appName: 'WeftCut' })
     const app = submenuOf(template, 'WeftCut')
     expect(app.map((i) => i.role).filter(Boolean)).toEqual([

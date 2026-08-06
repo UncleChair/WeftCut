@@ -6,17 +6,12 @@ import { useLogStore } from "./store";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 
-/// Persistent ~28px status bar pinned to the bottom of the editor view.
+/// Persistent status bar pinned to the bottom of the editor view.
 /// Shows a severity dot + time + truncated message + source pill on the
 /// left; error badge + running badge + Logs toggle on the right. The
 /// toggle opens the expanded console overlay.
 ///
-/// Layout decision (Q5 hybrid C): always-visible left-aligned "latest
-/// message" line; right-aligned counters; errors stick for 10s before
-/// being overwritten by subsequent Info entries.
-///
-/// Accessibility (Q14): errors are announced via a visually-hidden
-/// polite live region; info/warn entries do not announce.
+/// Layout and behaviour: `docs/status-log.md`.
 interface StatusBarProps {
   notices?: AppNotice[];
   onOpenSystemStatus?: () => void;
@@ -43,7 +38,7 @@ export function StatusBar({
   // Agent-attributed running ops: a subset of runningOps where the
   // associated entry's source kind is "Agent". Surfaced as its own
   // pill so the user has a signal that an MCP client is still working
-  // after exiting agent mode (Q4: ops finish in the background).
+  // after exiting agent mode — those ops finish in the background.
   const agentRunningCount = useLogStore((s) => {
     const entryByOp = new Map<string, LogEntry>();
     for (const entry of s.entries) {

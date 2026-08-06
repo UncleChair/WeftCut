@@ -43,7 +43,7 @@ unsafe extern "C" fn get_format_d3d11(
 
 /// Success token of the one-frame HW probe: a decoded D3D11 surface kept alive
 /// together with the ffmpeg objects that own its GPU texture. The probe
-/// (`Backend::preview_gpu_probe`) drops it immediately — only construction
+/// (`NativeDecode::preview_gpu_probe`) drops it immediately — only construction
 /// matters; `Drop` releases the hw device context and with it the texture pool.
 pub struct D3d11Frame {
     _ictx: ffmpeg_next::format::context::Input,
@@ -139,14 +139,9 @@ pub fn decode_first_d3d11_frame(path: &str) -> Result<D3d11Frame, String> {
     })
 }
 
-/// An open d3d11va decode session that yields successive GPU frames, for the
-/// streaming POC (Result 3). Owns the same ffmpeg objects as `D3d11Frame` but
-/// keeps them alive across many `next_frame()` calls instead of one shot.
-///
-/// Packet pumping relies on ffmpeg-next's `PacketIter` holding no cursor of its
-/// own: each `self.ictx.packets().next()` reads the *next* packet because the
-/// read position lives inside the `AVFormatContext`. So a fresh iterator per
-/// call resumes where the previous one left off.
+/// An open d3d11va decode session that yields successive GPU frames. Owns the
+/// same ffmpeg objects as `D3d11Frame` but keeps them alive across many
+/// `next_frame()` calls instead of one shot.
 pub struct VideoStream {
     ictx: ffmpeg_next::format::context::Input,
     decoder: ffmpeg_next::decoder::Video,
@@ -172,8 +167,9 @@ pub struct VideoStream {
     pub start_pts_us: i64,
 }
 
-// The COM pointers + ffmpeg objects are `!Send`, but every call runs on the Node
-// main thread and the pointers never cross threads (same contract as `Holder`).
+// The COM pointers + ffmpeg objects are `!Send`. The stream is constructed on
+// and confined to its own `preview-gpu-<id>` session thread — it only crosses a
+// thread boundary once, at spawn, and the pointers never leave it afterwards.
 unsafe impl Send for VideoStream {}
 
 impl Drop for VideoStream {
@@ -200,7 +196,7 @@ pub struct StreamFrame {
     /// Whether this is a keyframe. The session's pump tracks the interval between
     /// consecutive keyframes to price a resync seek (a seek must re-decode from
     /// the key packet at/before its target, so the keyframe interval IS the seek's
-    /// worst-case cost) — see `SessionState::resync_threshold_us`.
+    /// worst-case cost) — see `preview_gpu::session::resync_threshold_us`.
     pub key: bool,
 }
 

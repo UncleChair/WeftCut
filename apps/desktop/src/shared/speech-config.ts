@@ -2,12 +2,8 @@
 // persistence, src/main/speech-config.ts) and the renderer (consumer via ipc).
 // One definition → no main↔renderer drift.
 //
-// ADR 0036 "Config splits by secrecy": the OpenAI API KEY is secret and stays
-// in safeStorage (main/keys.ts, cloud_keys.json) — it is NEVER stored here.
-// This store holds only NON-secret config: the user's preferred engine and each
-// LOCAL engine's binary/model paths + device/threads hints. Electron main
-// merges both (keys + local config) into the Rust `Backend.speech_config`
-// snapshot the stateless resolver reads.
+// Non-secret config only — the OpenAI API key lives in safeStorage
+// (main/keys.ts). See ADR 0036 "Config splits by secrecy".
 
 /// The engine the user prefers for transcription. `"auto"` lets the resolver
 /// pick by availability (its default order). The concrete tags mirror the Rust
@@ -26,8 +22,7 @@ export const PREFERRED_ENGINES: readonly PreferredEngine[] = [
 /// `tokens.txt` beside the model — part of its model bundle; whisper.cpp leaves
 /// it undefined. Paths are stored verbatim (trimmed) as the OS returned them
 /// from the native picker — the Rust availability probe does the file-existence
-/// check. ADDITIVE: an old speech_config.json without `tokens` loads fine (the
-/// field is optional; the store's read() simply leaves it undefined).
+/// check.
 export interface LocalEngineConfig {
   binary: string;
   model: string;

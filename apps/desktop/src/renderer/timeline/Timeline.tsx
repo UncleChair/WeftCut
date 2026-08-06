@@ -103,18 +103,14 @@ import {
   type TransitionKindName,
 } from "./transitions";
 
-// Any media kind drops on any track (tracks are kind-agnostic; the
-// backend enforces overlap rules). Kept as a stub returning true to
-// minimise call-site churn.
+// Any media kind drops on any track (tracks are kind-agnostic); the
+// main-process state layer enforces the overlap rules (`main/state/validate.ts`).
 function trackAcceptsMedia(_trackKind: string, _mediaKind: string): boolean {
   return true;
 }
 
 
-// Auto-routing is gone — drops land on their target track directly.
-// Kept as a no-op stub (returns false) so the
-// `trackAcceptsMedia || trackAcceptsMediaForAutoRoute` call-sites still
-// compile.
+// Drops land on their target track directly — nothing is auto-routed elsewhere.
 function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): boolean {
   return false;
 }
@@ -143,10 +139,10 @@ interface TimelineProps {
   /// commit-side snap; actor remains the authoritative enforcement.
   fpsNum: number;
   fpsDen: number;
-  /// Blade-tool mode (toggled at App level via the `C` shortcut). When
-  /// true, layer clicks split at the click point instead of selecting,
-  /// and the cursor turns into a razor. Stays on until the user toggles
-  /// back off or presses Esc (handled here).
+  /// True while the Blade tool is armed (`toolStore.ts`; `C` selects it).
+  /// Layer clicks then split at the click point instead of selecting, and
+  /// the cursor turns into a razor. Exit by selecting the Selection tool
+  /// (`V`) or pressing Esc (handled here).
   bladeMode: boolean;
   /// Snapshot of the current media pool — used by `onMediaDrop` to
   /// validate readiness before lowering the drop to `addMediaLayer`.
@@ -224,7 +220,7 @@ export function Timeline({
     viewportWidthPx,
   } = useTimelineView({ rootRef, tracks, durationUs });
 
-  // Net-new capability: horizontal scroll-to-time for palette jumps.
+  // Horizontal scroll-to-time for palette jumps.
   // pxPerSec is React state; the registered closure reads it through a ref
   // so registration happens once per mount.
   const pxPerSecForScrollRef = useRef(pxPerSec);
@@ -367,12 +363,9 @@ export function Timeline({
     [groupByLayerId, groups],
   );
 
-  /// `docs/features.md#groups` — Mod+G groups the current multi-selection;
-  /// Mod+Shift+G dissolves every group represented in the selection.
-  /// Wired through the global `useShortcuts` registry so the Keyboard
-  /// Shortcuts settings panel exposes them and they're rebindable.
-  /// Handlers read state via refs to avoid the
-  /// stale-closure trap of multi-key chord dispatch.
+  /// Handlers for the group actions (`ACTION_DEFS.groupSelected` /
+  /// `dissolveSelectedGroup` own the keys and the why). They read state via
+  /// refs to avoid the stale-closure trap of multi-key chord dispatch.
   const selectedLayerIdsRef = useRef(selectedLayerIds);
   const groupByLayerIdRef = useRef(groupByLayerId);
   const onMutatedRef = useRef(onMutated);
@@ -419,10 +412,8 @@ export function Timeline({
   }, []);
 
   // ── Sub-frame audio slip (ADR 0038) ────────────────────────────────────────
-  // Sample precision cannot be reached by dragging — one sample is 0.042 px at the
-  // 2000 px/s zoom ceiling — so these commands ARE the fine-authoring surface.
-  // Registered as real actions (not local key handling) so the search palette lists
-  // them, Settings → Keyboard can rebind them, and an agent can call them.
+  // Why keys are the authoring surface at all: see the ADR 0038 note on
+  // `ACTION_DEFS.nudgeAudioSampleBack`.
   //
   // `escapeGroup: true` on every one of them: the whole point is to move the audio
   // WITHOUT its video partner. That is also what creates the implicit sync offset
@@ -783,8 +774,8 @@ export function Timeline({
 
   // Close the context menu when the timeline scrolls under it — the
   // popup is anchored to fixed cursor coordinates, so it would float
-  // detached over moving content. Outside-click and Escape closing is
-  // Base UI's job now.
+  // detached over moving content. Outside-click and Escape closing belong
+  // to Base UI.
   useEffect(() => {
     if (!contextMenu) return;
     const onScroll = () => setContextMenu(null);
@@ -992,7 +983,7 @@ export function Timeline({
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
             {/*
               Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
-              is the top (see `Project::tracks` doc-comment). The visual order
+              is the top (see `docs/data-model.md`). The visual order
               groups by kind (Video on top, then Subtitle, then Audio at the
               bottom — Premiere/Resolve/FCP convention) and within each group is
               z-stack-reversed so the top of the group is the top of z-stack.
@@ -1082,14 +1073,9 @@ export function Timeline({
 
 /**
  * Washes out everything outside the marked in/out span — but only for a beat
- * after the range changes, then fades away.
- *
- * This is the deliberate half of the in/out visual design. A permanent wash is
- * a full-width tint over the user's clips paying for a feature used twice a
- * session; as a flash it answers the one question marking actually raises
- * ("which span did I just define?") and then gets out of the way. The standing
- * record lives in the ruler's end caps, which cost no lane pixels, and in the
- * Quick Actions strip, where Clear being enabled means a range exists.
+ * after the range changes, then fades away. The standing record of the range
+ * lives elsewhere — see `RangeCap` in TimelineRuler.tsx for the permanent-mark
+ * vs transient-wash split.
  *
  * `z-[4]` clears every LayerBlock (max `z-[3]`) while staying under the blade
  * preview (`z-[5]`) and the playhead, which must never read as out-of-range.
@@ -1138,7 +1124,7 @@ function OutOfRangeDim({ pxPerSec }: { pxPerSec: number }) {
 /// The playhead line, updated at frame rate via a TRANSIENT playhead-store
 /// subscription (tier 2, see playheadStore.ts): the engine emits once per
 /// composition frame during playback, and routing that through React state
-/// re-rendered the whole Timeline (and formerly the whole App) per frame.
+/// re-renders the whole Timeline per frame.
 /// Here the subscription mutates `style.left` on the ref'd node directly —
 /// zero React commits while playing.
 ///

@@ -1,7 +1,6 @@
-// Rolling window over the per-frame handoff timings for the hardware lane. The
-// preload already stamps every frame message with `gvfMs` / `cibMs` /
-// `residentMs`; nothing consumed them, so the one cost we most want to see was
-// invisible.
+// Rolling window over the per-frame handoff timings for the hardware lane: the
+// preload stamps every frame message with `gvfMs` / `cibMs` / `residentMs`, and
+// this window summarizes them.
 //
 // "Handoff" spans both sides of the port: under the shipped barrier the preload
 // runs none and the renderer takes the completion signal itself, so
@@ -9,13 +8,13 @@
 // frames. The fields mean the same thing either way — what ran, what it cost,
 // what it deferred — which is what lets one window compare the two.
 //
-// The number this exists for is `barrier`: `residentMs - gvfMs - cibMs`, the
-// SYNCHRONOUS GPU drain `forceSharedTextureReadComplete` performs before the
-// slot is acked (preload/index.ts). It is load-bearing for cross-device read
-// ordering — without it the lane presents frames pool_size out of order — but it
-// blocks the renderer thread once per frame PER SESSION, so with several
-// hardware clips it is the prime suspect for presentation judder that
-// `lag`/dropped-frame counters cannot see.
+// The number this exists for is `barrier`: the read-completion cost stamped
+// directly around whichever barrier ran before the slot is acked (the
+// subtraction in `record` is only a legacy fallback). A barrier is load-bearing
+// for cross-device read ordering — without one the lane presents frames
+// pool_size out of order — but it blocks a thread once per frame PER SESSION, so
+// with several hardware clips it is the prime suspect for presentation judder
+// that `lag`/dropped-frame counters cannot see.
 //
 // Pure and allocation-light: a fixed ring, sorted only when a summary is asked
 // for (the HUD polls at 2 Hz).

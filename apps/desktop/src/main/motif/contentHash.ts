@@ -3,8 +3,7 @@ import { coreManifestForHash, type Manifest } from "../../shared/motifs/catalog"
 
 /**
  * sha256( canonicalCoreManifestJSON ‖ \0 ‖ html ‖ \0 ) as lowercase hex.
- * Replaces the Rust blake3 `Motif::content_hash` (value changes once → harmless
- * one-time frame re-bake). Feeds the capture host `?v=` cache-buster + raster key.
+ * Feeds the capture host `?v=` cache-buster + raster key.
  */
 export function motifContentHash(manifest: Manifest, html: string): string {
   const hasher = createHash("sha256");

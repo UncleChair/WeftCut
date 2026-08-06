@@ -22,12 +22,13 @@ export { percentile } from "../../../shared/msStats";
 /// `DecodeSession` seam as the WebCodecs strategy.
 type BenchHandle = SourceHandle | FfmpegSource;
 
-/// `native-copyback` is the Linux hardware copy-back HW lane (ADR 0034): decode
-/// on the GPU (NVDEC/VAAPI), `av_hwframe_transfer_data` back to a CPU NV12 frame,
-/// then feed the SAME `DecodeSession` seam as `sw` (the ship-bytes `SwTransport`).
-/// UNLIKE `native` it does NOT force the lane — it hands `pickInitialLane` the
-/// codec/pixFmt/dimensions so the real HW probe resolves the advertised lane; the
-/// orchestrator's `WEFTCUT_FORCE_HW_LANE` env pins WHICH one (nvdec/vaapi).
+/// `native-copyback` is the copy-back HW lanes (Linux NVDEC/VAAPI, ADR 0034;
+/// macOS VideoToolbox): decode on the GPU, `av_hwframe_transfer_data` back to a
+/// CPU frame, then feed the SAME `DecodeSession` seam as `sw` (the ship-bytes
+/// `SwTransport`). UNLIKE `native` it does NOT force the lane — it hands
+/// `pickInitialLane` the codec/pixFmt/dimensions so the real HW probe resolves
+/// the advertised lane; the orchestrator's `WEFTCUT_FORCE_HW_LANE` env pins
+/// WHICH one (nvdec/vaapi/videotoolbox).
 export type BenchStrategy = "webcodecs" | "native" | "sw" | "native-copyback";
 export type BenchScenario = "throughput" | "seek" | "coldstart";
 export interface BenchArgs {
@@ -69,9 +70,10 @@ const SCENARIO_TIMEBOX_MS = 90_000;
 const SEEK_WAIT_TIMEOUT_MS = 30_000;
 const COLD_ITERATIONS = 10;
 
-/// The committed, deterministic 40-step seek plan (spec §3.2): starting from
-/// 10 s, cycle the four category deltas ten times, clamping each target into
-/// [0.5 s, durationUs − 2 s]; the clamped target becomes the next "current".
+/// The committed, deterministic 40-step seek plan (see docs/decode-bench.md,
+/// "What it measures"): starting from 10 s, cycle the four category deltas ten
+/// times, clamping each target into [0.5 s, durationUs − 2 s]; the clamped
+/// target becomes the next "current".
 const SEEK_DELTAS: Array<[SeekCategory, number]> = [
   ["forward-near", 200_000],
   ["forward-far", 15_000_000],

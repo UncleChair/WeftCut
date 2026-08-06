@@ -5,7 +5,7 @@ import type { CommandDef } from "./registry";
 
 /// App-level command catalog for the palette: derived from the shortcut
 /// HandlerMap (so new shortcut actions appear automatically) plus the
-/// three menu-only actions that have no binding. Pure factory — App calls
+/// menu-only actions that have no binding. Pure factory — App calls
 /// it inside useCommandProvider's getter, so flags are read fresh on
 /// every listCommands().
 export interface AppCommandFlags {

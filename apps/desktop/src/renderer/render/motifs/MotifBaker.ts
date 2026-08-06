@@ -51,8 +51,6 @@ export class MotifBaker {
   /// Replace the active bake set, plan the whole content (playhead-first), and
   /// arm — all synchronously, like `MotifPrewarmer.setTargets`, so a caller
   /// (and the unit test's settle loop) sees a scheduled callback immediately.
-  /// The disk-skip check is async, so it is NOT done here; `drainBatch` skips
-  /// on-disk frames as it pulls them, consulting `isOnDisk` once per frame.
   setTargets(specs: BakeContentSpec[]): void {
     if (this.disposed) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));

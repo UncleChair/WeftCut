@@ -392,10 +392,9 @@ app.whenReady().then(async () => {
 
   // Resolve the user-configurable data root BEFORE the Backend cache dir
   // (`new Backend(...)` below) and UserMotifStore are constructed — both take
-  // their paths from it. Ticket 02 wires the consumers to `dataRoot.*`; ticket
-  // 01 only fixes the root + subdir layout and holds the paths in this scope. A
-  // configured-but-unavailable root surfaces a blocking native dialog here (no
-  // main window yet), so the sync Electron dialog/picker are used.
+  // their paths from it. A configured-but-unavailable root surfaces a blocking
+  // native dialog here (no main window yet), so the sync Electron
+  // dialog/picker are used.
   const { resolveDataRoot } = await import('./dataRoot.js')
   const dataRoot = resolveDataRoot({
     userDataDir: app.getPath('userData'),
@@ -614,8 +613,6 @@ app.whenReady().then(async () => {
   const { builtinMotifs } = await import('./motif/authoring.js')
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
-  // (atomicFs + the app-settings store are constructed earlier — before the
-  // Backend — so the data-root resolver can read `data_root` at boot. Reused here.)
   // Per-workspace view state — resolves the workspace dir per call; no-op pre-workspace.
   const { createViewStateStore } = await import('./view-state.js')
   const viewState = createViewStateStore({ fs: atomicFs, join: path.join })
@@ -1111,14 +1108,9 @@ app.whenReady().then(async () => {
     broadcastEvent(BrowserWindow.getAllWindows(), event, payload)
   })
 
-  // Process-tree resource snapshot for the Performance Monitor. Electron tracks the whole
-  // app tree (Browser + renderers + GPU + utility) itself — no Rust round-trip,
-  // no system-info crate. Works in dev AND release (unlike the dropped Rust
-  // `get_system_stats`, which only ever errored).
+  // Performance Monitor snapshot — see metrics.ts.
   ipcMain.handle('app:metrics', () => collectMetrics(app.getAppMetrics(), os.cpus().length))
 
-  // `dialog` comes from the top-level electron import (used by the boot-time
-  // data-root dialog above too); no local require needed.
   ipcMain.handle('dialog:open', async (_e, opts) => {
     const o = (opts ?? {}) as {
       title?: string
@@ -1155,10 +1147,10 @@ app.whenReady().then(async () => {
     return res.canceled || !res.filePath ? null : res.filePath
   })
 
-  // dataRoot:* — user-managed data location (ticket 03). The migration COPY runs
+  // dataRoot:* — user-managed data location. The migration COPY runs
   // here in main via node:fs directly (it does NOT pass through the fs:* guard),
   // so the copy destination needs no guard admission; the resolved dataRoot is
-  // already an fsRoots() root (ticket 02). `migrationFs` is the node:fs adapter
+  // already an fsRoots() root. `migrationFs` is the node:fs adapter
   // for the pure, fs-injected core (dataRootMigration.ts).
   const migrationFs: MigrationFs = {
     exists: (p) => fs.existsSync(p),
@@ -1189,7 +1181,7 @@ app.whenReady().then(async () => {
 
   // Pick a new folder → plan → (copy+verify OR adopt), emitting progress. On
   // success: write data_root + the pending-delete marker, return ready-to-
-  // relaunch (does NOT relaunch — ticket 04 controls timing via dataRoot:relaunch).
+  // relaunch (does NOT relaunch — the renderer times that via dataRoot:relaunch).
   // On failure: roll back the new root and return the error (data_root unchanged).
   ipcMain.handle('dataRoot:pickAndMigrate', async (): Promise<DataRootMigrateResult> => {
     const zh = app.getLocale().toLowerCase().startsWith('zh')
@@ -1233,7 +1225,7 @@ app.whenReady().then(async () => {
   })
 
   // Apply a completed migration: relaunch onto the newly-written data root.
-  // Separate channel so ticket 04 can show success first, then relaunch.
+  // Separate channel so the renderer can show success first, then relaunch.
   ipcMain.handle('dataRoot:relaunch', () => {
     app.relaunch()
     app.exit(0)
@@ -1339,7 +1331,7 @@ app.whenReady().then(async () => {
     return resolveSystemFont(family)
   })
 
-  // PoC: native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
+  // Native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
   // forwarded straight to the napi backend's ffmpeg stdin. No JSON.
   ipcMain.handle('export:videosink_write', async (_e, ab: ArrayBuffer | Uint8Array) => {
     const buf = Buffer.isBuffer(ab) ? ab : Buffer.from(ab as ArrayBuffer)
@@ -1434,7 +1426,7 @@ app.on('window-all-closed', () => {
 // routes (router.ts) to autosave.forceFlush(), a no-op when no workspace is set
 // (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
 // quitFlushed guard breaks the re-entrant before-quit that app.quit() raises.
-// Flag-off (tsHost null) early-returns so the Rust path's quit behavior is unchanged.
+// A null tsHost early-returns: nothing to flush before whenReady constructs the host.
 let quitFlushed = false
 app.on('before-quit', (event) => {
   motifWatcher?.close(); motifWatcher = null

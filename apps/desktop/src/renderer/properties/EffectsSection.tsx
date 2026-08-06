@@ -402,9 +402,8 @@ function EffectRow({
           ariaLabel={t("effects.enable", { name })}
           onCheckedChange={(next) => run(() => updateEffect(layer.id, effect.id, { enabled: next }))()}
         />
-        {/* Secondary actions collapse into one overflow menu: the header was
-            eight controls wide, which ellipsised the effect name to nothing in
-            a docked (narrow) panel. */}
+        {/* Secondary actions collapse into one overflow menu so the effect name
+            stays legible in a docked (narrow) panel. */}
         <Menu.Root>
           <Menu.Trigger
             className="prop-effect-more"

@@ -1,7 +1,7 @@
 //! Layer envelope + kind-specific params.
 
-// `Layer::duration_us` / `occupies` / `overlaps` are public helpers used by
-// validation and future agent-side queries; allow lib-only dead-code noise.
+// `Layer::duration_us` / `occupies` / `overlaps` are wire-contract helpers kept
+// public with no caller in this crate; allow the lib-only dead-code noise.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
@@ -81,11 +81,10 @@ pub struct VideoClipParams {
     pub flip_v: bool,
     #[serde(default)]
     pub blend_mode: BlendMode,
-    /// 1.0 default. Warns at apply time if != 1 with attached audio.
+    /// 1.0 default. `transcribe_clip` / `describe_clip` reject a layer whose
+    /// speed differs from 1.0 rather than resampling the timings.
     pub speed: f64,
-    /// Fade-from-black at the start of the clip. 0 = no fade. Lowering uses the
-    /// `fade` filter (single-input, simpler than `xfade` which needs two
-    /// streams). Capped at the clip duration at lowering time.
+    /// Fade-from-black at the start of the clip. 0 = no fade.
     #[serde(default)]
     pub fade_in_us: u64,
     /// Fade-to-black at the end of the clip. Same semantics as `fade_in_us`.
@@ -267,8 +266,7 @@ fn visit_transform_f64(t: &mut Transform, f: &mut impl FnMut(&mut Animated<f64>)
 
 /// Apply `f` to every `Animated<Rgba>` track on these params (Text color,
 /// Color color). Separate from the f64 walk because the inner type differs.
-/// v1 has no Rgba authoring UI, but trim/split must still carry color
-/// keyframes if any exist.
+/// Trim and split must carry color keyframes through the same rebase.
 pub(crate) fn for_each_animated_rgba(
     params: &mut LayerParams,
     mut f: impl FnMut(&mut Animated<Rgba>),

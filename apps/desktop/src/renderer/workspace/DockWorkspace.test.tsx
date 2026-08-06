@@ -568,7 +568,6 @@ describe("DockWorkspace React integration", () => {
     ).toBeTruthy();
   });
 
-  // A 44px strip blown up to the whole window is never what the user meant.
   it("does not maximize the strip on a double-clicked grip", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
@@ -608,9 +607,7 @@ describe("DockWorkspace React integration", () => {
     expect(strip?.api.close).toHaveBeenCalledOnce();
   });
 
-  // The grip sits inline with the buttons because the whole group header moves
-  // to the strip's leading edge. It must move back for any other arrangement,
-  // or a group the strip was dragged into would have ITS tabs tipped sideways.
+  // Why the header moves at all: see QuickActionsDockPanel in DockWorkspace.tsx.
   describe("Quick Actions header position", () => {
     function renderStrip(options: {
       width: number;

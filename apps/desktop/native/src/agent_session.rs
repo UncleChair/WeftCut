@@ -10,15 +10,10 @@
 //!  - One source of truth across MCP writes + UI reads via a single
 //!    `Arc<RwLock<Option<AgentSession>>>`.
 //!
-//! Lifecycle:
-//!  - `begin(...)` creates / replaces the session (last writer wins).
-//!  - `end()` clears it. Called by the user-exit napi command, by
-//!    workspace open/save_as/new, and by MCP-client disconnect.
-//!  - Not persisted to disk. App restart always boots into editor mode.
+//! Lifecycle: not persisted to disk. App restart always boots into editor mode.
 //!
-//! Event surface (when paired with an `EventSink`):
-//!  - Event `agent_session:changed` with payload `Option<AgentSession>`.
-//!    Fires on every begin/end. The UI's `App.tsx` listens.
+//! Event surface (when paired with an `EventSink`): `agent_session:changed`
+//! fires on every begin/end; `renderer/app/useAppWiring.ts` subscribes.
 
 use std::sync::{Arc, RwLock};
 

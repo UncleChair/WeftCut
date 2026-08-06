@@ -35,7 +35,7 @@ pub enum BackendConfig {
         binary: PathBuf,
         model: PathBuf,
         mmproj: PathBuf,
-        /// Reserved device hint (e.g. GPU index); not mapped to a CLI arg in v1.
+        /// Reserved device hint (e.g. GPU index); not mapped to a CLI arg.
         #[serde(default)]
         device: Option<String>,
     },
@@ -69,14 +69,8 @@ pub enum Availability {
 
 /// Decide whether `backend` can run given its (optional) config map entry.
 ///
-/// - **Local** → `NeedsBinary` if the binary is missing, then `NeedsModel` if
-///   the model OR the mmproj is missing (both are part of the model bundle, so
-///   they reuse one variant), then `Available`. File existence only; the
-///   liveness spawn is a separate concern.
-/// - **Endpoint** → `Available` iff a non-empty URL is present, else
-///   `NeedsEndpoint`.
-/// - **Cloud** → `Available` iff an [`BackendConfig::ApiKey`] entry is present,
-///   else `NeedsKey`.
+/// Presence of the file / URL / key only — the liveness spawn is a separate
+/// concern. Each [`Availability`] variant names the gap it stands for.
 ///
 /// A config entry whose shape mismatches the backend's locality is treated as
 /// "the thing it needs is absent".
@@ -87,8 +81,6 @@ pub fn availability(backend: VlmBackend, cfg: Option<&BackendConfig>) -> Availab
                 if !binary.exists() {
                     Availability::NeedsBinary
                 } else if !model.exists() || !mmproj.exists() {
-                    // A missing model or vision projector is part of the same
-                    // model bundle → NeedsModel (no separate variant).
                     Availability::NeedsModel
                 } else {
                     Availability::Available

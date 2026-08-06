@@ -2,13 +2,11 @@
 //
 //   layer chains → input (GainNode, master mute)
 //                → analyser (meter tap)
-//                → DynamicsCompressor (−1 dB / 20:1 / 1 ms — soft overload
-//                  protection; the export-side alimiter is the contract,
-//                  this is the preview approximation)
+//                → DynamicsCompressor
 //                → destination
 //
-// The meter is engine plumbing in this slice: surfaced to the dev PerfHUD
-// and over MCP, no product UI (mixer UI belongs to the UX redesign).
+// The meter tap is surfaced to the dev PerfHUD, over MCP, and to the master
+// level in `panels/MixerPanel.tsx` (via `state/masterMeterStore`).
 
 export interface MeterSnapshot {
   /// dBFS; -Infinity when silent.
@@ -43,6 +41,8 @@ export class AudioGraph {
     // analyser overload accepts it.
     this.meterBuf = new Float32Array(new ArrayBuffer(this.analyser.fftSize * 4));
 
+    // Soft overload protection only — the export-side alimiter is the
+    // contract; this is the preview approximation of it.
     this.compressor = this.ctx.createDynamicsCompressor();
     this.compressor.threshold.value = -1;
     this.compressor.ratio.value = 20;

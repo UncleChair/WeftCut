@@ -22,7 +22,7 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForH
 // as evidence of matrix correctness (ADR 0032).
 //
 // Two legs:
-//   A. bt709-tagged chart — renders WITHOUT the 601 tint (the ticket's bug).
+//   A. bt709-tagged chart — renders WITHOUT the 601 tint.
 //   B. smpte170m-tagged chart — still selects BT.601 (no over-correction:
 //      a fix that hard-codes 709 would pass leg A and fail this one).
 // Same run requirements as preview-sw-conformance.spec.ts: a

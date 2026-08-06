@@ -147,11 +147,10 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
     })
   }
 
-  // A sub-frame slip must not desynchronize the WAVEFORM from the PCM (ADR 0038).
-  // Extends this gate rather than adding a parallel one, per ticket 11: the waveform
-  // is addressed in MEDIA time (`sampleWaveformRms` takes source µs), so slipping the
-  // layer on the timeline must leave the waveform↔PCM relationship untouched — if the
-  // slip had leaked into media addressing, these markers would move.
+  // A sub-frame slip must not desynchronize the WAVEFORM from the PCM (ADR 0038):
+  // the waveform is addressed in MEDIA time (`sampleWaveformRms` takes source µs),
+  // so slipping the layer on the timeline must leave the waveform↔PCM relationship
+  // untouched — if the slip had leaked into media addressing, these markers would move.
   test('a sub-frame timeline slip leaves waveform ↔ PCM addressing untouched', async () => {
     test.setTimeout(120_000)
     const c = CASES[0]!

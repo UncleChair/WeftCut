@@ -31,12 +31,12 @@ export function createMotifRuntime(g: any = {}) {
 }
 
 /**
- * Browser-injection source. Injected via the hidden host window's
- * `initialization_script` (runs before the Motif's own scripts), sourced from
- * this string handed to Rust at boot via `motif_register_runtime`. Installs
- * the runtime on window, exposes motif.define, and a
- * window.__motifRender(t, props, meta) entry point that Rust drives over CDP
- * Runtime.evaluate(awaitPromise:true).
+ * Browser-injection source. Injected into the hidden host window with CDP
+ * `Page.addScriptToEvaluateOnNewDocument` (runs before the Motif's own
+ * scripts), sourced from this string handed to main at boot via
+ * `motif_register_runtime`. Installs the runtime on window, exposes
+ * motif.define, and a window.__motifRender(t, props, meta) entry point that
+ * main drives over CDP Runtime.evaluate(awaitPromise:true).
  *
  * String.raw template — the substitution below (createMotifRuntime.toString)
  * is resolved by TypeScript at module-evaluation time into a plain string.
@@ -88,7 +88,8 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     };
   }
 
-  // Driven from Rust via CDP Runtime.evaluate(awaitPromise:true).
+  // Driven from the Electron main process (main/motif/capture.ts) via CDP
+  // Runtime.evaluate(awaitPromise:true).
   // Resolves once setup (once-per-props) + frame(t) + seek + a double-rAF settle
   // have run, i.e. the frame for time t (seconds) is visually ready to capture.
   window.__motifRender = function (t, props, meta) {

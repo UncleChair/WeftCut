@@ -1,6 +1,6 @@
 //! Transport-agnostic MCP wire types. Serialize to the exact JSON shapes the
 //! `@modelcontextprotocol/sdk` low-level Server expects, so the TS layer can
-//! forward Rust output verbatim (no re-shaping). Replaces rmcp's model types.
+//! forward Rust output verbatim (no re-shaping).
 
 use serde::Serialize;
 use serde_json::Value;
@@ -60,12 +60,12 @@ impl std::fmt::Display for McpToolError {
 }
 impl std::error::Error for McpToolError {}
 
-/// The plain-Rust command surface (`Backend::project()`, etc.) speaks
+/// The plain-Rust command surface behind `Backend::dispatch` speaks
 /// `Result<_, String>`. A bare `?` on those inside a tool function converts the
 /// String to an internal error — the only String errors a tool can hit are
-/// backend-lifecycle failures (e.g. "backend not initialized"), which are
-/// genuinely internal, not bad agent input. Tool-specific validation still
-/// builds the precise `invalid_params`/`invalid_request` variants explicitly.
+/// backend-lifecycle failures, which are genuinely internal, not bad agent
+/// input. Tool-specific validation still builds the precise
+/// `invalid_params`/`invalid_request` variants explicitly.
 impl From<String> for McpToolError {
     fn from(message: String) -> Self {
         Self::internal_error(message, None)

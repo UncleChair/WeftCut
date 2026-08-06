@@ -1,7 +1,7 @@
 use super::{Cue, CueStyle};
 
 /// Parse a WebVTT body to cues — text + timing only. Cue settings (line/
-/// position/align/region) are dropped (v1: VTT renders at SRT level).
+/// position/align/region) are dropped — VTT renders at SRT level.
 pub fn parse(body: &str) -> Vec<Cue> {
     let mut cues = Vec::new();
     let normalized = body.replace("\r\n", "\n").replace('\r', "\n");

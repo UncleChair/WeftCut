@@ -1,7 +1,7 @@
 //! The per-source Decode Route — where preview and export each read pixels.
-//! Persisted as the source of truth (replaces the old flat proxy flags). The
-//! readiness paths live INSIDE the variants so a route↔path contradiction
-//! (a Bypass carrying a proxy) is unrepresentable. See docs/adr/0028 and CONTEXT.md.
+//! Persisted as the source of truth. The readiness paths live INSIDE the
+//! variants so a route↔path contradiction (a Bypass carrying a proxy) is
+//! unrepresentable. See docs/adr/0028 and CONTEXT.md.
 
 use std::path::PathBuf;
 
@@ -61,10 +61,6 @@ impl DecodeRoute {
             (ExportSource::FullProxy, PreviewSource::Original) => {
                 unreachable!("preview=Original implies export=Original")
             }
-            // NativeFfmpeg preview persists as its own `NativeSw` variant. It
-            // carries proxy paths like `Proxied` (the proxy still builds so
-            // toggle-off preview works as today); the toggle-on "use the
-            // native-SW original" behavior is a later overlay.
             (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => DecodeRoute::NativeSw {
                 quick_proxy: None,
                 full_proxy: None,
@@ -77,7 +73,7 @@ impl DecodeRoute {
     }
 
     /// Export-decode failed on this machine → become Proxied, carrying any
-    /// quick proxy already produced. Bypass/Proxied are unchanged.
+    /// quick proxy already produced. Every other variant is returned unchanged.
     pub fn route_corrected(self) -> Self {
         match self {
             DecodeRoute::DirectExport { quick_proxy } => DecodeRoute::Proxied {

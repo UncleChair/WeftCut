@@ -74,10 +74,10 @@ export function listMotifs(): MotifManifest[] {
 
 /// Render-path prop canonicalizer that NEVER throws — drops unknown keys, fills
 /// missing keys from defaults, and falls back to the default when a value fails
-/// its spec. Mirrors Rust `Motif::canonicalize_props_lenient`. The strict
-/// `canonicalizeProps` (Rasterizer) stays on the ADD/validation path; the render
-/// path uses this so a layer whose Motif's `props_schema` changed under it (an
-/// in-place update) degrades gracefully instead of rendering blank.
+/// its spec. The strict `canonicalizeProps` (Rasterizer) stays on the
+/// ADD/validation path; the render path uses this so a layer whose Motif's
+/// `props_schema` changed under it (an in-place update) degrades gracefully
+/// instead of rendering blank.
 ///
 /// NOTE: argument order is (props, manifest) — intentionally opposite of the
 /// shared function — to preserve the existing call sites unchanged.

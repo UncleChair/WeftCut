@@ -80,7 +80,7 @@ export function TransitionChip({
         e.stopPropagation();
       }}
       onContextMenu={(e) => {
-        // No chip context menu in v1; still swallow it so the layer menu
+        // No chip context menu; still swallow it so the layer menu
         // underneath doesn't open detached from what the user clicked.
         e.preventDefault();
         e.stopPropagation();

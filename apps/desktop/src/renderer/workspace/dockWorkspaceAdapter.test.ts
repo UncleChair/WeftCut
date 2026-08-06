@@ -361,8 +361,6 @@ describe("DockWorkspaceAdapter", () => {
 
     expect(adapter.initializeEditingLayout()).toBe(true);
     expect(adapter.initializeEditingLayout()).toBe(false);
-    // Quick Actions is inserted LAST and root-relative, so its full-height
-    // edge strip ends up beside the editor row and the Timeline row both.
     expect(dock.added.map((panel) => panel.id)).toEqual([
       "media",
       "preview",

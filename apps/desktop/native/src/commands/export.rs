@@ -1,6 +1,6 @@
 //! Export commands — audio-only mix/encode, final mux, and the
 //! export-audio conform gate. Gated behind `export`. The video-sink commands
-//! live in `export::videosink` (native-IPC 10-bit frame path) and are dispatched
+//! live in `export::videosink` (native-IPC rawvideo frame path) and are dispatched
 //! directly — they need only the two Backend stores, not a project snapshot.
 
 use std::path::PathBuf;
@@ -57,8 +57,7 @@ pub async fn mux_export(
 
 /// Export-readiness audio gate: media ids of audible in-window audio layers
 /// whose conform cache is absent/invalid, each with a conform job kicked.
-/// Selection mirrors the mix plan exactly (mute/solo/lock/window). The TS host
-/// passes the full project.
+/// Selection mirrors the mix plan exactly (mute/solo/lock/window).
 pub async fn ensure_export_audio_conform(
     backend: &Backend,
     project: crate::state::Project,

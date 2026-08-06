@@ -31,8 +31,7 @@ export interface TileProducer<T> {
   invalidate?(mediaId: string): void;
   /// Byte budget for this producer's ready tiles. Producers without one share
   /// the engine-wide default. Eviction is per kind: one producer's byte
-  /// pressure never evicts another's tiles (filmstrip bitmaps ~466 KB would
-  /// otherwise churn the ~48 KB waveform tiles out).
+  /// pressure never evicts another's tiles.
   budgetBytes?: number;
 }
 
@@ -94,8 +93,7 @@ export class TileEngine {
       // pending/ready always coalesce. not_ready is deliberately NOT
       // short-circuited — a later request() re-fetches it (e.g. after
       // invalidateMedia clears the slot, or a consumer explicit retry).
-      // error also falls through once ERROR_RETRY_COOLDOWN_MS has elapsed, so
-      // a transient failure heals on the next request() instead of wedging.
+      // error falls through past ERROR_RETRY_COOLDOWN_MS.
       if (state === "pending" || state === "ready") return;
       if (state === "error" && Date.now() - (existing.erroredAtMs ?? 0) < ERROR_RETRY_COOLDOWN_MS) {
         return;

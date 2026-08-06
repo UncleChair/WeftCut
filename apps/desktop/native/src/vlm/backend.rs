@@ -3,9 +3,8 @@
 //! order the resolver falls back through.
 //!
 //! Architectural twin of [`speech::backend`](crate::speech) — same shape, same
-//! `as_str` wire-tag contract. The tags below (`"qwen3_vl"`, `"minicpm_v"`,
-//! `"byo_endpoint"`, `"cloud"`) are the `vlm_config` map keys the TS host injects
-//! and the stable IPC contract; do NOT change them once persisted.
+//! `as_str` wire-tag contract. The tags are the `vlm_config` map keys the TS
+//! host injects; see [`VlmBackend::as_str`].
 //!
 //! Config material (a cloud API key, a local engine's binary/model/mmproj paths,
 //! or a BYO endpoint URL) lives in [`super::config`]; this module is only the
@@ -72,7 +71,7 @@ pub const DEFAULT_ORDER: &[VlmBackend] = &[
 
 impl VlmBackend {
     /// Stable string tag — the `vlm_config` map key AND the TS/napi wire
-    /// contract. Do NOT change once persisted (see the module note).
+    /// contract. Do NOT change once persisted.
     pub fn as_str(self) -> &'static str {
         match self {
             VlmBackend::Qwen3Vl => "qwen3_vl",

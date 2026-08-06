@@ -26,27 +26,10 @@ export function classKeyOfMedia(m: {
   return `${m.codec}::${m.pix_fmt ?? "unknown"}:${res}`;
 }
 
-/// HW-lane codec allow-list — the seek-safety dimension the one-frame HW probe
-/// CANNOT test. Main's `decode_first_d3d11_frame` decodes a single FORWARD
-/// frame: if the GPU driver HW-decodes it the probe returns ok, so the probe is
-/// NECESSARY BUT NOT SUFFICIENT — it proves decode-VIABILITY, not
-/// SEEK-SURVIVAL. A codec can decode forward cleanly yet HANG the D3D11 preview
-/// session indefinitely on a backward seek (observed: MPEG-2 on an RTX 3050 —
-/// the driver HW-decodes it, the one-frame probe says ok, then playback wedges
-/// on a backward seek with no recovery). The list encodes the seek-VALIDATED
-/// HW scope, gating which codecs are even PROBE-ELIGIBLE (spec P1: "lists may
-/// seed or short-circuit probes"). It NARROWS what's eligible; it never
-/// overrules a probe's negative verdict.
-///
-/// LANE-AWARE since issue #10 ticket 03: the per-lane sets live in
-/// `shared/hwLaneEligibility.ts` (videotoolbox admits ProRes + 10-bit; every
-/// other lane keeps 8-bit h264/hevc/vp9). This entry point is the renderer's
-/// probe-KICK union — true when ANY lane could host the format — because the
-/// renderer does not know the lane before main's advertisement-gated walk
-/// (`resolveHwLane`) resolves it; that walk applies the same per-lane predicate,
-/// so an eligible-nowhere-advertised format resolves software without probing.
-/// Callers gate the HW-probe kick on this so an everywhere-ineligible codec
-/// never lights the HW lane; the pure resolver stays untouched.
+/// The renderer's HW-probe KICK gate: true when ANY lane could host the format,
+/// so an everywhere-ineligible codec never lights the HW lane. The per-lane
+/// seek-validated sets — and why a static allow-list narrows the probe at all —
+/// live in `shared/hwLaneEligibility.ts`.
 export function hwEligibleCodec(codec: string | null, pixFmt: string | null): boolean {
   return hwEligibleOnAnyLane(codec, pixFmt);
 }

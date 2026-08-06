@@ -46,8 +46,9 @@ export async function resolveMotifFrame(
     }
   }
   const [w, h] = motif.manifest.size;
-  // durationSec is unused by the CDP path — duration is derived Rust-side from
-  // props. Kept in the signature for caller parity across the read paths.
+  // durationSec is unused by the CDP path — duration is derived in main
+  // (`motifCtxDurationS`, shared/motifs/catalog.ts) from props. Kept in the
+  // signature for caller parity across the read paths.
   void durationSec;
   return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash);
 }

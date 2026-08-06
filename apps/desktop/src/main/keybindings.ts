@@ -13,10 +13,7 @@
 // that holds ONLY the user's overrides — actions not in the file fall back to
 // the frontend defaults at dispatch time.
 //
-// An empty keys array means "explicitly unbound" — distinct from "no entry."
 // Bad-config recovery: missing / empty / corrupt file returns {} (no throw).
-// Import validates the source before touching the live file so a bad import
-// can't brick the user's setup.
 //
 // No :changed event — the renderer re-fetches via keybindings_get after
 // each mutation.

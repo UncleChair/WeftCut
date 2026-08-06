@@ -139,17 +139,14 @@ describe('openProject', () => {
     const reports: unknown[] = []
     let swapped: any
     const d = deps({ fs, relink })
-    // Pushes into d.calls so the emit's position in the open sequence is
-    // assertable — it must land AFTER commitWorkspace's LogBus rotate.
+    // Pushes into d.calls so the emit's position in the open sequence is assertable.
     d.onRelink = (r) => { reports.push(r); d.calls.push('relinkLog') }
     d.actor.replaceState = vi.fn((p) => { swapped = p; d.calls.push('replaceState') })
     await openProject(d, '/ws')
     expect(swapped.media_pool.m1.path_abs).toBe('/ws/Media/电子榨菜.mp3')  // healed + renamed back
     expect(disk.has('/ws/Media/电子榨菜.mp3')).toBe(true)
     expect(reports).toHaveLength(1)
-    // The report emits after the workspace commit (per-workspace LogBus has
-    // rotated) and the state swap — never during the heal, where the row
-    // would land in the doomed pre-open bus and silently vanish.
+    // The report emits after the commit and the state swap, never during the heal.
     expect(d.calls).toEqual(['commit:/ws', 'replaceState', 'relinkLog', 'recent:/ws:Demo'])
   })
 

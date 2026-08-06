@@ -17,8 +17,7 @@ function emit(): void {
   for (const l of listeners) l();
 }
 
-/// Begin/continue an audition: the Compositor folds `gainDb` in place of the
-/// committed Role gain on the next composite.
+/// Begin/continue an audition.
 export function setRoleGainOverride(role: AudioRole, gainDb: number): void {
   overrides.set(role, gainDb);
   emit();

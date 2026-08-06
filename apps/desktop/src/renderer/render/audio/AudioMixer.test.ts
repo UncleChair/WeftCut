@@ -143,12 +143,8 @@ afterEach(() => {
 
 describe("AudioMixer dispose racing the conform open", () => {
   it("a dispose during the conform fetch must not resurrect the mixer", async () => {
-    // The ctor fires `openSource` and the conform header fetch can outlive the
-    // layer that asked for it (delete an Audio layer within the fetch's
-    // latency). Before the disposed latch, the continuation re-assigned
-    // `source` and rebuilt + reconnected a pan graph on the severed output —
-    // leaked AudioNodes, and a disposed mixer one stray tick away from
-    // scheduling audio out of a dead object.
+    // A dispose landing inside `openSource`'s in-flight window must not
+    // resurrect the mixer — see `AudioMixer.openSource`.
     let releaseOpen!: () => void;
     conform.openGate = new Promise<void>((r) => { releaseOpen = r; });
     const { mixer } = createMixer();
@@ -183,8 +179,8 @@ describe("AudioMixer seek scheduling", () => {
       // A stale completion must not release that replacement's reservation.
       mixer.tick(100_000, true, 1_000_000, anchorAfterSeek);
 
-      // Resolve every current-generation read. The buggy implementation
-      // launched two of them, producing two simultaneously audible nodes.
+      // Resolve every current-generation read; exactly one node may end up
+      // audible.
       for (const read of conform.pending.slice(1)) read.resolve();
       await flush();
 

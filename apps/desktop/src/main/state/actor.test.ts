@@ -308,7 +308,7 @@ describe('dispatch: transitions', () => {
     expect(r.ok).toBe(false); expect((r as { ok: false; error: { error: string } }).error.error).toBe('TransitionNotFound')
   })
 
-  // ── kind + direction parsing (ticket 04) ──
+  // ── kind + direction parsing ──
   const errOf = (r: ReturnType<ReturnType<typeof createActor>['dispatch']>) =>
     (r as { ok: false; error: { error: string; field?: string } }).error
 
@@ -395,7 +395,7 @@ describe('dispatch: transitions', () => {
     expect([errOf(r).error]).toEqual(['TransitionNotFound'])
   })
 
-  // ── dryRun ↔ commit alignment (inherited item a) ──
+  // ── dryRun ↔ commit alignment ──
   it('dryRun runs reconcile like commit: a trim over a transition edge predicts succeed-with-drop, not ValidationFailed', () => {
     const { actor, a2 } = withCrossfade()
     const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 3_000_000, escape_group: false }])

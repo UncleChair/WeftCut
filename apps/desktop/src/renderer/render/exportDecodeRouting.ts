@@ -19,8 +19,8 @@ import type { ExportDecodeEngine } from "./exportSettings";
 /// error to trip the HW→SW fallback, so every exported frame goes silently
 /// black. Windows is hardware-verified faithful (Chromium's ANGLE→D3D11
 /// backend composites GPU-backed frames correctly); macOS likewise (Apple
-/// Silicon force-test 2026-07-23: HW frames arrive NV12, every JS import path
-/// reads real pixels — issue #7 §5). Explicit ALLOWLIST, not a blocklist —
+/// Silicon: HW frames arrive NV12, every JS import path reads real pixels —
+/// issue #7 §5). Explicit ALLOWLIST, not a blocklist —
 /// unknown platforms take the safe software path. Resolved once on the
 /// renderer main thread at export start (the Worker has no OS signal) and
 /// rides the init protocol as `allowHwExportDecode`. The 10-bit lane's own
@@ -41,7 +41,7 @@ export type ExportMediaRoute =
 
 export interface ExportDecodeRouting {
   /// The setting after the capability defense: an `ffmpeg` pin degrades to
-  /// `auto` (decision 3) when the native path is unusable on this export —
+  /// `auto` when the native path is unusable on this export —
   /// the component isn't loaded. Merge-time validation can't do this — intent
   /// persists, capability re-resolves per machine (ADR 0030).
   effectiveSetting: ExportDecodeEngine;
@@ -105,10 +105,7 @@ function routeFor(
   // proxy. "Blind-spot" here is the PERSISTED import-time verdict
   // ("native-sw"), not the gate's runtime probe: a source that fails its
   // probe on this machine is route-corrected to "proxied" by the readiness
-  // gate (which runs after this resolve) and exports via proxy, exactly as
-  // before this resolver existed. Feeding runtime probe verdicts in — so
-  // machine-local blind spots could also go native — is a possible follow-up,
-  // not a v1 promise.
+  // gate (which runs after this resolve) and exports via proxy.
   return m.decode_route.route === "native-sw"
     ? { engine: "native", sourcePath: m.path }
     : { engine: "webcodecs" };
@@ -119,7 +116,7 @@ export interface RoutingSourceCounts {
   proxy: number;
 }
 
-/// The export dialog's honesty line (spec decision 10): how many video sources
+/// The export dialog's honesty line: how many video sources
 /// this table sends off their originals vs their lossy full proxy. Derived
 /// from the resolved table the run freezes, so dialog and export can't
 /// disagree. Proxy-fed = not native-routed AND the persisted export path is
@@ -144,8 +141,8 @@ export function routingSourceCounts(
 
 /// The readiness gate's scope: media the WEBCODECS path will decode — the
 /// decodability probe and full-proxy wait apply to these only. Native-routed
-/// media are excluded because the session opens the ORIGINAL directly
-/// (decision 8: they skip the pre-export full-proxy wait entirely).
+/// media are excluded because the session opens the ORIGINAL directly — they
+/// skip the pre-export full-proxy wait entirely.
 export function proxyWaitScope(
   media: readonly MediaSummary[],
   routing: ExportDecodeRouting,

@@ -84,8 +84,7 @@ export class MotifSprite implements StageableSprite {
     // The composition fps is captured ONCE at construction. If the project's
     // fps changes while this sprite is alive (a project swap that keeps the
     // sprite), the cached frame grid uses the stale rate until the sprite is
-    // recreated. Accepted for v1 — the Compositor recreates sprites on a
-    // composition reload, so this is only a transient edge, not re-architected.
+    // recreated — which the Compositor does on a composition reload.
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
@@ -110,10 +109,10 @@ export class MotifSprite implements StageableSprite {
   }
 
   /// Apply the layer's transform and bind the raster for the frame at
-  /// `tInLayerUs` (composition-time minus the layer's start; motifs have no
-  /// source-in offset, so this resets to 0 at `t_start`). On a cache hit the
-  /// frame binds synchronously; on a miss it's captured + rasterized async and
-  /// bound once ready (if still wanted).
+  /// `tInLayerUs` (composition-time minus the layer's start; `src_in`
+  /// windowing, where it applies, happens inside `motifFrameDescriptor`). On a
+  /// cache hit the frame binds synchronously; on a miss it's captured +
+  /// rasterized async and bound once ready (if still wanted).
   ///
   /// `injectedFrames` (export mode) is a pre-rasterized `ImageBitmap[]` for
   /// THIS layer, indexed by composition-frame, baked on the main thread by

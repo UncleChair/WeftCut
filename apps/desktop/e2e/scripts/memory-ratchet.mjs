@@ -16,12 +16,11 @@
 // Scenarios (positional arg, default `text`):
 //   text        — the original fixture: one static Text layer. Guards the
 //                 playhead/React-subscription ratchet class.
-//   transitions — alternating full-frame RED/BLUE Color layers with a 1 s
-//                 transition at EVERY cut, kinds cycling Crossfade → Wipe →
-//                 Slide. 90 s of playback crosses ~22 active windows, so the
-//                 two-input transition node's RT pool (TransitionRtPool)
-//                 acquires/releases every cycle — a per-frame or per-window
-//                 RT leak ratchets straight past the red line.
+//   transitions — the transition RT-pool leak class: 90 s of playback crosses
+//                 ~22 active windows, so the two-input transition node's RT
+//                 pool (TransitionRtPool) acquires/releases every cycle — a
+//                 per-frame or per-window RT leak ratchets straight past the
+//                 red line. Scenario shape: see `transitionsLayers` below.
 //
 // Method: assembles a throwaway shell package (isolated userData via a
 // distinct app name; node_modules junction into the repo; copy of out/) so

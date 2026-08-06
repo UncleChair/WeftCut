@@ -9,8 +9,7 @@ export function colorParams(color: Rgba, width: number, height: number): LayerPa
   return { kind: 'Color', color: { mode: 'Static', value: color }, width, height }
 }
 export function textParamsDefault(content: string): LayerParams {
-  // Mirrors the replay driver's default_text_params (replay_driver.rs:747-758):
-  // Inter 48 / weight 400 / white / Center / default transform / opacity 1 / Auto.
+  // Defaults: Inter 48 / weight 400 / white / Center / default transform / opacity 1 / Auto.
   return {
     kind: 'Text', content,
     font: { family: 'Inter', size_px: 48, weight: 400, italic: false },

@@ -15,9 +15,8 @@
 // This spec therefore runs without forced-swiftshader; the cross-OS comparison
 // must accept that each OS uses its own GPU path.
 //
-// Real built-in motif IDs (from src/renderer/render/motifs/builtin/*/manifest.json):
-//   countdown     480×480   t in [0,5]
-//   lower-third   1280×320  t in [0,5]
+// The captured IDs are real built-in motifs; their declared size and duration
+// live in src/shared/motifs/builtin/*/manifest.json.
 
 import { test } from '@playwright/test'
 import path from 'node:path'
@@ -39,9 +38,7 @@ test('capture fixed motif frames for cross-OS comparison @serial', async () => {
   const outDir = path.join(__dirname, '../../determinism-artifacts', process.platform)
   fs.mkdirSync(outDir, { recursive: true })
 
-  // NOTE: swiftshader (--disable-gpu --use-gl=swiftshader --in-process-gpu)
-  // hangs the offscreen CDP capture on Windows 11 — see file header for details.
-  // Running without forced-GPU-disable on Windows; Task 8 / CI must address this.
+  // No swiftshader flags — see the file header.
   // launchApp() waits for domcontentloaded (after main.tsx runs) so the motif
   // runtime is registered before we issue any capture calls.
   const { app, page } = await launchApp()
@@ -111,9 +108,6 @@ test('capture fixed motif frames for cross-OS comparison @serial', async () => {
     // ── Negative control: jitter motif ─────────────────────────────────────────
     // Uses Math.random to fill the entire canvas with random noise so two captures
     // always diverge substantially — validates the gate has teeth.
-    // The motif HTML uses window.__motifRender (the raw function signature the
-    // capture host calls directly, not the motif.define() SDK path which is for
-    // user-authored motifs with the full runtime).
     // Checkerboard of random colors using CSS custom properties — each capture
     // produces a different pattern because each cell gets a fresh Math.random()
     // color. Two captures differ in ALL cells → global SSIM well below 0.98.

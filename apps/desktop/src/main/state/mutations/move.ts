@@ -46,12 +46,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // Dragged toward zero, the moving set stops AS A SET: its earliest member lands
   // exactly on 0 and every other member keeps its distance from that member.
   //
-  // Clamping each member's start separately (what this did before) was wrong twice
-  // over. A group sibling pushed below 0 had its `t_start_us` lifted while its
-  // `t_end_us` stayed put, so the layer SHORTENED instead of the move stopping; and
-  // a lone target had no floor at all, so `move_layer { t_start_us: -5_000_000 }`
-  // wrote a negative — perfectly canonical, so the grid backstop waved it through.
-  // `NegativeLayerStart` is now the structural half of this fix.
+  // `NegativeLayerStart` validation is the structural half: a negative start is
+  // otherwise perfectly canonical, so the grid backstop alone would wave it through.
   //
   // 0 is a lattice point on every grid, so the earliest member needs no re-snap to
   // stay canonical, and every other member is still `its own start + delta` snapped

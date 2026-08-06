@@ -80,10 +80,8 @@ pub async fn extract_tile(
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    // -ss BEFORE -i = fast keyframe seek (keyframe-bounded accuracy is fine
-    // for thumbnail-grade tiles). scale=-2:256 keeps aspect at the canonical
-    // height. -update 1 -f image2 forces a single-image output without a %d
-    // pattern (same incantation as jobs/frame.rs).
+    // scale=-2:256 keeps aspect at the canonical tile height. Same ffmpeg
+    // single-frame-extract incantation as jobs/frame.rs.
     let output = Command::new(ffmpeg_path())
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the tile temp; see

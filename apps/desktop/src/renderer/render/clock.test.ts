@@ -38,8 +38,8 @@ describe("SyntheticClock frame snap", () => {
     c.bindFps(30, 1);
     c.setPosition(33_333); // exact frame 1 at 30fps
     c.bindFps(30_000, 1001); // 29.97fps: frame 1 ≈ 33_366.667us
-    // 33_333us at 29.97fps rounds to frame 1; output is half-up rounded
-    // to match Demuxer.ts source-PTS rounding → 33_367us.
+    // 33_333us at 29.97fps rounds to frame 1; `snapFrameRound` (../frames) is
+    // half-up, so the snapped output is 33_367us.
     expect(c.positionUs()).toBe(33_367);
   });
 });

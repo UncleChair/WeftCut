@@ -3,9 +3,7 @@
 // Covers all three capture-phase Delete preemptors by contract: the keyframe
 // diamond, the keyframe lane, and the transition chip share this predicate
 // precisely so Delete cannot mean different things depending on which
-// sub-selection happens to be armed. Before it existed, the chip checked
-// `isEditableTarget` and the two keyframe listeners did not — so Delete aimed
-// at a character in a text field silently removed a keyframe.
+// sub-selection happens to be armed.
 
 import { afterEach, describe, expect, it } from "vitest";
 import { subSelectionDeleteYields } from "./subSelectionDelete";

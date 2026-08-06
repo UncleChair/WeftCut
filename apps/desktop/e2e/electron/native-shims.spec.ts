@@ -2,10 +2,7 @@ import { test, expect } from '@playwright/test'
 import { launchApp } from './helpers/driver'
 
 // The shell / notification / cross-window-emit capabilities are handled natively
-// in the Electron main process (no Rust round-trip). Before this they detoured
-// through `backend.invoke`, which has no such command → every call errored and
-// the features (open-log-folder, export notifications, PerfHUD cross-window
-// snapshots) silently did nothing.
+// in the Electron main process (no Rust round-trip).
 
 test('emit() broadcasts an event across windows to a listen() subscriber', async () => {
   const { app, page: main } = await launchApp()
@@ -69,7 +66,7 @@ test('metrics.get() returns a live process-tree snapshot from app.getAppMetrics(
     cpu_percent: number; rss_bytes: number; process_count: number; logical_cores: number
   }
   // A running Electron app always has >=1 process and a real RSS — no 1s warmup,
-  // no null (unlike the dropped Rust command). cpu_percent is whole-machine %.
+  // no null. cpu_percent is whole-machine %.
   expect(stats.process_count).toBeGreaterThanOrEqual(1)
   expect(stats.rss_bytes).toBeGreaterThan(0)
   expect(stats.logical_cores).toBeGreaterThan(0)

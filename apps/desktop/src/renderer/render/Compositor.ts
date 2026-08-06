@@ -201,10 +201,9 @@ function sourceKindOf(source: DecodeSession): ActiveClipProbe["sourceKind"] {
 export interface ActiveClipProbe {
   layerId: string;
   mediaId: string;
-  /// Which concrete decode handle/lane backs `ActiveClip.source`, discriminated
-  /// by `instanceof` + `FfmpegSource.currentLane()` (NOT `constructor.name` —
-  /// the minified E2E renderer build mangles class names). `"sw"` is the
-  /// ffmpeg software-decode lane, `"native-gpu"` its hardware lane.
+  /// Which concrete decode handle/lane backs `ActiveClip.source`, derived by
+  /// `sourceKindOf`. `"sw"` is the ffmpeg software-decode lane, `"native-gpu"`
+  /// its hardware lane.
   sourceKind: "webcodecs" | "native-gpu" | "sw" | "unknown";
   /// Derived from `sourceKind === "sw"`: whether the active handle is the native
   /// software-decode path. Kept as a distinct field so the spec can assert the
@@ -246,7 +245,7 @@ export interface ActiveClipProbe {
   /// `"nv12"` (Nv12Ingest), `"browser"` (snapshot of a decoder-produced
   /// frame), or null before the first bind. The 10-bit VideoToolbox
   /// conformance variants assert `"p10"` to prove the frame rode the ten-bit
-  /// ingest (issue #10 ticket 03).
+  /// ingest.
   boundFrameKind: "p10" | "nv12" | "browser" | null;
   /// The resolved HW lane (`nvdec`|`vaapi`|`videotoolbox`|`d3d11va`) when the
   /// active clip's source is a `FfmpegSource` on its hardware lane, else null
@@ -296,14 +295,13 @@ function rsFromExportProxy(url: string | null): ResolvedRendererSource | null {
 
 export interface CompositorInit {
   /// Pre-initialized PIXI Application. The Compositor adds its stage
-  /// `Container` to `app.stage` and reads `app.renderer`. Lifecycle of
-  /// the Application is the host's responsibility.
+  /// `Container` to `app.stage` and reads `app.renderer`.
   app: Application;
   /// Project composition dimensions in pixels.
   width: number;
   height: number;
   /// Preview can prefer interactive over throughput; export wants
-  /// throughput. Currently advisory.
+  /// throughput. What it gates: see the private `mode` field.
   mode: "preview" | "export";
   /// EXPORT mode's resolver for the asset URL of a media item's master proxy
   /// (decoded via WebCodecs). Preview mode uses `resolveSource` instead and
@@ -383,8 +381,8 @@ interface ActiveClip {
   /// frame actually rode the ten-bit ingest rather than inferring it.
   boundFrameKind: "p10" | "nv12" | "browser" | null;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
-  /// found `ring.frameAt(srcTUs)` returned null. Used so the
-  /// `frameAt → null` log fires once per transition rather than
+  /// found `ring.selectFrame(srcTUs)` returned null. Used so the
+  /// null-selection log fires once per transition rather than
   /// every rAF tick during the null window.
   loggedNull: boolean;
 }
@@ -491,10 +489,8 @@ export class Compositor {
   private texts = new Map<string, ActiveText>();
   private activeMotifs = new Map<string, ActiveMotif>();
   /// Export-only: pre-rasterized Motif-layer frames injected by the export
-  /// Worker (`layerId → ImageBitmap[]`, indexed by comp-frame). When present
-  /// for a layer, `updateMotif` hands the array to `MotifSprite.update`,
-  /// which binds by index synchronously (no DOM harness — the Worker has none).
-  /// Empty in preview mode; the sprite's harness/cache path runs instead.
+  /// Worker (`layerId → ImageBitmap[]`, indexed by comp-frame). See
+  /// `setMotifFrames`; empty in preview mode.
   private motifFrames = new Map<string, readonly ImageBitmap[]>();
   private audios = new Map<string, ActiveAudio>();
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
@@ -538,8 +534,8 @@ export class Compositor {
   private compositionHeight = 1080;
   private disposed = false;
   /// Lazily created on the first TenBitFrame — the 10-bit export lane AND the
-  /// 10-bit VideoToolbox preview lane (issue #10 ticket 03) both ring these.
-  /// Backend posture: see ensureTenBitIngest.
+  /// 10-bit VideoToolbox preview lane both ring these. Backend posture: see
+  /// ensureTenBitIngest.
   private tenBitIngest: TenBitIngest | null = null;
   /// Lazily created on the first NativeNv12Frame — the 8-bit native export
   /// lane AND the native SW preview lane both ring these (CPU planes convert
@@ -564,9 +560,10 @@ export class Compositor {
           },
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
-          // batchSize 1: captures serialize in Rust, so a larger batch only
-          // adds head-of-line latency for an on-demand scrub. One in-flight
-          // capture per loop keeps the shared host queue short.
+          // batchSize 1: captures serialize in the main process (the single
+          // capture host's promise chain in main/motif/capture.ts), so a larger
+          // batch only adds head-of-line latency for an on-demand scrub. One
+          // in-flight capture per loop keeps the shared host queue short.
           batchSize: 1,
           onProgress: () => this.recomputeBakeStatuses(),
         })
@@ -620,12 +617,8 @@ export class Compositor {
   /// visual feedback). Cleared after the scrub coalescer fires its
   /// stable-target callback, at which point the decoder catches up.
   private scrubbing = false;
-  /// Suspended state — both `compositeFrame` and `setAnchorTime` are
-  /// no-ops while true. Used by the export flow to release the
-  /// preview's VideoDecoders so the export Worker's decoder doesn't
-  /// fight for the hardware decode slot. On resume the next
-  /// `compositeFrame` lazily re-acquires fresh handles via
-  /// `ensureClip`.
+  /// While true, `compositeFrame` and `setAnchorTime` are no-ops (see
+  /// `setSuspended`).
   private suspended = false;
   /// Dock-tab presentation state. Hidden Preview retains every owned resource
   /// and keeps the audio pass alive, but skips decoder targeting and visual
@@ -642,10 +635,8 @@ export class Compositor {
   /// interval and paints the wrong frame (arithmetic: frames.ts).
   private fpsNum = 30;
   private fpsDen = 1;
-  /// Diagnostic counters for the dev `PerfHUD`. `compositeMsLast` is
-  /// the most recent `compositeFrame` duration; `compositeMsMax` is
-  /// the running max since last `resetPerfPeaks()`. Updated by
-  /// `compositeFrame` itself; reading is free.
+  /// Diagnostic counters for the dev `PerfHUD` (see `CompositorPerfSnapshot`),
+  /// written by `compositeFrame` itself.
   private compositeMsLast = 0;
   private compositeMsMax = 0;
   private upcomingPrewarm: UpcomingClipPrewarmSnapshot | null = null;
@@ -735,13 +726,11 @@ export class Compositor {
 
   /// Adopt a new composition size mid-session.
   ///
-  /// `compositionWidth`/`compositionHeight` used to be constructor-only, so a
-  /// project whose canvas changed while open kept sizing two things for the
-  /// OLD composition: the transition RT pool, and every `ImageOverlaySprite`
-  /// already built (it bakes `maxWidth`/`maxHeight` into its animated-image
-  /// cache key at construction). Neither self-corrects — the transition pool
-  /// only re-sizes when told, and the image sweep only rebuilds a sprite whose
-  /// LAYER went away.
+  /// Two things are sized against the composition and neither self-corrects:
+  /// the transition RT pool (it re-sizes only when told) and every already-built
+  /// `ImageOverlaySprite` (it bakes `maxWidth`/`maxHeight` into its
+  /// animated-image cache key at construction, and the per-frame image sweep
+  /// only rebuilds a sprite whose LAYER went away). Both are handled here.
   setCompositionSize(width: number, height: number): void {
     if (width === this.compositionWidth && height === this.compositionHeight) return;
     this.compositionWidth = width;
@@ -786,10 +775,8 @@ export class Compositor {
     };
   }
 
-  /// PlaybackEngine flips this during rapid scrub. While true,
-  /// `setAnchorTime` is suppressed so the decoder isn't churned by a
-  /// new target on every mouse-move; the canvas still updates via
-  /// `compositeFrame` against whatever is already in the ring.
+  /// PlaybackEngine flips this during rapid scrub; rationale on the
+  /// `scrubbing` field.
   setScrubbing(s: boolean): void {
     this.scrubbing = s;
   }
@@ -1097,7 +1084,6 @@ export class Compositor {
         for (const layer of track.layers) {
           if (!layer.enabled) continue;
           if (layer.params.kind === "Audio") {
-            // Role gating moved off the track (M/S → roles).
             if (!roleAudible(layer.params.role, roles, anySolo)) continue;
             const audio = this.ensureAudio(layer);
             if (audio) {
@@ -1517,8 +1503,8 @@ export class Compositor {
   /// E2E-only (preview-sw conformance): snapshot the decode source + bound
   /// sprite of the active VideoClip named by `layerId` (or the first live
   /// clip when omitted). Returns null when no matching clip is active.
-  /// `sourceKind` is decided by `instanceof` so it is robust to the minified
-  /// E2E build. Read-only — never mutates compositor state.
+  /// `sourceKind` comes from `sourceKindOf`. Read-only — never mutates
+  /// compositor state.
   activeClipProbe(layerId?: string): ActiveClipProbe | null {
     let clip: ActiveClip | undefined;
     if (layerId != null) {
@@ -1617,11 +1603,10 @@ export class Compositor {
   // private
   // ============================================================
 
-  /// Lazily construct the 10-bit ingest. Backend-agnostic (GLSL + WGSL) since
-  /// issue #10 ticket 03: the 10-bit export worker still forces WebGL
-  /// (rgba16float compositing), but the 10-bit VideoToolbox PREVIEW lane rings
-  /// TenBitFrames on the WebGPU-preferring preview renderer too — same
-  /// posture as ensureNv12Ingest.
+  /// Lazily construct the 10-bit ingest. Backend-agnostic (GLSL + WGSL): the
+  /// 10-bit export worker forces WebGL (rgba16float compositing), but the
+  /// 10-bit VideoToolbox PREVIEW lane rings TenBitFrames on the
+  /// WebGPU-preferring preview renderer too — same posture as ensureNv12Ingest.
   private ensureTenBitIngest(): TenBitIngest {
     if (!this.tenBitIngest) {
       this.tenBitIngest = new TenBitIngest(this.app.renderer);
@@ -1813,8 +1798,6 @@ export class Compositor {
           contentFrame: desc.contentFrame,
           contentDurationFrames: desc.contentDurationFrames,
           // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-          // `bakeMotifFrame` (CDP capture, no disk read): the baker is the sole
-          // L2 writer; reading disk-first here would be pointless.
           render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
         });
       }
@@ -1910,14 +1893,9 @@ export class Compositor {
   private ensureClip(layer: LayerSummary): ActiveClip | null {
     if (layer.params.kind !== "VideoClip") return null;
     const existing = this.clips.get(layer.id);
-    // `existing.source` can have been reclaimed by the pool's idle
-    // sweeper (`SourceDecoderPool` disposes handles after
-    // `IDLE_DISPOSE_MS` of no `requestFrameAt` traffic). `setAnchorTime`
-    // only touches `lastUseMs` for the currently active media's handle,
-    // so handles for other media on the timeline are genuine sweep
-    // candidates. When the user returns to one of those clips, the cached
-    // `source` points at a disposed handle whose ring is empty and whose
-    // demuxer samples have been freed — a fresh `pool.acquire()` revives it.
+    // The cached `source` may be a disposed handle — the pool's idle sweep
+    // reclaims any clip the playhead isn't feeding (see `SourceDecoderPool`).
+    // Fall through and re-acquire when it is.
     if (existing && !existing.source.disposed) {
       // No-flash re-resolution: when the resolver's IDENTITY for this media
       // changes (a proxy landed, the engine flipped, or a runtime ffmpeg
@@ -1940,8 +1918,7 @@ export class Compositor {
           this.tenBitIngest?.release(layer.id);
           this.nv12Ingest?.release(layer.id);
           // Same release the `setProject` teardown does, for the same reason —
-          // the orphaned handle can be holding a scarce GPU session. Keep the
-          // two in step; this comment claims they mirror each other.
+          // the orphaned handle can be holding a scarce GPU session.
           this.pool.release(layer.id);
           this.pool.release(swapKeys(layer.id, existing.mediaId).swapLayerId);
           existing.sprite.dispose();
@@ -2281,7 +2258,7 @@ export class Compositor {
       clip.boundFrameDurationUs = selected.durationUs;
       clip.boundFrameSourceKey = clip.builtFromKey;
     } else {
-      // Diagnostic: log when frameAt returns null (painter holds
+      // Diagnostic: log when `selectFrame` returns null (painter holds
       // previous frame). Throttled to "only when this clip's state
       // transitions from has-frame to null" to avoid spamming during
       // a long null window.
@@ -2515,13 +2492,12 @@ export class Compositor {
   ): void {
     if (layer.params.kind !== "Motif") return;
     // Layer-relative time, mirroring `updateImage`. Motifs have no
-    // source-in offset, so this resets to 0 at `t_start` — the intended v1
+    // source-in offset, so this resets to 0 at `t_start` — the intended
     // semantic (a motif animates over its own placed duration).
     const tInLayerUs = tUs - layer.t_start_us;
     const durationUs = layer.t_end_us - layer.t_start_us;
-    // Export mode: pass the baked frames for this layer so the sprite binds by
-    // index synchronously (the Worker has no DOM harness). Undefined in preview
-    // (or if this layer wasn't baked) → the sprite's harness/cache path runs.
+    // Export mode's pre-baked frames for this layer (see `setMotifFrames`).
+    // Undefined in preview, or when this layer wasn't baked.
     const injected = this.motifFrames.get(layer.id);
     tmpl.sprite.update(
       withTransformOverride(layer.id, resolveMotifView(layer.params, tInLayerUs)),

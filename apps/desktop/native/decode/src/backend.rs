@@ -28,8 +28,8 @@ pub struct PreviewGpuOpenInfo {
     pub slots: Vec<PreviewGpuSlot>,
 }
 
-/// Per-metric ms summary of native preview timing (decode-bench Stage 3). Field
-/// names cross to JS as camelCase: `mean_ms` -> `meanMs`, etc.
+/// Per-metric ms summary of native preview timing. Field names cross to JS as
+/// camelCase: `mean_ms` -> `meanMs`, etc.
 #[napi(object)]
 pub struct PreviewGpuTimingSummary {
     pub count: u32,
@@ -54,14 +54,14 @@ pub struct PreviewGpuTimingReport {
     /// Frames the pump discarded as already-late instead of delivering them (see
     /// `preview_gpu::TimingReport::late_frame_drops`).
     pub late_frame_drops: u32,
-    // Round-2 thread time-budget probe (see `preview_gpu::TimingReport`).
+    // Thread time-budget probe (see `preview_gpu::TimingReport`).
     pub inter_emit: PreviewGpuTimingSummary,
     pub inter_ack: PreviewGpuTimingSummary,
     pub recv_block: PreviewGpuTimingSummary,
     pub recv_timeout_ticks: u32,
     pub recv_ack_msgs: u32,
     pub recv_req_msgs: u32,
-    // Round-3 stall attribution (see `preview_gpu::TimingReport`).
+    // Stall attribution (see `preview_gpu::TimingReport`).
     pub eof_returns: u32,
     pub pool_full_returns: u32,
     pub acquire_failed: u32,
@@ -169,11 +169,10 @@ pub struct ExportSwOpenInfoJs {
     pub start_pts_us: f64,
 }
 
-/// One export-decoded frame delivered to JS. Same wire shape as `PreviewSwFrame`
-/// but `format` follows the session's requested output — `"NV12"` (8-bit) or
-/// `"I420P10"` (tightly-packed u16LE planes, `copyToTenBit` layout) — and
-/// delivery is the exactly-once range contract + credit window rather than
-/// best-effort preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
+/// One export-decoded frame delivered to JS. Same wire shape as `PreviewSwFrame`,
+/// but `format` follows the session's requested output and delivery is the
+/// exactly-once range contract + credit window rather than best-effort
+/// preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
 /// `kind == "frame"`; `session_id` is kept here too so the frame stays
 /// self-identifying downstream of the wrapper.
 #[napi(object)]
@@ -191,9 +190,7 @@ pub struct ExportSwFrame {
     pub data: Buffer,
 }
 
-/// Move a decoded export `SwFrame` into its napi wire form. Like
-/// `sw_frame_to_napi`: `Buffer::from(f.data)` takes the `Vec` by value
-/// (zero-copy Rust-side); the single budgeted copy is napi's boundary marshal.
+/// Export twin of `sw_frame_to_napi` (same zero-copy / one-marshal contract).
 fn export_frame_to_napi(session_id: &str, f: crate::preview_sw::decoder::SwFrame) -> ExportSwFrame {
     ExportSwFrame {
         session_id: session_id.to_string(),
@@ -268,8 +265,7 @@ pub fn version_info() -> String {
 /// probe-verdict machinery, not the advertisement, is the gate (same posture as
 /// NVDEC). Resolvers probe ONLY advertised lanes: on Linux, where
 /// `preview_gpu_probe` is a by-design stub returning a "not built" verdict, the
-/// d3d11va lane is never advertised and so is never probed — replacing the old
-/// platform-string guard.
+/// d3d11va lane is never advertised and so is never probed.
 // `allow`, not `expect`: rustc's dead-code pass treats expect(dead_code) on a
 // #[napi] fn as a live root and never registers fulfillment, so expect would
 // warn `unfulfilled_lint_expectations` in the very build it exists for.
@@ -288,9 +284,6 @@ pub fn capabilities() -> Vec<String> {
     lanes.push("d3d11va".to_string());
     #[cfg(target_os = "linux")]
     {
-        // NVDEC is safe to advertise unconditionally — a missing libcuda makes
-        // the probe Err cleanly (no abort). VAAPI is gated on the bundled libva
-        // being loadable + copy-back-capable (see vaapi_copyback_supported).
         lanes.push("nvdec".to_string());
         if crate::preview_sw::decoder::vaapi_copyback_supported() {
             lanes.push("vaapi".to_string());
@@ -298,9 +291,6 @@ pub fn capabilities() -> Vec<String> {
     }
     #[cfg(target_os = "macos")]
     {
-        // VideoToolbox is an OS framework on every supported Mac — safe to
-        // advertise unconditionally; a per-format refusal surfaces as a clean
-        // probe Err (software fallback), never an abort. See the doc above.
         lanes.push("videotoolbox".to_string());
     }
     lanes
@@ -479,7 +469,7 @@ impl NativeDecode {
 
 // ── GPU methods (Windows) ────────────────────────────────────────────────────
 
-/// Native GPU-decode preview command surface (decode-bench Stage 2). Backed by
+/// Native GPU-decode preview command surface. Backed by
 /// `NativeDecode::preview_gpu`; pokes (`FrameReady`/`Eof`/`Error`) surface as
 /// `previewGpu:*` events through the same `events` sink every other channel
 /// uses (wired in the constructor).
@@ -562,9 +552,9 @@ impl NativeDecode {
     /// one-frame decode is self-contained and self-bounding, unlike the
     /// streaming `preview_gpu_open` session. The `D3d11Frame` on success is
     /// dropped immediately (its `Drop` releases the GPU texture); only the
-    /// ok/err verdict is returned. `timeout_ms` is currently advisory (kept
-    /// for API symmetry with the SW probe / design doc) — this synchronous
-    /// primitive has no internal deadline machinery to wire it to.
+    /// ok/err verdict is returned. `timeout_ms` is advisory (kept for API
+    /// symmetry with `preview_hw_probe`) — this synchronous primitive has no
+    /// internal deadline machinery to wire it to.
     #[napi]
     pub fn preview_gpu_probe(
         &self,
@@ -702,9 +692,9 @@ impl NativeDecode {
 // ── SW methods (all platforms) ───────────────────────────────────────────────
 
 /// Native software-decode preview command surface (cross-platform). Backed by
-/// `NativeDecode::preview_sw`; decoded NV12 frames reach JS through the
-/// per-stream `ThreadsafeFunction` registered in `preview_sw_open` and routed
-/// by the single sink installed in the constructor.
+/// `NativeDecode::preview_sw`; decoded frames (NV12 or I420P10, per-frame
+/// `format`) reach JS through the per-stream `ThreadsafeFunction` registered in
+/// `preview_sw_open` and routed by the single sink installed in the constructor.
 #[napi]
 impl NativeDecode {
     /// Open `path` for preview: register the per-stream frame callback, then spawn
@@ -840,10 +830,9 @@ impl NativeDecode {
         r
     }
 
-    /// One-frame decode probe for the SW lane (P1: probes over lists). Opens a
-    /// THROWAWAY stream (never registered in the session registry), decodes one
-    /// frame, closes. Failure is a verdict, not an error — Err only for panics
-    /// worth surfacing.
+    /// One-frame decode probe for the SW lane. Opens a THROWAWAY stream (never
+    /// registered in the session registry), decodes one frame, closes. Failure
+    /// is a verdict, not an error — Err only for panics worth surfacing.
     #[napi]
     pub fn preview_sw_probe(&self, path: String) -> napi::Result<PreviewSwProbeResult> {
         match crate::preview_sw::decoder::SwVideoStream::open(&path) {
@@ -936,12 +925,13 @@ impl NativeDecode {
 
 // ── export-decode methods (all platforms) ────────────────────────────────────
 
-/// Native export software-decode command surface (cross-platform, ADR 0030
-/// export-decode overlay). Backed by `NativeDecode::export_sw`; everything —
-/// decoded frames and the control signals — reaches JS in-band as
-/// [`ExportSwMsg`] on the per-session `ThreadsafeFunction` registered in
-/// `export_sw_open`. The driving contract (open → decodeRange → returnCredit →
-/// close) is what the export Worker's `ExportDecodeSession` handle sits behind.
+/// Native export software-decode command surface (cross-platform; the
+/// export-decode overlay, ADR 0030 and ADR 0033). Backed by
+/// `NativeDecode::export_sw`; everything — decoded frames and the control
+/// signals — reaches JS in-band as [`ExportSwMsg`] on the per-session
+/// `ThreadsafeFunction` registered in `export_sw_open`. The driving contract
+/// (open → decodeRange → returnCredit → close) is what the export Worker's
+/// `ExportDecodeSession` handle sits behind.
 #[napi]
 impl NativeDecode {
     /// Open `path` for export decode into `out_format` (`"NV12"` or

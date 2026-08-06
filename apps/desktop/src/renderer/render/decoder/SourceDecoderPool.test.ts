@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
 //
-// Task 6 (collapsed decode-engine model): `SourceDecoderPool.acquire()`
-// branches on `engine: 'ffmpeg'` to build a `FfmpegSource` (native hardware/
-// software decode, chosen by `resolveDecodeEngine`), falling through to the
-// default WebCodecs `SourceHandle` otherwise. The old per-strategy routing to
-// two separate native decode-handle classes was removed in Task 9 —
-// `FfmpegSource` now owns hardware/software lane selection internally.
+// `SourceDecoderPool.acquire()` branches on `engine: 'ffmpeg'` to build a
+// `FfmpegSource` (native hardware/software decode, chosen by
+// `resolveDecodeEngine`), falling through to the default WebCodecs
+// `SourceHandle` otherwise. `FfmpegSource` owns lane selection internally.
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./transports/GpuTransport", () => ({

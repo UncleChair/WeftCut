@@ -25,10 +25,6 @@ import { LatestRequestCoordinator } from "./latestRequest";
 /// use `useShallow` from `zustand/shallow` at the call site.
 ///
 /// Pre-workspace: `summary` is `null`; consumers should guard.
-///
-/// `useAppWiring` keeps a local-state fetch alongside this store: both
-/// subscribe to `project:changed` and re-fetch independently, with no
-/// cross-talk.
 
 export interface ProjectStoreState {
   summary: ProjectSummary | null;
@@ -110,11 +106,10 @@ export const useProjectStore = create<
 /// once a workspace opens.
 export async function wireProjectStore(): Promise<UnlistenFn> {
   // `project:changed` fires a re-fetch, and `project_summary` is an async IPC
-  // whose responses can resolve out of order (the actor services calls on a
-  // threadpool). A newly issued request invalidates every earlier request
-  // immediately, including while the new response is pending. Otherwise the
-  // older snapshot can still publish in that gap and temporarily regress clip
-  // geometry or media export routing.
+  // whose responses can resolve out of order. A newly issued request
+  // invalidates every earlier request immediately, including while the new
+  // response is pending. Otherwise the older snapshot can still publish in
+  // that gap and temporarily regress clip geometry or media export routing.
   const requests = new LatestRequestCoordinator();
   const refresh = async () => {
     await requests.run(

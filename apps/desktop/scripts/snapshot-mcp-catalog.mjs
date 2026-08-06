@@ -2,9 +2,10 @@
 // (`apps/desktop/fixtures/mcp/rust-catalog-snapshot.json`). This is a DATA
 // FIXTURE, not an oracle — it does NOT touch `fixtures/state-corpus/`. Post
 // state-migration the live `tool_table!` holds only the rust-native surface
-// (ping + clip-audio compute + the hybrid imports); the 47 mutation tools and
-// 6 motif defs are TS-owned. The fixture is the rust-native input to the
-// bijection gate (mcp.catalog-bijection.test.ts), which reconstructs the live
+// (ping, clip analysis + audio compute, speech, and the hybrid imports — the
+// fixture itself is the exact set); the mutation + motif tool tables are
+// TS-owned. The fixture is the rust-native input to the bijection gate
+// (mcp.catalog-bijection.test.ts), which reconstructs the live
 // merged catalog (snapshot ∪ TS tables) and asserts it is a clean
 // catalog↔handler bijection. Regenerate (and re-commit) whenever the Rust
 // `tool_table!` changes; a stale fixture is the one drift this suite can't

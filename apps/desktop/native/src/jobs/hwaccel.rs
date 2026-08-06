@@ -1,8 +1,5 @@
-//! Platform hardware decode helpers for ffmpeg proxy jobs.
-//!
-//! Decode may use GPU-backed ffmpeg hwaccel; encode stays on libx264 for
-//! portable, WebCodecs-friendly proxy output. On failure we fall back to
-//! software decode automatically.
+//! Platform hardware decode helpers for ffmpeg proxy jobs: the per-OS
+//! `-hwaccel` selection and the runner that falls back to software decode.
 
 use std::process::Output;
 
@@ -57,7 +54,7 @@ where
         // LANDMINE: without kill_on_drop, dropping the output() future (tokio
         // runtime shutdown, task abort) ORPHANS the ffmpeg child, which keeps
         // writing the deterministic `<dest>.tmp` — the next build then
-        // interleaves with it and dies at promote (observed live 2026-07-23).
+        // interleaves with it and dies at promote.
         cmd.kill_on_drop(true);
         build(true, &mut cmd);
         let output = cmd

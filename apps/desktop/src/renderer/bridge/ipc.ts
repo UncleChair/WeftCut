@@ -50,6 +50,6 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
 
 export function convertFileSrc(filePath: string): string {
   // Electron custom protocol served by protocol.handle('weftcut-media') in main,
-  // with HTTP Range support (each weftcut-media:// 206 caps at ~1 MB).
+  // with HTTP Range support.
   return `weftcut-media://localhost/${encodeURIComponent(filePath)}`
 }

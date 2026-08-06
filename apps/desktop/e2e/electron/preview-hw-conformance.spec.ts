@@ -21,13 +21,13 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from '.
 //     gate; the matrix/range correctness gate is preview-hw-color.spec.ts.
 // Either way `Compositor.activeClipProbe` reports `sourceKind: "native-gpu"`.
 //
-// PARAMETERIZED BY VARIANT = HW LANE × FIXTURE (issue #5 Block C3; VT lane
-// issue #10). One test() per VARIANTS entry; each launches the app with
-// WEFTCUT_FORCE_HW_LANE=<lane>, which pins main's `decodeCap:probeHw` resolver
-// to consider ONLY that HW lane (plus the software fallback). A variant SKIPS
-// CLEANLY when its lane didn't engage on this machine — e.g. when the addon
-// never advertised the lane, the resolver finds no candidate and falls back to
-// software, so `probe.hwLane === null` and the test skips rather than failing.
+// PARAMETERIZED BY VARIANT = HW LANE × FIXTURE. One test() per VARIANTS entry;
+// each launches the app with WEFTCUT_FORCE_HW_LANE=<lane>, which pins main's
+// `decodeCap:probeHw` resolver to consider ONLY that HW lane (plus the software
+// fallback). A variant SKIPS CLEANLY when its lane didn't engage on this
+// machine — e.g. when the addon never advertised the lane, the resolver finds
+// no candidate and falls back to software, so `probe.hwLane === null` and the
+// test skips rather than failing.
 // This lets the ONE spec run correctly on a box that has NVDEC but not VAAPI
 // (or a Mac, which has only videotoolbox) with no per-machine config. The loop
 // body is variant-agnostic — fixture, artifact names, and the forced lane all
@@ -84,9 +84,7 @@ const OUTER_LANE_PIN = process.env.WEFTCUT_FORCE_HW_LANE
 
 // One test() per variant: a hardware lane × the fixture (codec) it must
 // decode. `id` keys artifacts and log lines (a lane can host several codec
-// variants); `codec` names the clip in the title. Ticket 03 (VT lane) adds
-// { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', ... }
-// with a 1080p30 ProRes/p10 fixture — no loop-body change.
+// variants); `codec` names the clip in the title.
 interface HwVariant {
   lane: 'nvdec' | 'vaapi' | 'd3d11va' | 'videotoolbox'
   id: string
@@ -229,7 +227,7 @@ for (const { lane, id, codec, fixture, frameKind } of VARIANTS) {
         `${lane} not engaged on this machine (hwLane=${probe.hwLane}, sourceKind=${probe.sourceKind}) — lane unavailable`,
       )
 
-      // ── The whole point: the HW copy-back lane engaged and produced the frame ──
+      // ── The whole point: the forced HW lane engaged and produced the frame ──
       expect(probe.sourceKind).toBe('native-gpu')
       expect(probe.hwLane).toBe(lane)
       expect(probe.spriteBound).toBe(true)

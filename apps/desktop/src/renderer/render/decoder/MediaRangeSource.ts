@@ -4,8 +4,8 @@
 // AbortController so disposing the Input cancels in-flight reads.
 //
 // mediabunny's read range is half-open [start, end) (0 <= start < end <
-// fileSize); HTTP Range is inclusive, hence `bytes=start-(end-1)`. The Plan A
-// fixture-parse test confirms this off-by-one empirically.
+// fileSize); HTTP Range is inclusive, hence `bytes=start-(end-1)`. That
+// off-by-one is covered by MediaRangeSource.test.ts.
 
 import { CustomSource, type CustomSourceOptions } from "mediabunny";
 

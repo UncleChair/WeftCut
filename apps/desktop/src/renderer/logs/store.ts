@@ -6,9 +6,8 @@ import { LOG_EVENTS, logList, type LogEntry } from "../ipc";
 /// match the Rust ring. Seeded on mount via `log_list`; live-updated via
 /// the `log:entry` backend event.
 ///
-/// Selectors:
-///   * bar — `{ latest, errorCount, runningCount }`
-///   * console — full filtered slice
+/// Consumers: the status bar reads `latest` / `errorCount` / `runningOps`
+/// (deriving its own running count); the console filters `entries` itself.
 ///
 /// Pre-workspace: backend bus is `None`, so `log_list` returns `[]` and
 /// no `log:entry` events fire. The store sits idle until the user opens
@@ -130,10 +129,9 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
 /// One-shot mount wiring: seed from `log_list`, then subscribe to
 /// `log:entry`. Returns a teardown function.
 ///
-/// Idempotent in practice — the App calls it once in a top-level
-/// `useEffect`. If called twice (HMR), the second call's subscription
-/// replaces the first; the seed is a no-op since the store entries
-/// already mirror the backend.
+/// NOT idempotent: `listen` registers an ADDITIONAL `log:entry` handler per
+/// call, so calling twice without running the first teardown double-appends
+/// every entry. The App calls it once from a top-level `useEffect`.
 export async function wireLogStream(): Promise<UnlistenFn> {
   try {
     const initial = await logList();

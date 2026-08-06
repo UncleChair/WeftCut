@@ -1,8 +1,8 @@
 // Decode-path resolvers over the per-source Decode Route. The DecodeRoute TYPE
 // itself lives in src/shared/decode-route.ts (carried by both the main-process
 // MediaItem and the renderer MediaSummary); it is re-exported here so existing
-// renderer imports (`from "./decodeRoute"`) keep working. resolveDecode is the
-// one place the route maps to decode paths. See docs/adr/0028 and CONTEXT.md.
+// renderer imports (`from "./decodeRoute"`) keep working.
+// See docs/adr/0028 and CONTEXT.md.
 
 import type { DecodeRoute } from "../../shared/decode-route";
 

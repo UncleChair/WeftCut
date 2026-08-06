@@ -1,7 +1,5 @@
 //! Extract a `[in_us, out_us)` audio slice from a source media file as
-//! mono 16 kHz 16-bit PCM WAV — the canonical input shape for OpenAI Whisper
-//! and the natural lowest-common-denominator for any future transcription
-//! provider we add.
+//! mono 16 kHz 16-bit PCM WAV (see `SAMPLE_RATE_HZ`).
 //!
 //! Output is content-addressed and reused across calls. Hash composition is
 //! `blake3([source_hash.as_bytes(), in_us.to_le_bytes(), out_us.to_le_bytes()].concat())` —
@@ -30,8 +28,9 @@ use crate::process::NoConsoleWindow;
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::jobs;
 
-/// Whisper (and Deepgram/AssemblyAI) input rate. 16 kHz mono is the smallest
-/// shape that keeps transcription accuracy.
+/// The input rate every backend we drive takes (OpenAI Whisper, whisper.cpp,
+/// FunASR): 16 kHz mono is the smallest shape that keeps transcription
+/// accuracy.
 pub const SAMPLE_RATE_HZ: u32 = 16_000;
 
 /// Slice `[in_us, out_us)` of `source` into a mono 16 kHz WAV and return
@@ -198,10 +197,9 @@ mod tests {
         Ok((channels, sample_rate, bits_per_sample))
     }
 
-    /// Real-ffmpeg smoke per `memory/feedback_emit_smoke_tests.md`: string-
-    /// matching the args is not enough — invoke the tool and verify the
-    /// output. Extracts a 2-sec mono slice from a 5-sec stereo source and
-    /// checks the WAV header.
+    /// Real-ffmpeg smoke: string-matching the args is not enough — invoke the
+    /// tool and verify the output. Extracts a 2-sec mono slice from a 5-sec
+    /// stereo source and checks the WAV header.
     #[tokio::test]
     async fn audio_extract_window_roundtrip_against_real_ffmpeg() {
         if !ffmpeg_available() {

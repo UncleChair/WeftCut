@@ -1,5 +1,5 @@
 //! Export audio mixer — MixPlan construction from the project and the
-//! block-pull summing loop. Replaces the lavfi audio IR (ADR 0019).
+//! block-pull summing loop. See ADR 0019.
 //!
 //! Time discipline: everything converts to the 48 kHz frame domain ONCE via
 //! `us_to_frame`, then all placement/trim math is integer frames — the audio
@@ -19,10 +19,8 @@ use crate::state::Project;
 pub const MIX_SAMPLE_RATE: i64 = 48_000;
 pub const MIX_BLOCK_FRAMES: usize = 65_536;
 
-/// µs → 48 kHz frame index, round-half-up. Single-sourced in the `weftcut-eval`
-/// leaf (shared with the renderer's preview scheduler `chunkSchedule.ts` via
-/// wasm) so export and preview place audio on the same grid; `MIX_SAMPLE_RATE`
-/// is the conform rate.
+/// µs → 48 kHz frame index, round-half-up — see `weftcut_eval::us_to_frame`.
+/// `MIX_SAMPLE_RATE` is the conform rate.
 pub fn us_to_frame(us: i64) -> i64 {
     weftcut_eval::us_to_frame(us, MIX_SAMPLE_RATE as u32)
 }
@@ -36,7 +34,7 @@ pub struct MixLayer {
     /// Source in/out on the conform frame grid.
     pub src_in_frame: i64,
     pub src_out_frame: i64,
-    /// Linear gain (gain_db × fades), layer-local time domain.
+    /// Linear gain (gain_db × fades × role gain), layer-local time domain.
     pub gain: Envelope,
     pub pan: Envelope,
 }
@@ -70,7 +68,8 @@ pub enum PlanError {
 // (gate) and `plan_for_project` (gain fold) call these, so the logic the export
 // path runs IS the logic the cross-language golden locks
 // (`render/audio/roleGate.golden.test.ts` + `tests::golden_vectors_match_fixture`
-// share one fixture). Keep BYTE-FOR-BYTE in step with roleGate.ts.
+// share one fixture). Both sides call the same weftcut-eval leaf, so that golden
+// is a wasm smoke, not a hand-mirror drift guard.
 
 // The mute/solo decision + dB→linear math live in the weftcut-eval leaf (shared
 // with the renderer's audio-preview gating via wasm). These wrappers keep the
@@ -83,10 +82,9 @@ pub fn any_role_solo<'a>(roles: impl IntoIterator<Item = &'a RoleMixSettings>) -
     weftcut_eval::any_role_solo(roles.into_iter().map(|r| r.solo))
 }
 
-/// A role is audible unless muted, or a solo set exists and it isn't soloed —
-/// mute wins over solo. `role` is the RESOLVED settings (present, or the
-/// `Project::role_mix` default for an absent role); resolving the absent case is
-/// the caller's job, matching `role_mix`.
+/// `role` is the RESOLVED settings (present, or the `Project::role_mix` default
+/// for an absent role); resolving the absent case is the caller's job, matching
+/// `role_mix`. The rule itself lives on `weftcut_eval::role_audible`.
 pub fn role_audible(role: &RoleMixSettings, any_solo: bool) -> bool {
     weftcut_eval::role_audible(role.muted, role.solo, any_solo)
 }
@@ -110,13 +108,10 @@ fn audible_audio_layers<'a>(
     w_start_us: i64,
     w_end_us: i64,
 ) -> Vec<(&'a Layer, &'a AudioParams)> {
-    // Role-level solo (docs/audio.md): when any role is soloed, only
-    // soloed roles are audible. Mute wins over solo.
     let any_solo = any_role_solo(project.audio_roles.values());
     let mut out = Vec::new();
     for track in project.tracks.iter() {
-        // Whole-track disable still gates (rule 1). Track mute/solo no
-        // longer gate audio — that moved to roles.
+        // Whole-track disable still gates (rule 1).
         if !track.enabled {
             continue;
         }

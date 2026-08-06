@@ -5,8 +5,8 @@ export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
   | { kind: 'Track'; id: Uuid } | { kind: 'Layer'; id: Uuid } | { kind: 'Marker'; id: Uuid }
 
-/** native/src/state/project.rs:151-162 TrackFlagsPatch — preference-shaped track
- *  toggles. null/absent = "don't touch". */
+/** Mirrors `TrackFlagsPatch` in apps/desktop/native/src/state/project.rs —
+ *  preference-shaped track toggles. null/absent = "don't touch". */
 export interface TrackFlagsPatch { enabled?: boolean | null; muted?: boolean | null; solo?: boolean | null; locked?: boolean | null }
 
 /** native/src/state/audio_role.rs:67 RoleFlagsPatch — the Mixer panel's M/S
@@ -32,8 +32,8 @@ export interface HistoryStatus {
 
 const DEFAULT_CAP = 200
 
-/** 1:1 port of native/src/state/history.rs. Ids/timestamps are injected by the
- *  actor (which owns the deterministic counter) rather than minted here. */
+/** Ids/timestamps are injected by the actor (which owns the deterministic
+ *  counter) rather than minted here. */
 export class History {
   private snapshots: HistoryEntry[] = []
   private cursor = 0
@@ -46,8 +46,8 @@ export class History {
     this.cursor = 0
   }
 
-  /** native/src/state/history.rs:318 reset — discard the stack + checkpoints +
-   *  lock, seed a fresh single 'Initial' entry. Used by replace_state on a
+  /** Discard the stack + checkpoints + lock, seed a fresh single 'Initial'
+   *  entry. Used by replace_state on a
    *  project swap: the prior project's snapshots/checkpoints reference a
    *  different project_id and are incoherent against the new state. */
   reset(initial: Project, actor: Actor, opId: Uuid, timestamp = '<TS>'): void {
@@ -98,21 +98,21 @@ export class History {
   listCheckpoints(): NamedCheckpoint[] {
     return [...this.checkpoints.values()].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
   }
-  /** Presence peek (history.rs:149 `checkpoints.get(&id)?`). The actor checks
-   *  this BEFORE minting the restore op_id, so a CheckpointNotFound restore
-   *  burns zero ids — matching Rust, where `new_id()` sits after the `get?`. */
+  /** Presence peek. The actor checks this BEFORE minting the restore op_id, so
+   *  a CheckpointNotFound restore burns zero ids. */
   hasCheckpoint(id: Uuid): boolean { return this.checkpoints.has(id) }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged
    *  (project_settings_patch_convention). The track-flag variant is
-   *  replaceTrackFlagsEverywhere; the audio-role-flag variant is not yet ported. */
+   *  replaceTrackFlagsEverywhere, the audio-role-flag one
+   *  replaceRoleFlagsEverywhere. */
   replaceSettingsEverywhere(settings: ProjectSettings): void {
     for (const e of this.snapshots) e.snapshot = { ...e.snapshot, settings: { ...settings } }
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, settings: { ...settings } }
   }
 
-  /** native/src/state/history.rs:281-292 — patch one track's flags into EVERY
-   *  snapshot + checkpoint where the track exists; skip snapshots that lack it;
+  /** Patch one track's flags into EVERY snapshot + checkpoint where the track
+   *  exists; skip snapshots that lack it;
    *  cursor unchanged; never recorded (project_settings_patch_convention). */
   replaceTrackFlagsEverywhere(trackId: Uuid, patch: TrackFlagsPatch): void {
     const patchTrack = (p: Project): Project => {
@@ -129,8 +129,7 @@ export class History {
     for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
   }
 
-  /** native/src/state/history.rs:300 replace_role_flags_everywhere (via apply_role_flags
-   *  history.rs:370) — patch one audio role's mute/solo into EVERY snapshot + checkpoint.
+  /** Patch one audio role's mute/solo into EVERY snapshot + checkpoint.
    *  Roles ALWAYS exist (absent → RoleMixSettings default {gain_db:0,muted:false,solo:false}),
    *  so unlike tracks there is NO skip-when-absent branch: the patch applies unconditionally.
    *  gain_db is preserved (only mute/solo are preference-shaped). cursor unchanged; never
@@ -147,8 +146,8 @@ export class History {
     for (const cp of this.checkpoints.values()) cp.snapshot = apply(cp.snapshot)
   }
 
-  /** native/src/state/history.rs:225 — set `media_pool` on EVERY snapshot +
-   *  checkpoint. Media imports live OUTSIDE the editing undo/redo stack, so the
+  /** Set `media_pool` on EVERY snapshot + checkpoint.
+   *  Media imports live OUTSIDE the editing undo/redo stack, so the
    *  pool must be durable across undos/redos through unrelated edits (cursor
    *  unchanged; never recorded — project_settings_patch_convention). */
   replaceMediaPoolEverywhere(pool: Record<string, MediaItem>): void {
@@ -156,8 +155,7 @@ export class History {
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, media_pool: pool }
   }
 
-  /** Supersedes native/src/state/history.rs:246 replace_composition_canvas: the
-   *  WHOLE composition envelope is preference-shaped now (docs/features.md
+  /** The WHOLE composition envelope is preference-shaped (docs/features.md
    *  #undo-stack-scope), so `set_composition` never records and instead runs its
    *  patch over EVERY snapshot + checkpoint (cursor unchanged).
    *
@@ -173,11 +171,7 @@ export class History {
   }
 
   /** Does ANY stored snapshot or checkpoint hold a layer? The history-scope half
-   *  of the fps rate lock (spec R2-D1): because an fps change is unrecorded it
-   *  lands in every stored snapshot, so judging the lock on the CURRENT state
-   *  alone would let `undo` (or `restore_checkpoint`) resurrect layers that were
-   *  authored on the old grid into a project now running at the new rate — a
-   *  state no validate pass ever sees. Judgement scope must equal write scope.
+   *  of the fps rate lock — see docs/features.md #undo-stack-scope.
    *
    *  `snapshots` includes the cursor's own entry, so this subsumes the current
    *  state; the actor tests the current layer count first only to report WHICH

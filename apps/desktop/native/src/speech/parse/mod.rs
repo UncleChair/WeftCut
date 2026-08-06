@@ -8,9 +8,6 @@
 //! - Here, [`parse_raw`] dispatches that tag to the matching
 //!   [`TranscriptParser`] — [`srt::SrtParser`], [`whisper_json::WhisperJsonParser`],
 //!   or [`funasr_json::FunAsrParser`] (sherpa-onnx-offline / FunASR Paraformer).
-//!
-//! The tool layer only ever calls [`parse_raw`]; it never needs to know which
-//! parser runs.
 
 use super::error::SpeechError;
 use super::transcript::Transcript;

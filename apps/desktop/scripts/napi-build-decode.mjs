@@ -1,16 +1,10 @@
 // Builds @weftcut/native-decode with the env ffmpeg-next needs. Precedence:
 // explicit FFMPEG_DIR env > fetched resources/ffmpeg-lgpl/<os> (canonical).
 //
-// Runtime shared-library resolution is per-OS (see docs/adr/0030):
-//   - Windows: main/native-decode.ts prepends the bundled bin/ (*.dll) to PATH
-//     at dlopen; nothing to bake into the addon.
-//   - Linux: ld.so resolves the addon's NEEDED libav*.so at dlopen time from
-//     the ELF RUNPATH — an in-process LD_LIBRARY_PATH prepend is unreliable. So
-//     we bake RUNPATH=$ORIGIN into the .node and co-locate the *.so beside it.
-//   - macOS: dyld resolves the addon's NEEDED libav*.dylib via their
-//     @loader_path install names (rewritten at fetch time — see
-//     fetch-ffmpeg-lgpl.mjs rewriteMacInstallNames), so nothing is baked into
-//     the .node; we only co-locate the *.dylib beside it.
+// Also owns the Linux link flags and the dev-time co-location of the runtime
+// shared libraries beside the .node; the per-OS resolution rationale lives at
+// those two blocks below. macOS install names are rewritten upstream by
+// fetch-ffmpeg-lgpl.mjs (rewriteMacInstallNames). See docs/adr/0030.
 import { existsSync, readFileSync, readdirSync, copyFileSync, lstatSync, symlinkSync, readlinkSync, rmSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'

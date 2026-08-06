@@ -61,10 +61,7 @@ export function secondaryWindowConfig(
     // Show on create: a framed window surfaces reliably, and backgroundColor
     // avoids a white flash.
     show: true,
-    // A popup that draws its own caption (decorations:false) is frameless on
-    // Win/Linux. On macOS we instead keep the frame + hide only the titlebar so
-    // the NATIVE traffic lights remain — otherwise, with the renderer's own
-    // caption buttons suppressed on macOS, the popup would be un-closable.
+    // See `titleBarStyle` above for why macOS keeps the frame.
     frame: frameless && !isMac ? false : true,
     ...(frameless && isMac
       ? {

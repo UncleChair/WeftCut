@@ -10,10 +10,11 @@
 //! so there is no cross-process coordination and two overlapping sweeps are
 //! harmless (all deletes are best-effort).
 //!
-//! Deliberately NOT swept: `proxies/` (minutes to regenerate), `audio/`
-//! conform PCM (playback-critical), `voiceover/` + `transcribe-audio/`
-//! (eviction re-pays API cost), `frames/` (small until MCP-driven extraction
-//! gets heavy), `inline-subs/` (unused scaffolding).
+//! Nothing else under `Cache/` is swept — the rule is cheap-to-regenerate
+//! only. Every other dir is either expensive to rebuild (`proxies/`, `audio/`
+//! conform PCM, `shots/`), re-pays an API cost on eviction (`voiceover/`,
+//! `transcribe-audio/`, `descriptions/`), or too small to be worth the risk
+//! (`frames/`, `inline-subs/`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,9 +43,8 @@ pub struct SweepReport {
 }
 
 /// Debounce latch for scheduled sweeps: `try_schedule` returns true only for
-/// the caller that should spawn the sweep task; `finish` re-arms it (called
-/// when the debounce window closes, BEFORE the walk runs, so writes landing
-/// during a long walk can schedule the next one).
+/// the caller that should spawn the sweep task; `finish` re-arms it. The
+/// re-arm ordering is load-bearing — see `CacheLayout::schedule_sweep`.
 #[derive(Debug, Default)]
 pub struct SweepState {
     scheduled: AtomicBool,

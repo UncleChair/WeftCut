@@ -139,7 +139,7 @@ async function main() {
   win.webContents.setBackgroundThrottling(false)
 
   // Register the 'ready' listener BEFORE loadFile — the renderer fires it during
-  // page load, which can beat a post-load registration (the hang we just saw).
+  // page load, which can beat a post-load registration.
   const readyP = once('ready')
   await win.loadFile(path.join(__dirname, 'index.html'))
   const delay = (ms) => new Promise((r) => setTimeout(r, ms))

@@ -138,9 +138,6 @@ export function KeyframeLane({
       if (ev.key !== "Delete" && ev.key !== "Backspace") return;
       const sel = getSelectedKeyframe();
       if (!sel || !layerIds.has(sel.layerId)) return;
-      // Same preemptor family as LayerBlock's diamond and Timeline's transition
-      // chip: it wins Delete by bypassing the dispatcher, so it owes the
-      // dispatcher's stand-down rules.
       if (subSelectionDeleteYields(ev.target)) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();

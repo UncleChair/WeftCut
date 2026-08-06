@@ -3,7 +3,7 @@ import type { Rational, TimeUs, Uuid } from './model'
 // module into every consumer of errors.ts.
 import type { GridDomain } from './snap'
 
-// ── ValidationError — mirrors native/src/state/validate.rs variants ──
+// ── ValidationError — the variants raised by ./validate.ts ──
 export type ValidationError =
   | { rule: 'InvalidCanvas'; width: number; height: number }
   | { rule: 'InvalidFps'; num: number; den: number }
@@ -85,16 +85,11 @@ export type CommandError =
   // An fps change re-snaps every layer edge, Motif `src_in_us`, the composition
   // duration and every marker: each edit point moves by up to half a new frame and
   // a short layer can collapse and reject the whole operation. So the rate is
-  // immutable once the timeline holds a layer.
+  // immutable once the timeline holds a layer. Scope and escape hatch:
+  // docs/features.md #undo-stack-scope.
   //
-  // Deliberately a hard rejection, not a confirmation flag or a convert workflow —
-  // the same shape Premiere and Resolve both settled on (their rate field greys out
-  // once the timeline, respectively the media pool, is non-empty; the prescribed
-  // escape is a fresh timeline, never an undo). `layer_count` is the blocking
-  // condition made legible, and `current` tells the caller what rate it is stuck
-  // with without a second round trip. Rate conversion, if ever wanted, is
-  // `duplicate timeline → convert` with the rounding previewed — a feature of its
-  // own, not a settings patch.
+  // `layer_count` is the blocking condition made legible, and `current` tells the
+  // caller what rate it is stuck with without a second round trip.
   //
   // `locked_by` names the SCOPE that blocked, because the judgement spans the
   // stored history, not just the live state (see setComposition): `current` = the

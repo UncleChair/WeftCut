@@ -419,11 +419,8 @@ mod tests {
             ],
         });
 
-        // Output into a not-yet-created nested dir. Audio-only export targets
-        // the dialog's location (`<workspace>/output`), which may not exist on
-        // first export; mix_and_encode must create it. Regression guard: ffmpeg
-        // used to die with a broken-pipe on the PCM write when the dir was
-        // missing (it couldn't open the output file).
+        // Output into a not-yet-created nested dir: `mix_and_encode` must create
+        // the output dir.
         let out = tmp.path().join("nested").join("output").join("mix.m4a");
         let spec = super::AudioEncodeSpec {
             codec: "aac".into(),
@@ -465,11 +462,10 @@ mod tests {
     }
 
     /// Regression for the no-audio export path: `mux_to_file` must NOT
-    /// pass `-i audio_path` to ffmpeg when the audio file doesn't
-    /// exist. The previous shape always emitted both `-i`s, so projects
-    /// with no audio layers (where `export_audio_only` early-returns
-    /// without writing an audio temp file) failed at the mux step with
-    /// "No such file or directory".
+    /// pass `-i audio_path` to ffmpeg when the audio file doesn't exist.
+    /// Projects with no audio layers (where `export_audio_only` early-returns
+    /// without writing an audio temp file) would otherwise fail at the mux
+    /// step with "No such file or directory".
     #[test]
     fn mux_args_omits_audio_input_when_audio_missing() {
         let tmp = TempDir::new().unwrap();

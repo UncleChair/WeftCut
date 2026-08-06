@@ -1,9 +1,8 @@
 //! Cheap proxy-routing policy for imported video.
 //!
-//! This is intentionally conservative. A source is bypassed only when it is
-//! already close to the editor's proxy contract: H.264, <=1080p, 8-bit
-//! browser-friendly pixel format, and moderate bitrate. Everything else gets
-//! a generated proxy path so scrub/decode behavior stays predictable.
+//! Intentionally conservative: the bypass criteria live in
+//! `source_is_safe_to_bypass`, and every source that misses them gets a
+//! generated proxy path so scrub/decode behavior stays predictable.
 
 use crate::state::{DecodeRoute, MediaItem, MediaKind};
 
@@ -30,13 +29,14 @@ pub enum PreviewSource {
     /// The original scrubs acceptably; preview reads it directly.
     Original,
     /// WebCodecs can't decode the original on any machine, but a native
-    /// ffmpeg software decoder can — the whole WebCodecs-blind family
-    /// (ProRes / DNxHD / MPEG-2 / VC-1 / WMV3, see `codec_is_blindspot`)
-    /// previews through that decoder, no proxy needed for preview. Export
-    /// still routes through the full proxy master (see `decide`).
+    /// ffmpeg software decoder can — the whole WebCodecs-blind family (see
+    /// `codec_is_blindspot`) previews through that decoder, no proxy needed
+    /// for preview. Export still routes through the full proxy master (see
+    /// `decide`).
     NativeFfmpeg,
-    /// Original is heavy / long-GOP / undecodable; preview reads a proxy (the
-    /// quick scrub proxy, or the full proxy for small undecodable sources).
+    /// Original is heavy / long-GOP / undecodable; preview reads the quick
+    /// scrub proxy, falling back to the full master only while the quick proxy
+    /// is unbuilt.
     Proxy,
 }
 
@@ -86,9 +86,10 @@ pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
     let mut route = ProxyRoute { export, preview };
     // WebCodecs-blind families (ProRes/DNxHD/MPEG-2/VC-1/WMV3) are never
     // `export_decodable_statically` nor `source_is_safe_to_bypass`, so the two
-    // branches above always land them on `BOTH_PROXY`. A native ffmpeg SW decoder
-    // previews them directly, so override the preview axis here; export still
-    // routes through the full proxy master.
+    // branches above always land them on `ProxyRoute { export: FullProxy,
+    // preview: Proxy }`. A native ffmpeg SW decoder previews them directly, so
+    // override the preview axis here; export still routes through the full
+    // proxy master.
     if media
         .metadata
         .video
@@ -234,8 +235,7 @@ pub fn codec_is_av1(codec: &str) -> bool {
     matches!(codec.to_ascii_lowercase().as_str(), "av1" | "av01")
 }
 
-/// ProRes: never WebCodecs-decodable. One of the WebCodecs-blind codecs that
-/// `codec_is_blindspot` routes to native SW preview instead of a full proxy.
+/// Member of the `codec_is_blindspot` family.
 pub fn codec_is_prores(codec: &str) -> bool {
     codec.eq_ignore_ascii_case("prores")
 }
@@ -377,9 +377,8 @@ mod tests {
     #[test]
     fn av1_8bit_exports_original_previews_proxy() {
         // 8-bit AV1: the export Worker hardware-decodes it (verified in-app), so
-        // export reads the original (DirectExport). Preview still uses a quick
-        // proxy (bypass is H.264-only). Long GOP here
-        // (6 GB / 600 s) so it's not safe_to_bypass → preview proxy.
+        // export reads the original (DirectExport). Bypass is H.264-only, so
+        // preview still reads a quick proxy whatever the GOP.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "av01".into();
             m.metadata.duration_us = Some(600_000_000);
@@ -462,7 +461,7 @@ mod tests {
 
     #[test]
     fn h264_friendly_still_bypasses_not_native() {
-        // Sanity check that the new ProRes branch doesn't leak into the
+        // Sanity check that the blindspot-family override doesn't leak into the
         // ordinary bypass path: friendly H.264 still previews from Original.
         let r = decide(&video(|_| {}), Some(0.2));
         assert_eq!(r.preview, PreviewSource::Original);
@@ -481,11 +480,8 @@ mod tests {
 
     #[test]
     fn full_range_h264_yuvj420p_routes_like_yuv420p() {
-        // yuvj420p is the legacy "J" alias for full-range 8-bit 4:2:0 — the
-        // same stream WebCodecs already decodes (verified in-app). The
-        // decode side reads the source's ffprobe range via sourceColor, so
-        // full-range H.264 DirectExports faithfully (color gate). Excluding
-        // it only bought a pointless proxy hop.
+        // yuvj420p routes exactly like yuv420p — see
+        // `pix_fmt_is_browser_friendly` and ADR 0014.
         assert_eq!(
             decide(
                 &video(|m| {
@@ -528,11 +524,8 @@ mod tests {
 
     #[test]
     fn fresh_video_import_runs_the_routing_decision() {
-        // REGRESSION: a freshly probed video must NOT start on Bypass. enqueue_for_media
-        // reads Bypass as "routing already decided → decorations only", so a Bypass
-        // default means spawn_proxy_decision never runs and a non-WebCodecs source
-        // (qtrle/ProRes/MJPEG) is stuck decoding an undecodable original forever
-        // (no proxy ever built). The fresh-video route must trigger the decision.
+        // REGRESSION: a freshly probed video must NOT start on Bypass — see
+        // `initial_decode_route`.
         assert!(route_needs_decision(&initial_decode_route(
             MediaKind::Video
         )));

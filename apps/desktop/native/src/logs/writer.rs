@@ -24,10 +24,7 @@ const RETAIN_SESSIONS: usize = 20;
 /// when the bus drops.
 pub async fn run(logs_dir: PathBuf, mut rx: mpsc::Receiver<LogEntry>) {
     if let Err(e) = fs::create_dir_all(&logs_dir).await {
-        // No bus to log into — direct tracing line. The status/log
-        // surface itself is broken; the user's only recourse is the
-        // app's stderr log. We mark this with a stable target so the
-        // future `[[feedback]]` is greppable.
+        // No bus yet — warn on the stable `logs::writer` target.
         tracing::warn!(target: "logs::writer", "create_dir_all failed: {e:#}");
         return;
     }

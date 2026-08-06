@@ -20,8 +20,8 @@ function setup() {
 
 describe('actor checkpoint surface', () => {
   it('checkpoint returns an id that appears in the projected list shape', () => {
-    // (The exact id-burn count is corpus-gated in Task 2 via the trailing-op
-    // technique; this test pins the return value + the {id,label,actor,created_at} shape.)
+    // (The exact id-burn count is covered by the corpus gate; this test pins the
+    // return value + the {id,label,actor,created_at} shape.)
     const { actor } = setup()
     const cp = actor.checkpoint('cp1')
     expect(actor.listCheckpoints()).toEqual([{ id: cp, label: 'cp1', actor: { kind: 'User' }, created_at: '<TS>' }])

@@ -457,10 +457,7 @@ export function TrackLane({
           lane's `relative` box — geometry identical in both states. */}
       <div className={track.enabled ? "contents" : "pointer-events-none opacity-40"}>
       {(() => {
-        // Compute per-layer slice once per track render. Layers
-        // with a co-located opposite-class layer render half-height
-        // (top for visual, bottom for audio) so the user sees both in
-        // one row. Single-class layers fill the row at full height.
+        // Compute per-layer slice once per track render (see `LayerSlice`).
         const sliceLayers = duplicatePreview
           ? [...renderedLayers, duplicatePreview.sliceLayer]
           : renderedLayers;

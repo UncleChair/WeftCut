@@ -4,9 +4,7 @@
 // map. Distinct from the (retiring) "session bridge" term — see CONTEXT.md.
 //
 // HW/SW lane session state, the seek-validated codec allow-list, and the
-// sticky per-media runtime-failure markers live in ffmpegCapability.ts —
-// `FfmpegSource` owns lane selection there, and the Compositor calls
-// `markFfmpegUnusable` directly on a total ffmpeg-engine failure.
+// sticky per-media runtime-failure markers live in ffmpegCapability.ts.
 import { logEmit, type LogEntryInput } from "../../ipc";
 
 const lastLoggedKey = new Map<string, string>();

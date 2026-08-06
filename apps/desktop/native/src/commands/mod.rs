@@ -2,8 +2,7 @@
 //!
 //! The TS state actor is the sole writer, so no mutation / history / query /
 //! persistence handlers live here — only the native / compute handlers +
-//! their args. There is no response *view* builder and no actor-mutation
-//! wrapper.
+//! their args.
 
 #[cfg(feature = "speech")]
 use serde::Serialize;
@@ -24,7 +23,7 @@ pub struct ApiKeyStatus {
     pub configured: bool,
 }
 
-// ---- Command args structs (surviving native/compute/read handlers) ----
+// ---- Command args structs ----
 
 #[cfg(feature = "jobs")]
 #[derive(serde::Deserialize)]
@@ -33,8 +32,8 @@ pub struct MediaIdArgs {
     pub media_id: String,
 }
 
-/// Args for the single-media compute channels that now receive the resolved
-/// `MediaItem` from the TS host (the sole state owner) instead of a bare id.
+/// Args for the single-media compute channels: the TS host (sole state owner)
+/// passes the resolved `MediaItem`.
 #[cfg(feature = "jobs")]
 #[derive(serde::Deserialize)]
 pub struct MediaItemArgs {

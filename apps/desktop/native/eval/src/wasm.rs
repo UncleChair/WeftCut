@@ -177,8 +177,8 @@ pub extern "C" fn set_n_rgba(n: i32) {
     }
 }
 
-/// Upload one COLOR keyframe. `packed` is RGBA8 (`(r<<24)|(g<<16)|(b<<8)|a`).
-/// `interp` codes + p1/p2 semantics match `set_kf`.
+/// Upload one COLOR keyframe. `packed` layout is documented at the color-track
+/// buffer above; `interp` codes + p1/p2 semantics match `set_kf`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn set_kf_rgba(

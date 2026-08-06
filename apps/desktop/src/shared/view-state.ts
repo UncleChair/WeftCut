@@ -1,7 +1,6 @@
-// Per-workspace timeline view state (zoom + per-track heights + expanded
-// keyframe sub-lanes), shared by the Electron main process (persistence owner,
-// src/main/view-state.ts) and the renderer (consumer via ipc / useTimelineView).
-// One definition → no main↔renderer drift. Persisted at <workspace>/view.json.
+// Per-workspace timeline view state, shared by the Electron main process
+// (persistence owner, src/main/view-state.ts) and the renderer (consumer via
+// ipc / useTimelineView). One definition → no main↔renderer drift.
 //
 // UI-only knobs: deliberately NOT part of project.json so zooming the timeline
 // never dirties the project document, pushes an undo entry, or shows up on the

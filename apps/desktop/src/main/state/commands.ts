@@ -1,71 +1,16 @@
 // apps/desktop/src/main/state/commands.ts
 // Production command adapter: translates the renderer's real category-A
 // channels + camelCase wire args into the gated TS actor mutation core.
-// The byte-exact prod-differential gate is the backstop for every mapping.
-
-// ── Production param builder facts ──────────────────────────────────────────
-//
-// add_color_layer_impl:
-//   color    → Rgba::BLACK = {r:0,g:0,b:0,a:255}
-//   width    → snap.composition.width
-//   height   → snap.composition.height
-//   duration → DEFAULT_LAYER_DURATION_US (5_000_000 µs, floor .max(100_000))
-//   trackId  → resolve_overlay_track() when absent (find free non-reserved track
-//               or create new "Overlay" track)
-//
-// add_text_layer_impl:
-//   content  → "Text"
-//   font     → family:"Arial", size_px:72.0, weight:400, italic:false
-//   color    → Rgba::WHITE = {r:255,g:255,b:255,a:255}
-//   align    → TextAlign::Center
-//   backend  → TextBackend::DrawText
-//   duration → DEFAULT_LAYER_DURATION_US (5_000_000 µs, floor .max(100_000))
-//   trackId  → resolve_overlay_track() when absent
-//
-// add_media_layer:
-//   track_id  → required (no fallback)
-//   total_src → media.metadata.duration_us ?? 2_000_000
-//               (normalized content duration; container start PTS is hidden)
-//   Video   → videoClipParams(media,0,total_src), span=total_src
-//   Audio   → audioParams(media,0,total_src) role=Music, span=total_src
-//   Image   → imageOverlayParams(media), span=image_layer_span_us()
-//             (still→3_000_000; animated→metadata.duration_us if >0 and
-//              multi-frame OR >=500_000, else 3_000_000)
-//   auto-pair: fires when kind==Video AND metadata.audio.is_some() AND
-//              project.settings.auto_pair_audio_on_import==true. THREE
-//              separate commits — video-layer-add, audio-layer-add
-//              (role=dialogue), groups_create — in that id-allocation order
-//              (the add_media_layer arm in actor.ts; three op_ids matching
-//              Rust's three handle calls). NOT exercised by the differential
-//              corpus (mediaItemTemplate sets audio:null).
-//
-// add_demo_color_layer:
-//   track   → tracks.front() (first track; create "Track" if empty)
-//   t_start → track.layers.last().t_end_us ?? 0
-//   t_end   → t_start + 2_000_000
-//   color   → demo_color(track.layers.len()) — 6-color palette cycled by index
-//   w/h     → composition size
-//
-// add_demo_text_layer:
-//   track   → tracks.last() (last track; create "Overlay" if empty)
-//   t_start → track.layers.last().t_end_us ?? 0
-//   t_end   → t_start + 3_000_000
-//   content → "TEXT", font Arial 96 weight:700 italic:false
-//   color   → WHITE, align Center, backend DrawText
-//
-// resolve_overlay_track:
-//   scan tracks in REVERSE order, non-reserved only (role==null), find first
-//   with no layer overlap in [t_start, t_end); if none → add_track("Overlay")
-//
-// DEFAULT_LAYER_DURATION_US = 5_000_000
-// ────────────────────────────────────────────────────────────────────────────
+// Param defaults live on the builders below; multi-commit sequencing (and its
+// op_id ordering) lives in the matching actor.ts arm. Routing is pinned by
+// __tests__/prod.routing.test.ts and __tests__/commands.test.ts.
 
 import type { LayerParams, Project, Rgba } from './model'
 import { defaultTransform } from './mutations/add'
 import { videoClipParams, audioParams, imageOverlayParams } from './mutations/media'
 import { parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
 
-/** demo_color palette: 6-color cycle by layer index. */
+/** 6-color palette cycled by layer index. */
 const DEMO_PALETTE: Rgba[] = [
   { r: 96, g: 165, b: 250, a: 255 },
   { r: 244, g: 114, b: 182, a: 255 },
@@ -78,7 +23,7 @@ export function demoColor(idx: number): Rgba {
   return DEMO_PALETTE[idx % DEMO_PALETTE.length]
 }
 
-/** add_color_layer_impl default: BLACK, composition size. */
+/** Default color layer: BLACK at composition size. */
 export function prodColorParams(a: Record<string, unknown>, comp: { width: number; height: number }): LayerParams {
   const color = a.color === undefined ? { r: 0, g: 0, b: 0, a: 255 } : parseRgba(a.color, 'color')
   return {
@@ -89,7 +34,7 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
   }
 }
 
-/** add_text_layer_impl defaults: "Text", Arial 72 DrawText. */
+/** Default text layer: "Text", Arial 72, DrawText. */
 export function prodTextParams(a: Record<string, unknown>): LayerParams {
   return {
     kind: 'Text',
@@ -104,7 +49,7 @@ export function prodTextParams(a: Record<string, unknown>): LayerParams {
   }
 }
 
-/** image_layer_span_us: still→3s, animated→duration_us. */
+/** Image layer span: still→3s, animated→duration_us. */
 function imageLayerSpanUs(metadata: { duration_us: number | null; video?: { nb_frames?: number | null } | null }): number {
   const STILL = 3_000_000
   const multiFrame = (metadata.video?.nb_frames ?? 0) > 1
@@ -121,7 +66,9 @@ export interface MediaLayerResult {
   autoPairAudio: LayerParams | null
 }
 
-/** add_media_layer: kind-dispatch on the pool item. */
+/** add_media_layer: kind-dispatch on the pool item. The 2 s fallback covers a
+ *  pool item with no probed duration; `duration_us` is normalized content
+ *  duration, so a container start PTS never leaks into the span. */
 export function prodMediaLayer(
   a: Record<string, unknown>,
   project: Project,
@@ -148,14 +95,13 @@ export function prodMediaLayer(
   }
 }
 
-/** resolveDurationUs: 5s default, 100ms floor. */
 export function resolveDurationUs(durationUs: number | undefined): number {
   return Math.max(durationUs ?? 5_000_000, 100_000)
 }
 
-/** resolveOverlayTrack: scan tracks in reverse, find
- *  first non-reserved track with no layer overlap in [t0, t1). Returns null
- *  if none found (caller must create "Overlay" track via addTrack). */
+/** Scan tracks in reverse for the first non-reserved track with no layer
+ *  overlap in [t0, t1). Returns null if none found (caller must create the
+ *  "Overlay" track via addTrack). */
 export function pickFreeOverlayTrack(project: Project, t0: number, t1: number): string | null {
   const tracks = [...project.tracks].reverse()
   for (const t of tracks) {

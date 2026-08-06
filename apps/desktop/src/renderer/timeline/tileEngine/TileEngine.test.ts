@@ -124,7 +124,7 @@ describe("TileEngine", () => {
 
     // An unknown kind is a no-op: no producer's kind or invalidateOn matches,
     // so no invalidate fires and no slot is dropped. This IS the guard — the
-    // event handler has no registered-kind pre-filter anymore.
+    // event handler has no registered-kind pre-filter.
     engine.handleJobComplete("m1", "some-unknown-kind");
     expect(engine.get(keyA)?.state).toBe("ready");
     expect(engine.get(keyB)?.state).toBe("ready");

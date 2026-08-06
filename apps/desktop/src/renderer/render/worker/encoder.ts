@@ -5,11 +5,6 @@
 // backpressure) and hand only the CONTAINER to mediabunny: an
 // EncodedVideoPacketSource fed the encoder's output chunks, muxed by an
 // Output + fragmented Mp4OutputFormat into an AppendOnlyStreamTarget.
-//
-// The encoder's `output` callback is synchronous, but `source.add` is async
-// (it returns a backpressure Promise). We serialize adds through a promise
-// chain headed by `output.start()`, capture the first error into `muxError`,
-// and rethrow it at `finalize()`.
 
 import {
   AppendOnlyStreamTarget,
@@ -93,7 +88,6 @@ export class EncoderSink {
       webCodecsToMediabunnyVideoCodec(init.config.codec),
     );
     this.output.addVideoTrack(this.videoSource);
-    // Head the add-chain with start(); the first `source.add` awaits it.
     this.addChain = this.output.start();
 
     this.yieldChannel = new MessageChannel();
@@ -137,7 +131,6 @@ export class EncoderSink {
   async finalize(): Promise<void> {
     await this.encoder.flush();
     this.encoder.close();
-    // Wait for every queued `source.add` to complete.
     await this.addChain;
     if (this.muxError) throw this.muxError;
     await this.output.finalize();
@@ -163,8 +156,7 @@ export class EncoderSink {
     metadata?: EncodedVideoChunkMetadata,
   ): void {
     // Build the packet synchronously (fromEncodedChunk copies the bytes), so
-    // the transient chunk can be released; the decoder config rides the first
-    // add only.
+    // the transient chunk can be released.
     const packet = EncodedPacket.fromEncodedChunk(chunk);
     const meta = this.firstAdd ? metadata : undefined;
     this.firstAdd = false;

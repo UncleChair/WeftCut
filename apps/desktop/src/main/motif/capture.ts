@@ -42,7 +42,7 @@ interface Host {
 let host: Host | null = null
 
 // Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the one
-// host — single-threaded but await-interleaved — replacing the Rust tokio::Mutex.
+// host — single-threaded but await-interleaved.
 let chain: Promise<unknown> = Promise.resolve()
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))

@@ -6,7 +6,7 @@
 //     would make a video edit unreadable to fix an audio one.
 //   - There is NO sample ruler mode. One sample is 0.042 px at the 2000 px/s zoom
 //     ceiling, so there is no zoom at which a sample ruler is legible — it would be a
-//     second grid on screen, which is the thing this effort spent a round removing.
+//     second grid on screen.
 //   - Nothing persists it. It is a reading preference, not project data, so a stale
 //     value can never disagree with the file.
 

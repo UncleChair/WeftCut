@@ -5,15 +5,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
-// Runtime verification for the native software-decode ProRes preview
-// (Task 13 retarget: the collapsed engine model, ADR 0030). This is the ONE
-// proof Task 8b was missing: that the preview Compositor actually acquires a
-// `FfmpegSource` on its SOFTWARE lane for a `DecodeRoute::NativeSw`-routed
-// ProRes clip — the whole real-app path (import → Rust proxy_decision routes
-// `NativeSw` → PixiPreview.resolveSource resolves the ffmpeg engine →
-// Compositor.ensureClip acquires it → FfmpegSource's SwTransport rings NV12
-// as NativeNv12Frames → Nv12Ingest → sprite). Plus an SSIM
-// color/decode-correctness check of the rendered preview frame vs an ffmpeg
+// Runtime verification for the native software-decode ProRes preview (the
+// collapsed engine model, ADR 0030). This is the ONE proof that the preview
+// Compositor actually acquires a `FfmpegSource` on its SOFTWARE lane for a
+// `DecodeRoute::NativeSw`-routed ProRes clip — the whole real-app path (import
+// → Rust proxy_decision routes `NativeSw` → PixiPreview.resolveSource resolves
+// the ffmpeg engine → Compositor.ensureClip acquires it → FfmpegSource's
+// SwTransport rings NV12 as NativeNv12Frames → Nv12Ingest → sprite). Plus an
+// SSIM color/decode-correctness check of the rendered preview frame vs an ffmpeg
 // reference of the same source frame. NOTE: this natural-content SSIM is
 // alignment/decode evidence only — it is structurally blind to a 601↔709
 // matrix swap (chroma weighs ~1/6); preview-sw-color.spec.ts is the color gate.
@@ -34,7 +33,7 @@ const SEEK_US = 500_000
 const FRAME_IDX = Math.round((SEEK_US * CANVAS.fpsNum) / (1_000_000 * CANVAS.fpsDen))
 const SSIM_FLOOR = 0.98
 
-// P3 (memory ratchet). The generated 4K ProRes bench fixture (60 s, 3840×2160).
+// The generated 4K ProRes bench fixture (60 s, 3840×2160).
 const PRORES_4K = path.resolve(MEDIA_DIR, '../decode-bench/prores-2160.mov')
 const CANVAS_4K = { width: 3840, height: 2160, fpsNum: 30, fpsDen: 1 }
 // Post-GC renderer private-memory growth ceiling across a churn of 4K SW
@@ -43,10 +42,9 @@ const CANVAS_4K = { width: 3840, height: 2160, fpsNum: 30, fpsDen: 1 }
 // a real leak (ImageBitmaps not released) blows well past this.
 const RATCHET_MB = 30
 
-/// ffmpeg binary: honor an explicit `FFMPEG` override, else rely on PATH
-/// (the controller sets `$env:FFMPEG_DIR\bin` on PATH — see the task's run
-/// instructions). Returns null when ffmpeg can't be executed at all, so P2
-/// degrades to a warning rather than a false failure (P1 is the gate).
+/// ffmpeg binary: honor an explicit `FFMPEG` override, else rely on PATH.
+/// Returns null when ffmpeg can't be executed at all, so the SSIM step skips
+/// rather than failing falsely (the lane-engaged proof stands).
 function ffmpegBin(): string | null {
   const cand = process.env.FFMPEG || 'ffmpeg'
   const r = spawnSync(cand, ['-version'], { encoding: 'utf8' })
@@ -255,12 +253,7 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-proj-')
 
-  // Pin the resolver to the software lane: ProRes is videotoolbox-eligible
-  // since the lane-aware widening (VT lane ticket 03), so on a ProRes-engine
-  // Mac this spec's clip would otherwise ride the HW lane and never exercise
-  // the SOFTWARE path it gates. Forcing a lane the addon never advertises
-  // ('software' is not an HW lane) leaves the HW resolver no candidate —
-  // clean software fallback, every host.
+  // Pin the resolver to the software lane — same reason as the SSIM test above.
   const { app, page } = await launchApp({ env: { WEFTCUT_FORCE_HW_LANE: 'software' } })
   let toggledOn = false
   try {

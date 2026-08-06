@@ -7,9 +7,10 @@
 //
 // Per-OS runtime-library resolution (see docs/adr/0030 + docs/preview.md):
 //   - Windows: bin/*.dll, resolved at dlopen via a PATH prepend (main/native-decode.ts).
-//   - Linux:   lib/*.so*, resolved via the addon's RUNPATH ($ORIGIN) — the .so
-//     ship next to the .node, no runtime env mutation (ld.so fixes NEEDED libs
-//     at dlopen time, so an in-process LD_LIBRARY_PATH prepend is unreliable).
+//   - Linux:   lib/*.so*, resolved via the DT_RPATH ($ORIGIN) baked into the
+//     addon (not RUNPATH — see napi-build-decode.mjs); the .so ship next to
+//     the .node, no runtime env mutation (ld.so fixes NEEDED libs at dlopen
+//     time, so an in-process LD_LIBRARY_PATH prepend is unreliable).
 //   - macOS:   lib/*.dylib, resolved via @loader_path install names (rewritten
 //     here at stage time) — the .dylib ship next to the .node, no runtime env
 //     mutation and nothing to bake into the addon.
@@ -343,7 +344,7 @@ function main() {
   if (existsSync(manifestPath)) {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
     assertLgplBanner(m.configuration) // re-assert even on the cached copy
-    stripExes(cfg, dest) // heal a dir fetched before the exe-strip fix
+    stripExes(cfg, dest) // re-strip: a cached tree may still hold the transient exes (idempotent)
     // Heal a tree fetched before libva bundling (issue #5 Block C VAAPI): the
     // ffmpeg build is unchanged, so only the missing libva needs installing.
     if (OS_KEY === 'linux' && !libvaPresent(dest)) {

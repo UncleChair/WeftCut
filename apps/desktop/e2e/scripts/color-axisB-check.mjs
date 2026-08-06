@@ -1,4 +1,4 @@
-// Axis-B regression gate: runs the proxy's exact ffmpeg args (proxy.rs) on the
+// Axis-B regression gate: runs the proxy's transcode args (proxy.rs) on the
 // 10-bit gradient, measures the proxy's gradient banding via media_conformance
 // --gradient-row, and fails if fidelity regressed past the recorded baseline
 // (gradient_baseline.json). The import->proxy e2e hook is deferred (spec), so
@@ -23,7 +23,9 @@ if (!existsSync(SRC)) {
   process.exit(0);
 }
 
-// proxy.rs args verbatim (PROXY_HEIGHT_CAP=2160, PROXY_GOP_FRAMES=6).
+// proxy.rs scale/codec/GOP args (PROXY_HEIGHT_CAP=2160, PROXY_GOP_FRAMES=6).
+// proxy.rs' color tags (`source_color_args` + `+write_colr`) are omitted —
+// this gate reads luma only.
 const p = spawnSync("ffmpeg", [
   "-y", "-hide_banner", "-loglevel", "error", "-i", SRC,
   "-vf", "scale=-2:'min(ih,2160)'", "-c:v", "libx264", "-preset", "fast", "-crf", "18",

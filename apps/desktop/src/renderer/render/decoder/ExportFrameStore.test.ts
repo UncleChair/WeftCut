@@ -397,7 +397,6 @@ describe("ExportFrameStore TenBitFrame integration", () => {
   });
 });
 
-// ExportFrameStore.fail — loud copy failure (I1)
 describe("ExportFrameStore.fail", () => {
   it("rejects a parked waitForPts waiter immediately", async () => {
     const store = new ExportFrameStore();
@@ -441,7 +440,6 @@ describe("ExportFrameStore.fail", () => {
   });
 });
 
-// ExportFrameStore.waitBelowTenBitHighWater — I2 backpressure
 describe("ExportFrameStore.waitBelowTenBitHighWater", () => {
   it("resolves immediately when the ring is below the high-water mark", async () => {
     const store = new ExportFrameStore();
@@ -468,11 +466,8 @@ describe("ExportFrameStore.waitBelowTenBitHighWater", () => {
   });
 });
 
-// Resolution-derived high-water: the entry cap derives from the first
-// TenBitFrame's actual plane bytes (a per-ring byte target expressed as an
-// entry count — frame size is constant within one ring), clamped to
-// [MIN 20, MAX 48]. Bounds 4K memory (~500 MB at the MIN floor) without
-// live byte accounting.
+// Pins the clamp endpoints and the byte-target quotient between them — see
+// TENBIT_RING_TARGET_BYTES in ExportDecoderPool.ts for why they are what they are.
 describe("tenBitHighWaterFor", () => {
   it("clamps 1080p to the 48-entry ceiling (today's behavior unchanged)", () => {
     expect(tenBitHighWaterFor(BYTES_1080P)).toBe(48);

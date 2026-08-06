@@ -2,11 +2,7 @@
 // `status: "unsupported"` — no decode engine can produce a frame for it (only
 // reachable on the Lite/webcodecs engine, or a pinned Standard engine with no
 // usable component). `PixiPreview` renders this as an absolute sibling of the
-// canvas, driven by `Compositor`'s `onUnsupported` callback. The Compositor
-// recomputes the unsupported set per composite and fires the callback on
-// membership change — never per-frame.
-//
-// Plan: .superpowers/sdd/task-12-brief.md
+// canvas, driven by `Compositor`'s `onUnsupported` callback.
 
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";

@@ -1,7 +1,6 @@
-//! Shared error type for cloud-provider calls (transcription / synthesis).
-//! Concrete providers map their HTTP responses onto these
-//! variants so the MCP tool layer can render a single, agent-friendly error
-//! shape regardless of which provider served the request.
+//! Shared error type for every speech backend — cloud HTTP providers and local
+//! CLI sidecars alike — so the MCP tool layer can render a single,
+//! agent-friendly error shape regardless of which engine served the request.
 //!
 //! The `From<reqwest::Error>` and `From<std::io::Error>` derives let provider
 //! impls use `?` without manual mapping; everything else (auth, payload, rate

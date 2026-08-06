@@ -265,11 +265,9 @@ function guideLine(axis: "x" | "y"): Element {
   return guide(axis).children[1]!;
 }
 
-// The fixture makes the arithmetic here checkable by hand: the canvas is half
-// the composition, so a client delta DOUBLES into composition pixels and the
-// 12 screen-px radius is 24 composition px. The layer is 640×360 at (0, 0) in a
-// 1280×720 composition, so its box already sits on x=0, x=640, y=0 and y=360 —
-// four of the six composition lines — before anything moves.
+// The layer is 640×360 at (0, 0) in a 1280×720 composition, so its box already
+// sits on x=0, x=640, y=0 and y=360 — four of the six composition lines —
+// before anything moves.
 describe("snapping", () => {
   it("pulls the box's centre onto the composition's centre line", async () => {
     setSnap(true);

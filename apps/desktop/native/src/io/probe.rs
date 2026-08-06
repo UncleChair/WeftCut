@@ -216,10 +216,6 @@ pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
     if let Some(v) = &metadata.video {
         let codec = v.codec.as_str();
         let image_container = container_is_image(metadata.container_format.as_deref());
-        // Dedicated still-image codecs route to Image regardless of frame count:
-        // a multi-frame GIF/WebP/APNG is an *animated image*, looped from its
-        // decoded frames with no proxy. `mjpeg` is the one ambiguous codec —
-        // motion-JPEG inside a movie container is real video.
         if STILL_IMAGE_CODECS.contains(&codec) {
             if codec == "mjpeg" {
                 let animated = v.nb_frames.is_some_and(|n| n > 1)
@@ -677,10 +673,8 @@ mod tests {
             .into_metadata()
     }
 
-    /// ffprobe can report sub-µs precision. Metadata keeps nearest-µs semantics;
-    /// it is intentionally not the decoder clock origin, which comes from the
-    /// first packet. Truncation would drop this half-µs (→299674) and can lose
-    /// a whole µs whenever the float product lands at `x.9999…`.
+    /// Pins nearest-µs, not truncation: truncating drops this half-µs (→299674)
+    /// and can lose a whole µs whenever the float product lands at `x.9999…`.
     #[test]
     fn seconds_to_us_rounds_to_nearest() {
         assert_eq!(duration_seconds_to_us("0.2996745"), Some(299_675));

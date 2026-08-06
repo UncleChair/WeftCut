@@ -371,8 +371,8 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   })
 
   it('the shared event envelope carries no exportSw traffic', () => {
-    // Control signals moved in-band; nothing export-decode-shaped may ride the
-    // `{event, payload}` envelope anymore. Runs last: `ctx.events` has captured
+    // Control signals ride in-band, so nothing exportSw-shaped may appear on the
+    // `{event, payload}` envelope. Runs last: `ctx.events` has captured
     // every envelope emission across the whole suite by now.
     expect(ctx.events.filter((e) => e.event.startsWith('exportSw:'))).toEqual([])
   })

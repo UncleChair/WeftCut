@@ -165,8 +165,7 @@ describe("HandoffTimings", () => {
 
   // The spin total is the fence path's ONLY blocking cost, and `barrierP50`
   // cannot show it: a session spinning hundreds of times still submits in
-  // ~0.1ms. Reporting barrier cost off the p50 alone is how a cell burning the
-  // main thread came back at 0.01 thread-s/s and passed.
+  // ~0.1ms.
   it("accumulates forced-spin time that the submit-only barrier cost cannot show", () => {
     const t = new HandoffTimings();
     t.record(0, 0, 1, 0.1, 0.1, 0, "fence", { waitMs: 35, pendingPeak: 3, forcedWaits: 100, forcedWaitMsTotal: 1900 });

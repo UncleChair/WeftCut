@@ -141,7 +141,8 @@ fn apply_overrides(raw: &str, style: &mut CueStyle, simplified: &mut bool) -> St
             } else if let Some(v) = t.strip_prefix("fn") {
                 style.font_family = Some(v.to_string());
             } else if t.starts_with("fad") {
-                // fade recognised but not a dropped feature
+                // `\fad` is dropped silently — deliberately not flagged as
+                // `simplified`.
             } else {
                 *simplified = true; // \k \p \clip \t \move \frx \blur …
             }

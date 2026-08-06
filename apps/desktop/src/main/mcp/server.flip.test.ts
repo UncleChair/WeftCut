@@ -40,8 +40,8 @@ describe('handleCallTool flip routing', () => {
     expect(layers).toBe(1)
   })
   it('routes synthesize_speech through the hybrid (not blocked, Task 6)', async () => {
-    // synthesize_speech is now a hybrid (landed Task 6); it must NOT be rejected
-    // with -32600. The fake synthesizeSpeechCompute returns '{}'  (no media_item)
+    // synthesize_speech is a hybrid; it must NOT be rejected with -32600.
+    // The fake synthesizeSpeechCompute returns '{}'  (no media_item)
     // so the arm throws an actor-write error — but NOT a -32600 blocked rejection.
     const ts = tsHostStub()
     const result = await handleCallTool(fakeBackend(async () => '{}'), () => ts, 'synthesize_speech', { text: 'hi' })
@@ -63,8 +63,7 @@ describe('handleCallTool flip routing', () => {
   })
   it('forwards a plain rust-routed tool to the backend', async () => {
     // ping is the one live rust-native tool with no clip-slice injection — it falls
-    // straight through to the backend. (Group reads are no longer a tool; they come
-    // from the project://current summary resource.)
+    // straight through to the backend.
     const ts = tsHostStub()
     const spy = vi.fn(async () => '{"ok":true,"result":{"content":[{"type":"text","text":"pong"}]}}')
     await handleCallTool(fakeBackend(spy), () => ts, 'ping', {})

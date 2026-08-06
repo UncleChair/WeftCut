@@ -19,7 +19,6 @@ test('app boots + degrades gracefully regardless of safeStorage keyring availabi
   // on Windows/macOS it's true. Either way the app must reach a window.
   expect(typeof available).toBe('boolean')
 
-  // The keyring-unavailable warning is surfaced through the pulled-notice channel.
   // The notice must be present exactly when the keyring is NOT available.
   await page.waitForFunction(() => typeof (window as any).api?.app?.notices === 'function')
   const notices = (await page.evaluate(() => (window as any).api.app.notices())) as Array<{ code: string }>

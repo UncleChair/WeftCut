@@ -18,10 +18,6 @@ interface CornerNoticeProps {
 /// AppDialog: these inform without blocking — no backdrop, no focus trap, no
 /// Escape close. The legacy `.export-panel.import-proxy-dialog` chrome stays
 /// the shared skin.
-///
-/// Import-optimize progress used to live here too; it now rides the Media Pool
-/// cards as badges, because a corner panel occludes the editor for state the
-/// user does not have to act on.
 export function CornerNotice({
   title,
   actionLabel,

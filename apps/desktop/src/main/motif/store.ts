@@ -7,7 +7,7 @@ import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog"
 
 export const DRAFTS_DIR = "drafts";
 
-/** Reject an id segment that could traverse or escape. Mirrors Rust `safe_seg`. */
+/** Reject an id segment that could traverse or escape. */
 function safeSeg(seg: string): string {
   if (seg === "" || seg === "." || seg === ".." || seg.includes("/") || seg.includes("\\") || seg.includes(":")) {
     throw new Error(`unsafe path segment: ${JSON.stringify(seg)}`);
@@ -15,7 +15,7 @@ function safeSeg(seg: string): string {
   return seg;
 }
 
-/** Validate a `/`-separated relative path into safe segments, or null. Mirrors `safe_rel`. */
+/** Validate a `/`-separated relative path into safe segments, or null. */
 function safeRel(rel: string): string[] | null {
   const out: string[] = [];
   for (const seg of rel.split("/")) {
@@ -28,14 +28,14 @@ function safeRel(rel: string): string[] | null {
 
 type MotifSource = { manifest: Manifest; html: string };
 
-/** On-disk store of user Motifs rooted at `<userData>/motifs/`. Ports `UserMotifStore`. */
+/** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
 export class UserMotifStore {
   constructor(private readonly _root: string) {}
 
   root(): string { return this._root; }
   private draftsRoot(): string { return path.join(this._root, DRAFTS_DIR); }
 
-  /** Published copy first, then draft of the same id. Mirrors `read_file`. */
+  /** Published copy first, then draft of the same id. */
   readFile(id: string, rel: string): Buffer | null {
     if (id === DRAFTS_DIR) return null;
     const safeId = safeRel(id);
@@ -105,7 +105,7 @@ export class UserMotifStore {
     try { return { manifest: parseManifestIsland(html), html }; } catch { return null; }
   }
 
-  /** Move `<root>/drafts/<draftId>/` → `<root>/<finalId>/`, overwriting. Mirrors `install_draft`. */
+  /** Move `<root>/drafts/<draftId>/` → `<root>/<finalId>/`, overwriting. */
   installDraft(draftId: string, finalId: string): void {
     mkdirSync(this._root, { recursive: true });
     const from = path.join(this.draftsRoot(), safeSeg(draftId));
@@ -125,7 +125,7 @@ export class UserMotifStore {
     }
   }
 
-  /** Remove published + draft dirs for an id. Idempotent. Mirrors `delete_user_motif`. */
+  /** Remove published + draft dirs for an id. Idempotent. */
   deleteUserMotif(id: string): void {
     const safeId = safeSeg(id);
     const published = path.join(this._root, safeId);
@@ -138,7 +138,7 @@ export class UserMotifStore {
     return this.listManifests().map((m) => m.id);
   }
 
-  /** Every installed user manifest, id-sorted; skips drafts + broken. Mirrors `list_manifests`. */
+  /** Every installed user manifest, id-sorted; skips drafts + broken. */
   listManifests(): Manifest[] {
     let entries: string[];
     try { entries = readdirSync(this._root); } catch { return []; }

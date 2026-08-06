@@ -181,7 +181,7 @@ describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
     const actor = freshActor()
     const deps = makeDeps(actor)
     // Drive the fake parser with simplified:true → the MCP text gains the
-    // "(some ASS styling was simplified)" suffix (matching tools.rs:462-464).
+    // "(some ASS styling was simplified)" suffix (hybrids.ts, apply_subtitles arm).
     deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({
       cues: [{ start_us: 0, end_us: 1_000_000, text: 'hi', style: { bold: false, italic: false } }],
       simplified: true,
@@ -204,8 +204,8 @@ describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
   it('throws when the actor rejects the caption track (empty cues)', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor)
-    // Override parseSubtitles to return zero cues — add_caption_track on Rust actor
-    // tolerates empty but the TS actor validates; either way we test the throw path.
+    // Override parseSubtitles to return zero cues — the TS actor validates the
+    // caption track; either way we test the throw path.
     deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({ cues: [], simplified: false }))
     // The actor may or may not error on zero cues, but the hybrid must not crash
     // unexpectedly — it either succeeds or propagates an actor error.
@@ -222,7 +222,7 @@ describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
     expect(deps._probeMedia).not.toHaveBeenCalled()
     expect(deps._readFile).toHaveBeenCalledWith('C:/My Subs/captions.srt')
     expect(deps._parseSubtitles).toHaveBeenCalledWith(TWO_CUE_SRT, null)
-    // Flag-off import_media returns Ok(track_id) — a bare string, NOT an object.
+    // import_media returns the bare track id string, NOT an object.
     expect(typeof result).toBe('string')
     expect((result as string).length).toBeGreaterThan(0)
   })
@@ -233,7 +233,8 @@ describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
     const id = await runHybrid('import_media', { path: 'C:\\My Subs\\captions.srt' }, deps) as string
     const track = actor.snapshot().tracks.find((t) => t.id === id)
     expect(track).toBeTruthy()
-    // media.rs uses source_buf.file_name() → "captions.srt" WITH extension.
+    // The import_media subtitle branch labels the track with the full filename
+    // → "captions.srt" WITH extension.
     expect(track!.label).toBe('captions.srt')
   })
 
@@ -305,8 +306,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
     // History granularity: the synth write-tail's layer add must be a SINGLE
-    // commit (no extra update_layer_params op) — matching Rust's one
-    // add_layer(AudioParams{role:Voiceover}). add_media_item is UNRECORDED (no
+    // commit (no extra update_layer_params op). add_media_item is UNRECORDED (no
     // history entry), and target_track_id is given (no ensureAudioTrack commit),
     // so the only recorded entry from the write-tail is the layer add.
     const lenBefore = actor.historyStatus().len
@@ -368,10 +368,10 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
 
   it('ensureAudioTrack returns the last existing track when target_track_id is omitted', async () => {
     // Fresh project has 2 reserved (non-removable) A/B-roll tracks, so
-    // ensureAudioTrack returns the LAST existing track (Rust: snap.tracks.last())
-    // — it does NOT create a track here. The zero-track add_track('Voiceover')
-    // branch is unreachable through the validated actor (reserved tracks can't be
-    // removed), so it's not exercised.
+    // ensureAudioTrack (hybrids.ts) returns the LAST existing track — it does NOT
+    // create a track here. The zero-track add_track('Voiceover') branch is
+    // unreachable through the validated actor (reserved tracks can't be removed),
+    // so it's not exercised.
     const actor = freshActor()
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
@@ -380,13 +380,13 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     // A layer must have been placed on some track.
     const layerCount = snap.tracks.flatMap((t) => t.layers).length
     expect(layerCount).toBeGreaterThanOrEqual(1)
-    // The placed layer must be on the last existing track (ensureAudioTrack = snap.tracks.last()).
+    // The placed layer must be on the last existing track.
     const lastTrack = snap.tracks[snap.tracks.length - 1]
     expect(lastTrack.layers).toHaveLength(1)
   })
 })
 
-// ── auto_split_by_shot + shot markers (scene-analysis ticket 04) ────────────
+// ── auto_split_by_shot + shot markers ───────────────────────────────────────
 
 /** A whole-source ShotReport JSON as compute.analyzeShots returns it: shots are
  *  the spans between `boundariesUs` (source-absolute), clipped to `[0,endUs]`. */

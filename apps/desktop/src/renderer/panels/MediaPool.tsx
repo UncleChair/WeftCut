@@ -240,8 +240,8 @@ function MediaDragPreview() {
 /// The media-pool column doubles as the drop target for Explorer file
 /// drags. HTML5 drag events fire because the OS-level drop interception is
 /// off so the timeline's internal HTML5 drag-and-drop remains available;
-/// under Electron the dropped Files' real
-/// filesystem paths are surfaced through the main-process drop handler.
+/// the dropped Files' real filesystem paths are resolved by the preload's
+/// `wireFileDrop` listener, not here (see `onDrop` below).
 /// Internal media-item drags carry a custom MIME type, not "Files", and are
 /// ignored here.
 export function MediaDropZone({ children }: { children: React.ReactNode }) {
@@ -712,10 +712,7 @@ export function MediaPool({
                         })}
                       </span>
                     )}
-                    {/* Usable clip with a proxy/probe still running. Deliberately
-                        a bare corner dot, not one of the centred badges above —
-                        those mean "you can't use this yet", and this clip is
-                        fully editable. */}
+                    {/* Bare corner dot — this clip is fully editable. */}
                     {showOptimizingDot && (
                       <span
                         className="media-optimizing-dot"

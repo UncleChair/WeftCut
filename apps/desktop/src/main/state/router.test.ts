@@ -12,7 +12,7 @@ import { PRODUCTION_OPS } from './commands'
 // {kind:'reject'}). This is the single-writer safety backstop: no
 // project-touching channel may reach Rust.
 const ALL_CHANNELS: readonly string[] = [
-  // category-A mutations → PRODUCTION_OPS (command) or BLOCKED_UNDER_FLAG (reject)
+  // category-A mutations → PRODUCTION_OPS (command)
   'add_track', 'separate_audio_to_new_track', 'add_demo_color_layer', 'add_color_layer',
   'add_media_layer', 'add_text_layer', 'add_demo_text_layer', 'update_layer', 'update_layer_params',
   'update_layer_param_track', 'update_layer_param_tracks', 'add_effect', 'update_effect',
@@ -25,7 +25,7 @@ const ALL_CHANNELS: readonly string[] = [
   // router special-cases (summary / settings / persistence seam / agent-session)
   'project_summary', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
-  // motif route (TS authoring + read + install + staleness — Phase 2/3)
+  // motif route (TS authoring + read + install + staleness)
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
   'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
   'motif_staleness_report', 'acknowledge_motif_staleness',
@@ -122,9 +122,6 @@ describe('routeChannel', () => {
     expect(routeChannel('project_restore_checkpoint').kind).toBe('command')
   })
   it('forwards independent stores + media/jobs/export to rust', () => {
-    // import_media is now a hybrid (native-compute → TS-write), not rust.
-    // list_motifs is now a motif route (Phase 2), not rust.
-    // app_settings_*, view_state_*, export_settings_*, keybindings_*, and recents_* migrated off rust to TS handlers.
     for (const ch of ['agent_session_get','log_list','ensure_full_proxy','generate_quick_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
   })

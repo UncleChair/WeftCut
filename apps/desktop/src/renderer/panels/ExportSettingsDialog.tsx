@@ -249,9 +249,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
     // native) — skip the round trip entirely rather than dead-waiting on
     // smokeEncode's up-to-4s deadline for a result nothing reads.
     if (settings.encoderEngine !== "webcodecs") return;
-    // Intermediates (ProRes/DNxHR) are native-only — never probed via
-    // WebCodecs. Placeholder gate value only; real intermediate UI (profile
-    // pickers, no path badge at all) is not built yet.
+    // Intermediates (ProRes/DNxHR) are native-only — never probed via WebCodecs.
     if (isIntermediateCodec(settings.codec)) {
       setWebcodecsOk(true);
       return;
@@ -289,7 +287,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
           : clampExportRange(rangeStartUs, rangeEndUs, durationUs),
     [rangeMode, markedRange, rangeStartUs, rangeEndUs, durationUs],
   );
-  /// Spec decision 10's honesty line: same resolver, same inputs as the run
+  /// The decode-routing honesty line: same resolver, same inputs as the run
   /// (see routingSourceCounts). Recomputed on range/engine/depth edits, not
   /// just at dialog open, so it stays truthful while the user works.
   const decodeCounts = useMemo(() => {
@@ -542,11 +540,8 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   />
                 </div>
                 {rangeMode === "marked" && markedRange && (
-                  // Read-only on purpose: the marks are edited on the timeline,
-                  // where the playhead and the clips are visible. Restating
-                  // them here as fields would rebuild, inside a modal that
-                  // hides the timeline, exactly the blind entry this feature
-                  // replaced.
+                  // Read-only: marks are edited on the timeline, where the
+                  // playhead and the clips are visible.
                   <div className="export-row">
                     <span className="settings-toggle-label">
                       {t("export_dialog.range_marked")}
@@ -591,13 +586,8 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </>
                 )}
 
-                {/* A resolved range says nothing further. Each mode above
-                    already shows its own span (or, for the whole project,
-                    needs no span at all), and a duration plus a last-frame
-                    footnote are both derivable from it — three rows restating
-                    one fact is what made this pane read as cluttered. An
-                    UNRESOLVABLE range still has to speak, because it is the
-                    sole explanation for a disabled Export button. */}
+                {/* Only an unresolvable range gets a row: it is the sole
+                    explanation for a disabled Export button. */}
                 {chosenRange === null && (
                   <p className="settings-warn">
                     {rangeMode === "marked"
@@ -863,10 +853,8 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                       ]} />
                   </div>
                 )}
-                {/* Only an explicit WebCodecs pin exports via WebCodecs
-                    (resolveEncodeTarget: auto always resolves native, and
-                    intermediates/10-bit are native-only) — everything else
-                    shows the native wording. */}
+                {/* Everything but an explicit WebCodecs pin shows the native
+                    wording — see `webcodecsOk`. */}
                 <p className="settings-blurb">
                   {settings.encoderEngine !== "webcodecs"
                     ? t("export_dialog.path_native")

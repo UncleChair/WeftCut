@@ -1,5 +1,6 @@
-//! Track envelope. Layers in the same track must not overlap in time — hard
-//! invariant enforced by the actor on commit.
+//! Track envelope — the per-track flags, the A/B-roll role stamp, and the layer
+//! list. The no-overlap invariant is documented on `Track::layers` and enforced
+//! on commit by `apps/desktop/src/main/state/validate.ts`.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,12 +34,13 @@ pub struct Track {
     /// A/B-roll role stamp (`docs/data-model.md`). Role-stamped tracks are
     /// the only tracks visible in AB display mode; everything else is hidden.
     /// Set on the two reserved tracks at project creation (A roll → ARoll, B
-    /// roll → BRoll). Legacy v4 projects may also carry `AudioA`/`AudioB`
-    /// variants — they load as-is. `None` for every track imported afterwards.
+    /// roll → BRoll). The `AudioA`/`AudioB` variants stamp the audio side of a
+    /// roll pair (see `TrackRole::paired`). `None` for every track imported
+    /// afterwards.
     #[serde(default)]
     pub role: Option<TrackRole>,
     /// Auto-prune flag for the "every import lands a fresh hidden track"
-    /// rule (R.3 / R.4 / V.3). When `true`, the actor's mutation paths
+    /// rule (`docs/data-model.md`). When `true`, the actor's mutation paths
     /// delete this track once its `layers` becomes empty so the timeline
     /// doesn't accumulate a graveyard. Set on tracks created by
     /// `import_media`; left `false` for reserved tracks and explicit
@@ -46,8 +48,8 @@ pub struct Track {
     #[serde(default)]
     pub transient: bool,
     pub height_px: u16,
-    /// Layers sorted by `t_start_us`. Under A/B-roll v2 (V.2 invariant),
-    /// same-overlap-class layers can't overlap in time; different classes
+    /// Layers sorted by `t_start_us`. Same-overlap-class layers can't overlap
+    /// in time unless a `Transition` authorizes the overlap; different classes
     /// can coexist (enables AV pairs on one track).
     pub layers: imbl::Vector<Layer>,
 }
@@ -57,11 +59,9 @@ fn default_removable() -> bool {
 }
 
 impl Track {
-    /// V.5: tracks are kind-agnostic. The `kind` parameter and field
-    /// are gone — any layer kind can live on any track. The old
-    /// `TrackKind` enum is no longer needed because the IR routes by
-    /// `LayerParams` discriminator and the UI accepts any media on
-    /// any lane.
+    /// Tracks are kind-agnostic: any layer kind can live on any track — the IR
+    /// routes by the `LayerParams` discriminator and the UI accepts any media
+    /// on any lane.
     pub fn new() -> Self {
         Self {
             id: new_id(),
@@ -117,8 +117,7 @@ impl TrackRole {
         }
     }
 
-    /// True for the two video-side roles. Used by the importer + UI filter
-    /// without leaking TrackKind dependency.
+    /// True for the two video-side roles. Used by the importer + UI filter.
     pub fn is_video(self) -> bool {
         matches!(self, TrackRole::ARoll | TrackRole::BRoll)
     }

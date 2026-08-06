@@ -11,20 +11,9 @@
 //! [`config::BackendConfig`], and [`config::availability`] decides whether it
 //! can run right now (cloud → key present; local → binary + model on disk).
 //!
-//! [`resolve_transcriber`] / [`resolve_synthesizer`] honor an optional
-//! `preferred` backend as a SOFT hint, then fall through
-//! [`backend::DEFAULT_ORDER`], returning the first that both supports the
-//! surface AND is available. When nothing is configured they return `None` and
-//! the tool layer surfaces [`NO_TRANSCRIBER_CONFIGURED`] /
-//! [`NO_SYNTHESIZER_CONFIGURED`] — actionable messages that name every remedy.
-//! [`resolve_transcriber_exact`] is the STRICT counterpart for an explicit
-//! per-call `backend` override: that engine or an error naming its gap, never
-//! a silent substitute (a local-for-privacy request must not fall back to a
-//! cloud upload).
-//!
-//! OpenAI (cloud), whisper.cpp and FunASR (local sidecars) all have concrete
-//! `impl`s; the local engines are selectable once Settings populates their
-//! binary/model (and, for FunASR, tokens) paths.
+//! [`resolve_transcriber`] / [`resolve_synthesizer`] are the soft-preference
+//! entry points; [`resolve_transcriber_exact`] is the STRICT counterpart for an
+//! explicit per-call `backend` override. Each documents its own walk.
 //!
 //! Design: `docs/adr/0036-pluggable-speech-backends-normalized-transcript.md`;
 //! `docs/mcp.md` "Speech".
@@ -232,8 +221,8 @@ fn construct_synthesizer(
 
 /// Result of [`probe_backend`] — provider-agnostic shape for the Settings
 /// "Test" button. Fields stay shallow so the IPC layer can serde-pass them
-/// without per-backend type juggling. (Its wire shape is unchanged from the
-/// pre-generalization `ConnectionTestInfo` so TS Settings keeps parsing it.)
+/// without per-backend type juggling; the wire shape is frozen — TS Settings
+/// parses it.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ConnectionTestInfo {
     /// The backend tag (`"openai"`, etc.) so the UI can attribute the result
@@ -246,17 +235,12 @@ pub struct ConnectionTestInfo {
 /// Probe whether a backend can serve requests, for the Settings "Test" button.
 /// The availability verdict is conveyed through the `Ok`/`Err` split:
 ///
-/// - **Cloud** — extract the key from [`BackendConfig::ApiKey`]; no key →
-///   `SpeechError::MissingKey` (its message hints Settings, matching the
-///   pre-generalization behavior). With a key, run the live smoke check
-///   (OpenAI's `GET /v1/models`) and report the model count on success.
-/// - **Local** — first take the [`availability`] (file-existence) verdict and
-///   error early (naming the missing binary/model, incl. FunASR's tokens) with
-///   **no spawn** when it is not `Available`. Only once the files exist does the
-///   engine get a real liveness spawn (`--help` via the sidecar helper):
-///   whisper.cpp runs `whisper-cli --help`, FunASR `sherpa-onnx-offline --help`;
-///   a runnable binary reports `Ok`, a bad path / wrong arch a clear
-///   `SpeechError`.
+/// - **Cloud** — no key in [`BackendConfig::ApiKey`] → `SpeechError::MissingKey`
+///   (its message hints Settings); with a key, a live smoke check reports what
+///   it found.
+/// - **Local** — GUARD: the [`availability`] (file-existence) verdict errors
+///   early, naming the missing binary/model (incl. FunASR's tokens), with **no
+///   spawn**. Only once the files exist does the engine get a liveness spawn.
 pub async fn probe_backend(
     backend: SpeechBackend,
     cfg: Option<&BackendConfig>,
@@ -265,8 +249,7 @@ pub async fn probe_backend(
         Locality::Cloud => {
             let key = match cfg {
                 Some(BackendConfig::ApiKey(k)) => k.clone(),
-                // Missing or shape-mismatched config → the same clean
-                // MissingKey error the old test_connection produced.
+                // Missing or shape-mismatched config → a clean MissingKey.
                 _ => return Err(SpeechError::MissingKey { provider: backend }),
             };
             match backend {

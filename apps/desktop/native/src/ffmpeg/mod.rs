@@ -1,8 +1,5 @@
-//! ffmpeg-sidecar wrapper: auto-download on first run, export pipeline driver,
-//! analysis tools (silence detection, scene detection, frame extraction).
-//!
-//! `bootstrap()` ensures ffmpeg is on disk (sidecar auto-download on first run)
-//! and logs its version.
+//! ffmpeg-sidecar bootstrap: ensure ffmpeg is on disk (sidecar auto-download on
+//! first run) and log its version.
 
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{

@@ -8,9 +8,9 @@ import { launchApp, tmpDir } from './helpers/driver'
 // install_motif, acknowledge_motif_staleness, synthesize_speech) route
 // Rust-compute → TS-write, and the broad-state compute calls take their state
 // slice as a call argument: export_project_audio_only / ensure_export_audio_conform
-// take a `project` the TS host injects from actor.snapshot() (stateless-compute
-// Phase 2). This spec drives the production window.api.backend.invoke bridge and
-// asserts:
+// take a `project` the TS host injects from actor.snapshot() (Rust is
+// project-state stateless — see docs/architecture.md). This spec drives the
+// production window.api.backend.invoke bridge and asserts:
 //
 //   F3 (import_media hybrid): import a fixture → project_summary shows the media
 //      in the pool. The TS actor owns it, so a broken write/read would show an
@@ -69,7 +69,7 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
       timeout: 30_000,
     })
 
-    // New workspace — TS persistence orchestrator under the flag.
+    // New workspace — TS persistence orchestrator.
     const projectDir = await invoke<string>(page, 'project_new_workspace', {
       parentFolder: ws,
       name: 'native-compute',
@@ -95,7 +95,7 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
 
     // ── F1/F2: the EXPORT INPUTS (audio layers) flow through the injected project ──
     // Place an Audio layer referencing the imported audio media via the production
-    // add_media_layer channel (PRODUCTION_OP → TS actor command under the flag).
+    // add_media_layer channel (PRODUCTION_OPS → TS actor command).
     // Arg shape verified against AddMediaLayerArgs (#[serde(rename_all="camelCase")]
     // → trackId/mediaId/tStartUs) and the renderer's addMediaLayer invoke
     // (ipc/index.ts:454). A pure-Audio media item yields an Audio-kind layer with
@@ -113,7 +113,7 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
     // project_summary (TS-actor read) must now show an Audio layer that references
     // the imported media. This is the export-input the F1/F2 readers
     // (export_project_audio_only / ensure_export_audio_conform) consult via the
-    // project the TS host injects from actor.snapshot() (stateless-compute Phase 2).
+    // injected project.
     const afterPlace = await invoke<Summary>(page, 'project_summary')
     const audioLayers = afterPlace.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Audio')
     expect(audioLayers.length).toBeGreaterThan(0)

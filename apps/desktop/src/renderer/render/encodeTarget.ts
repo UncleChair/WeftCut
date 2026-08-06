@@ -1,6 +1,7 @@
 // The EncodeTarget resolution seam (see docs/render.md §"Encode exits").
-// Pure: probe results are injected, never awaited here. E1 mirrors the three
-// legacy branches exactly; E2 adds the encoderEngine pin, E4 flips auto.
+// Pure: probe results are injected, never awaited here. `auto` and the
+// intermediate codecs resolve native; only an explicit `webcodecs` pin
+// resolves webcodecs.
 
 import { isIntermediateCodec, type ExportSettings, type WebCodecsCodecId } from "./exportSettings";
 
@@ -22,8 +23,8 @@ export interface NativeTarget {
 
 export type EncodeTarget = WebCodecsTarget | NativeTarget;
 
-/// rawvideo format the native sink consumes for these settings. E3 extends
-/// this for the intermediate codecs (ProRes → yuv422p10le, DNxHR → yuv422p).
+/// rawvideo format the native sink consumes for these settings: ProRes →
+/// yuv422p10le, DNxHR → yuv422p, everything else follows `bitDepth`.
 export function nativePixFmtFor(settings: ExportSettings): NativePixFmt {
   if (settings.codec === "prores") return "yuv422p10le";
   if (settings.codec === "dnxhr") return "yuv422p";
@@ -42,7 +43,7 @@ export function resolveEncodeTarget(
   settings: ExportSettings,
   smokeOk: boolean,
 ): EncodeTarget {
-  void smokeOk; // probe result now only informs the fallback dialog's live gating (useExportFlow)
+  void smokeOk; // probe result is consumed by the fallback dialog's live gating (useExportFlow)
   // The cast is sound: needsEncoderProbe returns false for intermediates, so
   // this branch is only reached with settings.codec in WebCodecsCodecId.
   if (needsEncoderProbe(settings)) {

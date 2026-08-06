@@ -203,8 +203,7 @@ describe("Compositor transition divert", () => {
     });
   });
 
-  // `compositionWidth/Height` were constructor-only, so a canvas change while
-  // the project was open left the pool handing out OLD-size RTs forever.
+  // Why the drain is required: see `Compositor.setCompositionSize`.
   it("a composition resize drains the transition RT pool", () => {
     compositor.compositeFrame(1_500_000);
     compositor.compositeFrame(2_500_000); // node released, both RTs back free

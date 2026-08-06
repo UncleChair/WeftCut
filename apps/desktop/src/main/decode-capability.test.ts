@@ -56,7 +56,7 @@ describe('decode capability cache', () => {
   })
 })
 
-// Advertisement-gated multi-lane HW resolution (User Story 8/9/17/18): resolvers
+// Advertisement-gated multi-lane HW resolution: resolvers
 // probe ONLY lanes the component compiled in, in NVDEC > VAAPI > d3d11va >
 // videotoolbox order, per DRM node for VAAPI, and fall back to software when
 // none pass. Driven by FAKE capabilities (the `lanes` array), FAKE devices, and
@@ -282,10 +282,7 @@ describe('resolveHwLane (advertisement-gated multi-lane HW probe)', () => {
   })
 })
 
-// Inverse of `classKeyOf` (codec/pix_fmt identity only). The renderer's
-// `classKeyOfMedia` twin builds byte-identical keys, so production keys always
-// parse; unparseable strings return null and `resolveHwLane` skips the
-// eligibility narrowing for them (probe still gates).
+// Inverse of `classKeyOf` — see decode-capability.ts for the why.
 describe('parseClassKey', () => {
   it('round-trips classKeyOf-shaped keys', () => {
     expect(parseClassKey('prores::yuv422p10le:hd')).toEqual({ codec: 'prores', pixFmt: 'yuv422p10le' })

@@ -20,20 +20,15 @@ const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 
 // ---------------------------------------------------------------------------
 // Export settings per codec. The `codec` field is the routing discriminator.
-// E4 flipped `encoderEngine:'auto'` to native-first and Task 16 deleted the
-// H.264-mezzanine transcode path (`resolveEncodePath`/`TranscodeSpec`/
-// `transcode_and_mux` are gone) — a WebCodecs fallback now only happens via
-// an explicit user-consent dialog when the native sink fails to start.
+// `encoderEngine:'auto'` resolves to the native ffmpeg sink; WebCodecs is
+// reachable only via an explicit pin, or via the user-consent fallback dialog
+// when the native sink fails to start.
 //
-//   AV1 (8-bit): `codec:'av1'` + `encoderEngine:'webcodecs'` (explicit pin —
-//     under `auto` this would ride native like every other codec below) →
-//     WebCodecs sw encode → ffmpeg mux_export. Kept as the living e2e
-//     regression guard for the WebCodecs engine, since nothing else here
-//     still exercises it.
+//   AV1 (8-bit): `codec:'av1'` + `encoderEngine:'webcodecs'` → WebCodecs sw
+//     encode → ffmpeg mux_export. Why the pin: see AV1_SETTINGS.
 //
-//   HEVC (8-bit): `codec:'hevc'` on `auto` → E4 native-first resolves the
-//     ffmpeg video sink directly (no mezzanine, no
-//     `export:transcode_progress` events) → PackYuvPlanar yuv420p →
+//   HEVC (8-bit): `codec:'hevc'` on `auto` → resolves the ffmpeg video sink
+//     directly → PackYuvPlanar yuv420p →
 //     chunk/ack IPC → native ffmpeg video sink, tagged with the explicit
 //     bt709/limited color 4-tuple like every other native-sink codec below.
 //
@@ -53,10 +48,10 @@ const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 //     (-profile:v dnxhr_sq) → yuv422p in a MOV container.
 // ---------------------------------------------------------------------------
 
-// Explicit WebCodecs pin (E4 changed `auto` to native-first, so this codec
-// would otherwise ride the native ffmpeg video sink like HEVC/H.264 below).
-// This is the one cell that still exercises the WebCodecs engine end to end —
-// its living regression guard, not a routing default any real user hits.
+// Explicit WebCodecs pin — under `auto` this codec would ride the native
+// ffmpeg video sink like HEVC/H.264 below. This is the one cell that still
+// exercises the WebCodecs engine end to end: its living regression guard, not
+// a routing default any real user hits.
 const AV1_SETTINGS = {
   codec: 'av1',
   encoderEngine: 'webcodecs',
@@ -66,11 +61,13 @@ const AV1_SETTINGS = {
 } as const
 
 // Pinned-WebCodecs H.264 — the DEFAULT codec through the consent-fallback
-// engine. Regression guard for the platform-gated encoder hint
-// (encoderHwHint, issue #7 boundary #10): on Linux the old unconditional
-// prefer-hardware hint was a guaranteed VideoEncoder configure() hard error
-// (Chromium treats the hint as mandatory and has no Linux HW encoder), so
-// this cell could not even start before the gate.
+// engine. Regression guard for the encoder acceleration hint (encoderHwHint,
+// issue #7 boundary #10): under `auto` the hint is OMITTED, and prefer-software
+// rides only on the user's explicit pin. Chromium treats a prefer-hardware ask
+// as mandatory, so re-adding one under `auto` is a guaranteed VideoEncoder
+// configure() hard error on any host with no WebCodecs HW H.264 encoder — and
+// HW-encode presence is per-machine, so no OS allowlist can stand in for it.
+// This cell is what stops such a hint from landing again.
 const WEBCODECS_H264_SETTINGS = {
   codec: 'h264',
   encoderEngine: 'webcodecs',
@@ -171,10 +168,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
 
   // -------------------------------------------------------------------------
   // AV1, pinned `encoderEngine:'webcodecs'` (WebCodecs sw encode → ffmpeg
-  // mux_export) — settings from ExportSettings type. Since E4 flipped `auto`
-  // to native-first, this explicit pin is what keeps the WebCodecs engine
-  // under a living e2e regression guard (everything else in this file now
-  // rides the native ffmpeg video sink).
+  // mux_export) — why the pin: see AV1_SETTINGS.
   // Source: test_1080p_30fps.mp4 (standard 10s fixture, always present).
   // Asserts: export completes, output is frame-aligned (analyze SSIM ≥ 0.6).
   // Deliberately does NOT assert the explicit bt709/limited color 4-tuple —
@@ -222,13 +216,9 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // -------------------------------------------------------------------------
   // H.264, pinned `encoderEngine:'webcodecs'` — the default codec through the
   // WebCodecs engine (the consent-fallback lane when the native sink fails).
-  // Regression guard for the encoder acceleration hint (encoderHwHint): a
-  // prefer-hardware ask under "auto" is mandatory in Chromium, so it hard-errors
-  // at VideoEncoder configure() on any host with no WebCodecs HW H.264 encoder
-  // (issue #7 boundary #10). This cell is the one that catches it — it failed
-  // first on Linux, then on Windows once the ask was merely OS-allowlisted
-  // instead of dropped. Like the AV1 cell, no color 4-tuple assertion — that's
-  // the native sink's contract.
+  // Regression guard for the encoder acceleration hint — see
+  // WEBCODECS_H264_SETTINGS. Like the AV1 cell, no color 4-tuple assertion —
+  // that's the native sink's contract.
   // -------------------------------------------------------------------------
   test('pinned-webcodecs H.264 export produces an aligned file (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
@@ -265,9 +255,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   })
 
   // -------------------------------------------------------------------------
-  // HEVC on `auto` (E4 native-first → the native ffmpeg video sink directly;
-  // the H.264-mezzanine transcode_and_mux path Task 16 deleted no longer
-  // exists, so this no longer emits export:transcode_progress).
+  // HEVC on `auto` — rides the native ffmpeg video sink.
   // Source: test_1080p_30fps.mp4.
   // Asserts: export completes, output is HEVC-tagged + 8-bit, carries the
   // explicit bt709/limited color 4-tuple (the native sink's assertable

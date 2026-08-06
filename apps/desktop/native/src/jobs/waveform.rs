@@ -258,9 +258,8 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         anyhow::bail!("waveform only valid for Video / Audio media");
     }
     if media.metadata.audio.is_none() && matches!(media.kind, MediaKind::Video) {
-        // Video file without an audio stream — skip silently rather than fail.
-        // The caller can still return Ok(()) at the spawn layer; we surface
-        // it as a hard error here so the spawner can decide.
+        // Video file without an audio stream — surfaced as a hard error so the
+        // spawner can decide (it may still treat it as a no-op).
         anyhow::bail!("video media has no audio stream");
     }
 

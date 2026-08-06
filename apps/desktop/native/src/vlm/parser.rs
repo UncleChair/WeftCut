@@ -2,19 +2,10 @@
 //! converging on `Vec<DescSegment>`. Twin of [`speech::parse`](crate::speech).
 //!
 //! Both models return a JSON array of `{t_start, t_end, text, tags[]}` with
-//! timestamps chosen verbatim from the frame times we injected (ticket 06 spike:
-//! 14/14, 18/18, 20/20 spans map onto anchors), so parsing is **format
-//! conversion, not semantic alignment**. The parser must encode two spike
-//! landmines:
-//!
-//! - **Truncation tolerance.** At low temperature the model can degenerate into
-//!   repeating the last segment until `-n`, cutting off the closing `]`. The
-//!   extractor salvages objects up to the last complete `}` and closes the array
-//!   itself (mirrors `spike.mjs:extractJsonArray`).
-//! - **MiniCPM-V tag shape.** MiniCPM-V mashes `tags` into underscore-joined
-//!   phrases (`"lower_body_feet_step_..."`) and emits a trailing empty segment.
-//!   [`MiniCpmVParser`] splits those into discrete keywords; the shared
-//!   empty-segment drop handles the trailing blank for every backend.
+//! timestamps chosen verbatim from the frame times we injected, so parsing is
+//! **format conversion, not semantic alignment**. The quirks each style forces
+//! on us live at their handlers: truncated output at `extract_json_array`,
+//! MiniCPM-V's joined tags at [`MiniCpmVParser`] and `coerce_tags`.
 //!
 //! Timestamps here are seconds → **window-relative µs** (0 = window start); the
 //! tool shifts them onto source-absolute time (see [`super::description`]).
@@ -111,11 +102,12 @@ fn parse_segments(raw: &str, split_underscore_tags: bool) -> Result<Vec<DescSegm
     Ok(segments)
 }
 
-/// Find and parse the JSON array in the model's output. Mirrors
-/// `spike.mjs:extractJsonArray`: try `[` .. last `]`; on failure salvage a
-/// truncated array by closing after the last complete `}`. Prompt echo before
-/// the `[` is skipped naturally (there is no `--no-display-prompt` in this
-/// llama.cpp build, so the prompt may be echoed).
+/// Find and parse the JSON array in the model's output: try `[` .. last `]`; on
+/// failure salvage a truncated array by closing after the last complete `}` —
+/// at low temperature the model can degenerate into repeating the last segment
+/// until `-n` cuts the closing `]` off. Prompt echo before the `[` is skipped
+/// naturally (there is no `--no-display-prompt` in this llama.cpp build, so the
+/// prompt may be echoed).
 fn extract_json_array(text: &str) -> Option<Vec<Value>> {
     let start = text.find('[')?;
     if let Some(end) = text.rfind(']') {
@@ -125,8 +117,6 @@ fn extract_json_array(text: &str) -> Option<Vec<Value>> {
             }
         }
     }
-    // Salvage a truncated array (repetition loop cut off by -n): parse objects
-    // up to the last complete '}' and close the array ourselves.
     let last_obj = text.rfind('}')?;
     if last_obj > start {
         let candidate = format!("{}]", &text[start..=last_obj]);

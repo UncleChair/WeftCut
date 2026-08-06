@@ -60,7 +60,7 @@ function EffectParamField({
 }) {
   const { t } = useTranslation();
   const paramKey = `effects[${effect.id}].params[${paramName}]`;
-  // Absent slot ⇒ show the registry default; the first commit lazily creates it.
+  // Absent slot ⇒ the registry default.
   const track: AnimTrack<number> = effect.params[paramName] ?? { mode: "Static", value: spec.default };
   const label = t(`effects.${effect.kind}.params.${paramName}`, { defaultValue: paramName });
   const step = spec.step ?? (spec.range && spec.range[1] - spec.range[0] <= 10 ? 0.1 : 1);

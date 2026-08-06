@@ -24,8 +24,6 @@ const deps = (over: Partial<OptimizeDeps> = {}): OptimizeDeps => ({
 });
 
 // ── importOptimizeStatus (frozen behavior, route-driven) ──
-// The six output states and the precedence are IDENTICAL to the pre-decode-route
-// implementation; only the inputs moved from flat flags to the decode route.
 const depsT = (over: Partial<{ memo: Map<string, "ok" | "pending">; ps: any; rc: Set<string> }> = {}) => ({
   memo: over.memo ?? new Map(),
   proxyStateOf: () => over.ps,
@@ -37,9 +35,7 @@ const V = (decode_route: any, extra: any = {}) =>
 describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
   it("proxied + full ready ⇒ ready", () =>
     expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: "q", full_proxy: "f", format_version: 1 }), depsT())).toBe("ready"));
-  // native-sw resolves identically to proxied. Before this settled, a ProRes
-  // source fell through to the terminal `checking` and never left it — the old
-  // dialog stayed open forever, the pool dot would never clear.
+  // native-sw must settle like proxied — see importOptimize.ts.
   it("native-sw + full ready ⇒ ready (not a terminal checking)", () =>
     expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: "f", format_version: 7 }), depsT())).toBe("ready"));
   it("native-sw without its master keeps reporting work in flight", () =>
@@ -55,7 +51,6 @@ describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
   it("proxy failed ⇒ failed", () =>
     expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ ps: "failed" }))).toBe("failed"));
 
-  // Additional frozen-precedence coverage carried over from the pre-route suite.
   it("keeps a decodable DirectExport source checking while its probe is in flight (memo pending)", () =>
     expect(importOptimizeStatus(V({ route: "direct-export", quick_proxy: null }), depsT({ memo: new Map([["m1", "pending"]]) }))).toBe("checking"));
   it("keeps a decodable full-proxy (10-bit) source bridged when only the quick proxy has landed", () =>

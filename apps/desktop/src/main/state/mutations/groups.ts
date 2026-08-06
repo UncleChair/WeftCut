@@ -19,7 +19,7 @@ export function layerIdSet(p: Project): Set<Uuid> {
 
 /** All OTHER members of `id`'s group, in sorted member
  *  order (Rust OrdSet iteration order). Empty when ungrouped. The sort is the
- *  id-allocation-order guarantee for split fan-out (see plan Global Constraints). */
+ *  id-allocation-order guarantee for split fan-out. */
 export function groupSiblingsExcluding(p: Project, id: Uuid): Uuid[] {
   const idx = indexGroups(p.groups)
   const gid = idx.get(id)

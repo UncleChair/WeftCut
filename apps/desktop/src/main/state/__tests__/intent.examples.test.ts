@@ -1,8 +1,6 @@
-// Intent examples mined from fixtures/state-corpus/sequences/*.json.
-// Each test pins the SPECIFIC invariant the hand-authored sequence was designed
-// to assert — things a snapshot comparison or a generic PBT property cannot
-// articulate on their own. The corpus sequences these were mined from will be
-// deleted in a later task; this file preserves their encoded knowledge.
+// Hand-authored intent examples. Each test pins the SPECIFIC invariant behind
+// one timeline mutation — things a snapshot comparison or a generic PBT property
+// cannot articulate on their own.
 import { describe, it, expect } from 'vitest'
 import type { DispatchResult } from '../actor'
 import { freshActor, wireSnapshot, aRollId, bRollId } from './pbt/harness'
@@ -16,7 +14,7 @@ function okValue(r: DispatchResult): unknown {
 
 describe('timeline mutation intent', () => {
 
-  // ── (a) Mined from: move-reject-overlap.json ──────────────────────────────
+  // ── (a) Overlap rejection ─────────────────────────────────────────────────
   it('rejects an unauthorized same-track overlap (linear-NLE invariant)', () => {
     const a = freshActor()
     const t = aRollId(a)
@@ -34,7 +32,7 @@ describe('timeline mutation intent', () => {
     expect(starts).toEqual([0, 5_000_000])
   })
 
-  // ── (b) Mined from: add-color-on-A.json + ADR 0005 ────────────────────────
+  // ── (b) Duration autofit (ADR 0005) ───────────────────────────────────────
   it('autofits unpinned composition duration to the last layer end (ADR 0005)', () => {
     const a = freshActor()
     const firstAdd = a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_500_000 })
@@ -53,13 +51,12 @@ describe('timeline mutation intent', () => {
     expect(wireSnapshot(a).composition.duration_us).toBe(2_500_000)
   })
 
-  // ── (b-ii) Surfaced by oracle-bridge: update-layer-times / update-layer-undo ─
+  // ── (b-ii) update_layer skips autofit ─────────────────────────────────────
   // update_layer is an envelope-only patch that deliberately does NOT run
-  // applyDurationAutofit (mutations/update.ts:15-16 — "Rust doesn't"). So
-  // extending a layer's Out edge via update_layer leaves composition.duration_us
-  // STALE (behind the layer's new end) on an unpinned project. This is the exact
-  // behavior the frozen oracle corpus encoded and that over-strict invariant
-  // checks must not reject.
+  // applyDurationAutofit (mutations/update.ts, applyUpdateLayer). So extending a
+  // layer's Out edge via update_layer leaves composition.duration_us STALE
+  // (behind the layer's new end) on an unpinned project — over-strict invariant
+  // checks must not reject that.
   it('update_layer does NOT autofit composition duration (stays stale)', () => {
     const a = freshActor()
     const t = aRollId(a)
@@ -79,7 +76,7 @@ describe('timeline mutation intent', () => {
     expect(snap.composition.duration_pinned).toBe(false)
   })
 
-  // ── (c) Mined from: fit-composition-shrink.json ────────────────────────────
+  // ── (c) fit_composition_to_layers ─────────────────────────────────────────
   it('fit_composition_to_layers clamps and unpins the composition duration', () => {
     const a = freshActor()
     const t = aRollId(a)
@@ -97,7 +94,7 @@ describe('timeline mutation intent', () => {
     expect(snap.composition.duration_pinned).toBe(false)
   })
 
-  // ── (d) Mined from: undo-move.json ────────────────────────────────────────
+  // ── (d) Undo restores exactly ─────────────────────────────────────────────
   it('undo precisely restores the pre-op snapshot state', () => {
     const a = freshActor()
     const t = aRollId(a)
@@ -119,10 +116,9 @@ describe('timeline mutation intent', () => {
     expect(afterUndo?.t_end_us).toBe(3_000_000)
   })
 
-  // ── (e-i) Mined from: group-trim-coupled.json ────────────────────────────
-  // The sequence puts L1 on @A and L2 on @B in the same group, then trims
-  // L1's Out edge from 8s → 5s. Because both members share the same Out-edge
-  // timestamp, the coupled trim must shift BOTH to 5s.
+  // ── (e-i) Coupled group trim ──────────────────────────────────────────────
+  // L1 on @A and L2 on @B share a group AND the same Out-edge timestamp, so
+  // trimming L1's Out edge must shift BOTH members by the same delta.
   it('group trim shifts all aligned members by the same delta (coupled alignment)', () => {
     const a = freshActor()
     const trackA = aRollId(a)
@@ -143,7 +139,7 @@ describe('timeline mutation intent', () => {
     expect(findLayer(l2Id)?.t_start_us).toBe(0)
   })
 
-  // ── (e-ii) Mined from: group-locked-member-reject.json ────────────────────
+  // ── (e-ii) Locked grouped sibling ─────────────────────────────────────────
   it('group move is rejected when a grouped sibling is locked', () => {
     const a = freshActor()
     const t = aRollId(a)
@@ -160,10 +156,10 @@ describe('timeline mutation intent', () => {
     expect(layers.find((l) => l.id === l2Id)?.t_start_us).toBe(2_000_000)
   })
 
-  // ── (f) Mined from: split-inside.json ─────────────────────────────────────
-  // Discovery: left half REUSES the original layer id
-  // (split.ts splitSingleLayer line 53: `return { left: id, right: right.id }`).
-  // The original id is NOT gone — it IS the left half.
+  // ── (f) Split reuses the left id ──────────────────────────────────────────
+  // The left half REUSES the original layer id (split.ts splitSingleLayer
+  // returns `{ left: id, right: right.id }`): the original id is NOT gone — it
+  // IS the left half.
   it('split produces two contiguous, non-overlapping halves; left reuses the original id', () => {
     const a = freshActor()
     const t = aRollId(a)
@@ -189,9 +185,9 @@ describe('timeline mutation intent', () => {
   })
 
   // ── (g) Regression: no-op trim must NOT create a phantom history entry ─────
-  // Reproduces the Task 3 T3-M2 discovery: applyTrimLayer returns early when
-  // requestedDelta===0, so `commit` sees an identical draft and also skips
-  // recording (immer returns the same object reference → no history slot).
+  // applyTrimLayer returns early when requestedDelta===0, so `commit` sees an
+  // identical draft and also skips recording (immer returns the same object
+  // reference → no history slot).
   // A single `undo` after a no-op trim must step past the trim directly back
   // to the add_layer, proving no phantom entry was inserted.
   it('regression: no-op trim (same-value edge) does not insert a history entry', () => {

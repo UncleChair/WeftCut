@@ -12,10 +12,6 @@
 //! mandatory. `i18n_key` + `i18n_args` are optional hints for the UI to
 //! translate when zh-CN is active; the JSONL forensic record always has
 //! the English fallback.
-//!
-//! Lifecycle (recap): the producer fills out an entry; `LogBus::emit`
-//! stamps `id` + `ts` and broadcasts. The redactor runs before
-//! persistence and broadcast — see `redact.rs`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

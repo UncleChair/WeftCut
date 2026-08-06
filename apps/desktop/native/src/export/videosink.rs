@@ -74,8 +74,8 @@ pub struct VideoSinkStartArgs {
     pub bitrate: u64,
     pub cbr: bool,
     /// Peak ceiling in bits per second (`-maxrate`), VBR only. Omitted ⇒
-    /// uncapped ABR, the pre-existing behavior. Ignored under `cbr`, where the
-    /// ceiling is the target by definition.
+    /// uncapped ABR. Ignored under `cbr`, where the ceiling is the target by
+    /// definition.
     #[serde(default)]
     pub max_bitrate: Option<u64>,
     /// VBV buffer in BITS (`-bufsize`). Omitted ⇒ derived from the ceiling by
@@ -86,9 +86,9 @@ pub struct VideoSinkStartArgs {
     pub software: bool,
     /// Empty ⇒ no ffmpeg (byte-count only; used by tests). Non-empty ⇒ encode.
     pub output_path: String,
-    /// rawvideo input format the renderer packs: "yuv420p" | "yuv420p10le"
-    /// (E3 adds "yuv422p" | "yuv422p10le"). Defaults to the legacy 10-bit
-    /// format so pre-E2 callers keep working.
+    /// rawvideo input format the renderer packs: "yuv420p" | "yuv420p10le" |
+    /// "yuv422p" | "yuv422p10le". Defaults to yuv420p10le when the caller
+    /// omits it.
     #[serde(default = "default_sink_pix_fmt")]
     pub pix_fmt: String,
     /// Constant-quality value (rateMode "quality"). Some ⇒ CRF/quality args
@@ -369,7 +369,7 @@ pub async fn video_sink_write(
 }
 
 /// Finalize: drop stdin (EOF → ffmpeg finalizes), reap the child directly, and
-/// return the IPC counters. No WS thread to join.
+/// return the IPC counters.
 pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStats, String> {
     let shared = {
         let mut guard = state.0.lock().unwrap();
@@ -395,8 +395,7 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
     }
     let bytes = shared.ipc_bytes.load(Ordering::Relaxed);
     let frames = shared.ipc_frames.load(Ordering::Relaxed);
-    // Deferred-optimization signal (docs/export-ipc-transport.md): is the per-frame
-    // Buffer copy worth eliminating? Compares copy vs stdin-write time across the export.
+    // See the `copy_ns` / `write_ns` fields on `SinkShared`.
     let copy_ms = shared.copy_ns.load(Ordering::Relaxed) / 1_000_000;
     let write_ms = shared.write_ns.load(Ordering::Relaxed) / 1_000_000;
     let mb = bytes / 1_048_576;

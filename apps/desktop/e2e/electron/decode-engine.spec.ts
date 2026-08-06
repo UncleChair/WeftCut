@@ -4,10 +4,8 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
-// Decode-engine resolution runtime proof (Task 13 retarget of the old
-// D2/tier-resolution spec). The 4-tier `EngineTier` model (`resolveEngineTier`:
-// native-hw → webcodecs-original → native-sw → proxy) is GONE. The current
-// model is `resolveDecodeEngine` (decodeEngine.ts): it returns
+// Decode-engine resolution runtime proof. The model is `resolveDecodeEngine`
+// (decodeEngine.ts): it returns
 // `{engine: "ffmpeg"|"webcodecs", source: "original"|"proxy", status, reason}`.
 // `auto` prefers ffmpeg (any codec) whenever the native component is loaded
 // and hasn't failed this session; only falls to webcodecs when the component
@@ -32,8 +30,8 @@ let PRORES_FIXTURE: string
 // 8-bit H.264 yuv420p — d3d11va-decodable, so the HW capability probe passes
 // on a real GPU box. Drives the auto+H.264 cell's hardware-lane resolution.
 let H264_FIXTURE: string
-// 8-bit AV1 yuv420p — NOT HW-eligible (`hwEligibleCodec` is 8-bit
-// h264/hevc/vp9 only, and the app's d3d11va HW probe declines AV1 anyway) but
+// 8-bit AV1 yuv420p — NOT HW-eligible (`hwEligibleCodec` is a per-lane union
+// that never admits AV1, and the app's d3d11va HW probe declines it anyway) but
 // IS WebCodecs-decodable (browser AV1/dav1d) AND ffmpeg-decodable (dav1d SW).
 // That split drives two cells: the pinned-webcodecs happy path (AV1 decodes
 // fine on Lite) and the pinned-ffmpeg pin-override cell (Standard still wins
@@ -187,7 +185,7 @@ test.describe('decode-engine resolution (Electron)', () => {
   // ffmpeg lacks an encoder — they do NOT gate CI. CI's fetched ffmpeg builds
   // (gyan "essentials" on Windows, BtbN GPL static on Linux, evermeet on
   // macOS) all bundle libx265 + prores_ks, so the probes would pass there;
-  // meanwhile `@weftcut/native-decode` is Windows-only in CI (Task 5), so on
+  // meanwhile `@weftcut/native-decode` is Windows-only in CI, so on
   // the Linux/macOS legs the ProRes cell (which needs the ffmpeg engine) would
   // resolve to webcodecs/unsupported instead and fail. This spec is
   // local-only; require explicit opt-in.
@@ -230,7 +228,7 @@ test.describe('decode-engine resolution (Electron)', () => {
   // resolves the SOFTWARE lane and there is no `native-gpu` to observe; the
   // cell SKIPS (it does not fail), matching the sibling HW specs
   // (preview-gpu-order, preview-hw-conformance). Self-clearing: keyed on the
-  // runtime-resolved lane, not a platform string (878795f2).
+  // runtime-resolved lane, not a platform string.
   test('auto + H.264: resolves ffmpeg on the original — hardware lane when the GPU probe passes', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
@@ -266,17 +264,17 @@ test.describe('decode-engine resolution (Electron)', () => {
 
   // Cell 2 — auto + ProRes: the ffmpeg engine again (no toggle needed — `auto`
   // doesn't care that ProRes is WebCodecs-blind, it just prefers ffmpeg
-  // outright). The LANE is host-dependent since eligibility went lane-aware
-  // (VT lane ticket 03): ProRes is eligible on the macOS videotoolbox lane, so
-  // a ProRes-engine Mac (M1 Pro/Max, M2+) resolves the HW lane ("native-gpu")
+  // outright). The LANE is host-dependent because eligibility is lane-aware:
+  // ProRes is eligible on the macOS videotoolbox lane, so a ProRes-engine Mac
+  // (M1 Pro/Max, M2+) resolves the HW lane ("native-gpu")
   // while every other host (base M1 — the VT ProRes probe declines — Linux,
   // Windows) lands on SOFTWARE ("sw"). This cell asserts the ENGINE axis only
   // (ffmpeg on the original), lane-agnostic; the lane axis has its own gates
   // (preview-hw-conformance per lane, preview-sw-conformance pinned software).
-  // This test doubles as the NO-AUTO-PROXY check (Task 13):
+  // This test doubles as the NO-AUTO-PROXY check:
   // the backend still builds a background quick-proxy for this NativeSw-
-  // routed clip (decode_route.rs — a still-current, unrelated backend
-  // concept; see the `mediaDecodeRouteKind` wait below), but
+  // routed clip (decode_route.rs — an unrelated backend concept; see the
+  // `mediaDecodeRouteKind` wait below), but
   // `resolveDecodeEngine` never auto-consumes it (`useProxySource` has no
   // activation path yet — PixiPreview always passes `false`), so the
   // resolved `builtFromKey` must be UNCHANGED after the proxy lands
@@ -403,24 +401,18 @@ test.describe('decode-engine resolution (Electron)', () => {
     }
   })
 
-  // Cell 6 (Task 11, proxy source activation) — Prefer Proxies: the project
-  // toggle swaps a heavy source's preview onto its quick proxy. H264_FIXTURE
-  // is reused deliberately, NOT swapped for a new fixture: it already routes
-  // to DirectExport (has a `quick_proxy` slot), not Bypass. Verified against
-  // the real routing policy (proxy_decision.rs) rather than assumed: the
-  // lavfi-generated 4 s clip has exactly ONE keyframe (libx264's default GOP
-  // is far longer than the 4 s clip), so `probe_max_keyframe_gap_secs`
-  // reports the full scan window — way past `MAX_BYPASS_GOP_SECONDS` (0.5 s).
-  // `gop_is_scrub_friendly` is therefore false, `source_is_safe_to_bypass`
-  // is false, and `decide()` lands on `(export: Original, preview: Proxy)` →
-  // `DecodeRoute::DirectExport` (confirmed by generating the identical
-  // fixture locally and reading its keyframe pts back with ffprobe: only
-  // `0.000000` — a single IDR — comes back). `generate_quick_proxy` (Task 5)
-  // then fills the still-empty `quick_proxy` slot on demand, `update_project_
-  // settings({prefer_proxies:true})` (Task 1/2) flips the intent, and
-  // `resolveDecodeEngine`'s hoisted proxy branch (Task 3/4) resolves
+  // Cell 6 — Prefer Proxies: the project toggle swaps a heavy source's preview
+  // onto its quick proxy. H264_FIXTURE is reused deliberately, NOT swapped for
+  // a new fixture: it already routes to DirectExport (has a `quick_proxy`
+  // slot), not Bypass. The lavfi-generated 4 s clip carries exactly ONE
+  // keyframe, so its measured GOP blows past `MAX_BYPASS_GOP_SECONDS` (0.5 s),
+  // `source_is_safe_to_bypass` is false, and `decide()` lands on
+  // `(export: Original, preview: Proxy)` → `DecodeRoute::DirectExport` (routing
+  // policy: jobs/proxy_decision.rs). `generate_quick_proxy` then fills the
+  // still-empty `quick_proxy` slot on demand, the prefer-proxies setting flips
+  // the intent, and `resolveDecodeEngine`'s hoisted proxy branch resolves
   // `webcodecs:proxy:<url>` regardless of the (default `auto`) decode_engine
-  // setting — the `ffmpeg × proxy` landmine fix.
+  // setting — the `ffmpeg × proxy` landmine.
   test('Prefer Proxies: a source with a quick proxy previews from webcodecs:proxy', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
@@ -503,15 +495,10 @@ test.describe('decode-engine resolution (Electron)', () => {
 
   // Cell 5b — REGRESSION: switching Lite (webcodecs) onto a ProRes clip that is
   // ALREADY BUILT under auto (ffmpeg) must surface the UnsupportedClipCard. This
-  // guards `Compositor.ensureClip`'s existing-clip branch, which used to act
-  // ONLY on an "ok" swap: a clip whose resolution flipped to "unsupported" was
-  // left on screen with no card (early `return existing`, never
-  // `unsupportedMedia.add`). That gap is the mechanism behind Cell 5's
-  // under-load flake — `app_settings_set` via the raw command propagates to the
-  // renderer store asynchronously, so a first composite can build an ffmpeg clip
-  // before the webcodecs pin lands; once the sticky WebCodecs-unusable mark then
-  // arrives, the stale ffmpeg clip needs reconciling. Deterministic here because
-  // we WAIT for the ffmpeg clip before switching.
+  // guards `Compositor.ensureClip`'s existing-clip branch: a resolution that
+  // flips to "unsupported" must mount the card, not keep the stale clip on
+  // screen. Deterministic here because we WAIT for the ffmpeg clip before
+  // switching.
   test('switching Lite on a live ffmpeg ProRes clip surfaces the UnsupportedClipCard', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()

@@ -16,8 +16,8 @@ describe("toolStore", () => {
     expect(activeTool()).toBe("blade");
   });
 
-  // The whole point of dropping the old boolean toggle: pressing a tool's key
-  // twice must leave you on that tool, not bounce you back to Selection.
+  // One key per tool: pressing a tool's key twice must leave you on that tool,
+  // not bounce you back to Selection (see the LANDMINE on `setTool`).
   it("is idempotent — re-arming the active tool is a no-op", () => {
     setTool("blade");
     setTool("blade");

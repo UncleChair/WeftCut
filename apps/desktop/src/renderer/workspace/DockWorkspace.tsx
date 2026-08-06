@@ -808,8 +808,7 @@ export function WeftCutDockTab({
   /* Overflow-dropdown rows are menu items, not drag sources: no grab cursor,
    * no maximize-on-double-click. Click activation stays with Dockview's row
    * wrapper. Closing a Panel from the list (middle-click) also removes the
-   * row — the popover isn't rebuilt while open, and a stale row would point
-   * at a dead Panel. */
+   * row (`removeOverflowRow`). */
   if (tabLocation === "headerOverflow") {
     return (
       <div

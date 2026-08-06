@@ -21,10 +21,9 @@ import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } 
 
 /// SW decoders hold a reorder/pipelining tail internally and the chunked
 /// model never mid-flushes, so feed a bounded lead-in past the stop key to
-/// push the tail out; H.264's max DPB is 16. First added for the SW 10-bit
-/// lane; generalized to every lane after Chromium's macOS prefer-software
-/// H.264 decoder was observed withholding the last 2 frames of a fed window
-/// (4 with B-frames) until more input or a flush arrives — wedging each
+/// push the tail out; H.264's max DPB is 16. Applies to EVERY lane: Chromium's
+/// macOS prefer-software H.264 decoder withholds the last 2 frames of a fed
+/// window (4 with B-frames) until more input or a flush arrives — wedging each
 /// short-GOP chunk's final frame against `waitForPts` (the macOS Lite-export
 /// freeze: 61 packets fed, 59 emitted, queue 0, no error).
 const REORDER_MARGIN = 16;
@@ -74,8 +73,8 @@ export class ExportFrameStore implements FrameStore {
   private entries: RingEntry[] = [];
   /// EOS drain lifecycle. Once `ended`, no frame will ever arrive again and
   /// `isReadyFor` may clamp any target while a frame is held. `evictBefore`
-  /// always retains the immediate lower PTS neighbour, so issuing the drain no
-  /// longer needs a separate pinning state.
+  /// always retains the immediate lower PTS neighbour, so the drain needs no
+  /// pinning state.
   private ended = false;
   /// Pending `waitForPts` resolvers. On every `push` we resolve and
   /// remove the ones whose tUs is now covered. The Worker uses this
@@ -89,7 +88,7 @@ export class ExportFrameStore implements FrameStore {
   /// proof, not an eviction or selection hint: `frameAt` still chooses the
   /// greatest held PTS at/before the target.
   private completedRange: { aUs: number; bUs: number } | null = null;
-  /// Pending resolvers parked at the 10-bit high-water gate (I2 backpressure).
+  /// Pending resolvers parked at the 10-bit high-water backpressure gate.
   private gateWaiters: Array<() => void> = [];
   /// Non-null once `fail()` is called; subsequent waitForPts calls reject.
   private failure: string | null = null;
@@ -246,9 +245,7 @@ export class ExportFrameStore implements FrameStore {
   /// decoder's PTS grid (e.g. 0, 33333, 66666, 100000 … — irregular 33333/
   /// 33334 steps) drifts off the integer `i × frameDurUs` output grid (0,
   /// 33333, 66666, 99999 …). At a drift point the target (99999) lands in a
-  /// 1µs gap between two frames' [pts, pts+dur) intervals. The old
-  /// duration-based eviction also dropped the lower neighbour, leaving
-  /// `containsPts` false even though later frames were present.
+  /// 1µs gap between two frames' [pts, pts+dur) intervals.
   private isReadyFor(tUs: number): boolean {
     const atOrBefore = this.indexAtOrBefore(tUs);
     if (atOrBefore >= 0 && this.entries[atOrBefore]!.ptsUs === tUs) return true;
@@ -355,7 +352,7 @@ export class ExportFrameStore implements FrameStore {
     this.notifyShrink();
   }
 
-  /// Backpressure gate for the 10-bit copy chain (I2). Resolves immediately
+  /// Backpressure gate for the 10-bit copy chain. Resolves immediately
   /// when the ring is below the high-water mark OR the ring has failed (so
   /// chain links drain and the failure surfaces at `waitForPts`).
   waitBelowTenBitHighWater(): Promise<void> {
@@ -449,9 +446,9 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// its frames are already in the decoder/ring pipeline.
   private coveredThroughUs = Number.NEGATIVE_INFINITY;
   private outputFrameCount = 0;
-  /// Serialized copy chain for the 10-bit lane (C1+C2 fix). Each decoder
-  /// output callback appends to this chain so copies land in emit order and
-  /// the EOS flush `.then` awaits the chain before calling finishEosDrain.
+  /// Serialized copy chain for the 10-bit lane. Each decoder output callback
+  /// appends to this chain so copies land in emit order and the EOS flush
+  /// `.then` awaits the chain before calling finishEosDrain.
   private copyChain: Promise<void> = Promise.resolve();
   /// Cumulative packets fed to the decoder across all `decodeRange` calls.
   /// With a 1:1 export this should track the frame count; a large excess means
@@ -590,7 +587,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
             const msg = `[weftcut/export] ${this.mediaId} 10-bit copyTo failed: ${String(e)}`;
             // eslint-disable-next-line no-console
             console.error(msg);
-            // I1: a dropped frame is silent corruption and a parked-forever waiter —
+            // A dropped frame is silent corruption and a parked-forever waiter —
             // fail the ring loudly so the worker's waitForPts rejects the export.
             this.ring.fail(msg);
           });
@@ -622,10 +619,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
     return dec;
   }
 
-  /// Build the decoder config, honoring `downgraded` and `preferSoftware`.
-  /// Spreads the full mediabunny config (colorSpace etc.) and overrides only
-  /// hwAccel. `preferSoftware` pre-configures SW for codecs known to have no
-  /// HW path (e.g. Hi10P), skipping the error-fallback round-trip.
+  /// Build the decoder config, honoring `downgraded` and `preferSoftware`
+  /// (see the `preferSoftware` field for why SW is pre-configured).
   private buildConfig(): VideoDecoderConfig {
     if (!this.config) {
       throw new Error(`[weftcut/export] ${this.mediaId}: buildConfig before ready`);
@@ -928,11 +923,8 @@ export class ExportDecoderPool implements DecoderPool {
   /// Handles are keyed by `init.handleKey` — the export Worker and the
   /// export-mode Compositor both pass `exportHandleKey(...)`, giving one
   /// decode pipeline per (media, phase) group — falling back to `mediaId`
-  /// for callers that don't group. Keying by bare mediaId let two
-  /// overlapping clips of one source race a single handle: interleaved
-  /// `decodeRange` calls corrupted the packet cursor and each clip's
-  /// per-frame evict dropped frames the other still needed — the export's
-  /// frame counter froze mid-run.
+  /// for callers that don't group. See `exportHandleKey` for why phase
+  /// separation is required.
   acquire(init: SourceHandleInit): ExportDecodeSession {
     const key = init.handleKey ?? init.mediaId;
     let h = this.handles.get(key);

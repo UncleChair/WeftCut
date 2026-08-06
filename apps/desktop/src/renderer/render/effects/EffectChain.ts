@@ -1,6 +1,5 @@
-// Maintains a cached, ordered list of Pixi Filter instances for one layer's
-// effect chain. Rebuilds instances only when the (id, kind) sequence changes
-// structurally; applies resolved param values every frame.
+// Owns the cached, ordered list of live Pixi Filter instances for one layer's
+// effect chain.
 
 import type { Filter } from "pixi.js";
 import type { EffectView } from "../../ipc";
@@ -35,7 +34,6 @@ export class EffectChain {
       }
     }
 
-    // Apply resolved params each frame.
     for (let i = 0; i < this.instances.length; i++) {
       const inst = this.instances[i]!;
       const view = wanted[i]!;

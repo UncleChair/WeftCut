@@ -1,8 +1,7 @@
 //! Background-job pipeline for media derivatives.
 //!
 //! Each `enqueue_*` spawns a tokio task that runs ffmpeg under a global
-//! semaphore (default 2 concurrent ffmpeg children — importing 10 files at
-//! once shouldn't fork-bomb the host). On completion, the task routes the
+//! ffmpeg semaphore (`MAX_PARALLEL_FFMPEG`). On completion, the task routes the
 //! `MediaItem`'s derivative patch through `commit_media_derivatives`, which
 //! always emits a `media:derivatives` event the TS state actor (the sole
 //! writer, applied by Electron main) consumes — so subscribers (UI,
@@ -98,6 +97,8 @@ pub const EVENT_STARTED: &str = "media:job_started";
 pub const EVENT_COMPLETE: &str = "media:job_complete";
 pub const EVENT_ERROR: &str = "media:job_error";
 
+/// Concurrent ffmpeg children allowed across every background job. Deliberately
+/// low: importing ten files at once must not fork-bomb the host.
 const MAX_PARALLEL_FFMPEG: usize = 2;
 
 /// Global ffmpeg-child semaphore. Shared with `speech::audio_extract` so cloud
@@ -183,10 +184,10 @@ impl Drop for QuickProxyGuard {
 /// deterministic `<dest>.tmp` scheme as the quick proxy, and `spawn_proxy` has
 /// two callers (the quick-proxy `then_full` chain and export-recovery
 /// `ensure_full_proxy`) that workspace re-opens / re-decisions can fire for the
-/// same media while a build is still running — observed live 2026-07-23: two
-/// identical 4K transcodes racing on one `.tmp`, the second's `-y` truncating
-/// the first's output to garbage. Dedupe like the quick proxy: the running
-/// job's completion event serves every waiter.
+/// same media while a build is still running. Two identical transcodes racing
+/// on one `.tmp` let the second's `-y` truncate the first's output to garbage.
+/// Dedupe like the quick proxy: the running job's completion event serves every
+/// waiter.
 fn full_proxy_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
     static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
     S.get_or_init(Default::default)
@@ -277,12 +278,7 @@ pub fn enqueue_for_media(events: Arc<dyn EventSink>, cache: CacheLayout, media: 
         MediaKind::Video => {
             // Already-decided sources whose proxy (if any) is on disk only need
             // their decorations re-fanned; everything else (re-)runs the routing
-            // decision. A FRESH import starts on `initial_decode_route` (video →
-            // Proxied/unbuilt) so `route_needs_decision` is true and the decision
-            // runs; on RE-OPEN a persisted Bypass is an already-made decision
-            // (decorations only) and a Proxied source is ready only when its full
-            // master exists on disk (a stale-version proxy was already cleared by
-            // the open-time invalidation pass).
+            // decision — see `proxy_decision::route_needs_decision`.
             if proxy_decision::route_needs_decision(&media.decode_route) {
                 spawn_proxy_decision(events, cache, media);
             } else {
@@ -309,8 +305,9 @@ fn spawn_decorations(events: Arc<dyn EventSink>, cache: CacheLayout, media: Medi
     }
 }
 
-/// Enqueue ONLY the conform job (export readiness gate / pre-conform-era
-/// backfill via the `ensure_conform` command). Returns immediately.
+/// Enqueue ONLY the conform job (export readiness gate / backfill for media
+/// imported without a conform, via the `ensure_conform` command). Returns
+/// immediately.
 pub fn enqueue_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     spawn_conform(events, cache, media);
 }
@@ -395,12 +392,12 @@ fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: M
         // disk but the route lost track of it (a build landed whose commit
         // never persisted before an HMR/crash reopen, or the workspace moved
         // and the stored absolute path went stale). Re-running the decision
-        // would reset the route and re-enqueue the full build (observed live
-        // 2026-07-23: reopen churn); adopt the master instead — the same
-        // trust as `proxy::run`'s cached-ok early return (a stale-format
-        // registered master was already deleted by the open-time invalidation
-        // pass before this enqueue). Proxied/NativeSw only: those are the two
-        // variants a full master belongs to, and the fold ignores it elsewhere.
+        // would reset the route and re-enqueue the full build; adopt the master
+        // instead — the same trust as `proxy::run`'s cached-ok early return (a
+        // stale-format registered master was already deleted by the open-time
+        // invalidation pass before this enqueue). Proxied/NativeSw only: those
+        // are the two variants a full master belongs to, and the fold ignores
+        // it elsewhere.
         if matches!(
             media.decode_route,
             DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
@@ -459,9 +456,8 @@ fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: M
             .flatten()
         };
         let route = proxy_decision::decide(&media, source_gop_secs);
-        // Commit the authoritative initial route FIRST (it replaces the old
-        // per-branch bypass / export-uses-original flag commits), then spawn the
-        // jobs the route implies.
+        // Commit the authoritative initial route FIRST, then spawn the jobs the
+        // route implies.
         let initial = DecodeRoute::from_proxy_route(route);
         let patch = MediaDerivativesPatch {
             set_route: Some(initial),
@@ -598,10 +594,7 @@ fn spawn_quick_proxy(
     source_gop_secs: Option<f64>,
 ) {
     let Some(guard) = try_begin_quick_proxy(media.id) else {
-        // Already building — the Unsupported-card button, the media-pool
-        // pill, and the import-time fan-out can all race to call this for
-        // the same media. That job's complete/error event serves this
-        // caller's wait too.
+        // Already building — see `quick_proxy_in_flight`.
         info!(
             "quick proxy already in flight for {}; skipping duplicate build",
             media.id
@@ -683,9 +676,7 @@ fn spawn_quick_proxy(
 
 fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     let Some(guard) = try_begin_full_proxy(media.id) else {
-        // Already building — the then_full chain and ensure_full_proxy can race
-        // to call this for the same media. That job's complete/error event
-        // serves this caller's wait too.
+        // Already building — see `full_proxy_in_flight`.
         info!(
             "full proxy already in flight for {}; skipping duplicate build",
             media.id
@@ -714,11 +705,12 @@ fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem)
 
         match result {
             Ok(proxy_path) => {
-                // Keep the quick proxy on disk: it is the PREVIEW source (lighter,
-                // height-capped — see proxy.rs), while this full master is the
-                // EXPORT source. Deleting it here left a proxied source with no
-                // preview path once the full proxy landed (the summary nulls a
-                // missing quick proxy and preview keys on it) → blank preview.
+                // Keep the quick proxy on disk: it is the PREVIEW source
+                // (lighter, height-capped — see `QUICK_PROXY_HEIGHT_CAP` in
+                // quick_proxy.rs), while this full master is the EXPORT source.
+                // Deleting it here leaves a proxied source with no preview path
+                // once the full proxy lands (the summary nulls a missing quick
+                // proxy and preview keys on it) → blank preview.
                 let path_str = proxy_path.display().to_string();
                 let mut thumbnail_media = media.clone();
                 thumbnail_media.path_abs = proxy_path.clone();
@@ -952,8 +944,7 @@ mod tests {
     /// Reopen self-heal: when the content-addressed full master is already on
     /// disk but the (stale-persisted) route says un-built, the decision path
     /// must ADOPT it — commit `full_proxy_landed` — and must NOT re-run the
-    /// routing decision (no `set_route` reset, no full rebuild). Regression
-    /// for the 2026-07-23 reopen churn.
+    /// routing decision (no `set_route` reset, no full rebuild).
     #[tokio::test]
     async fn proxy_decision_adopts_on_disk_master_without_redeciding() {
         use crate::events::VecEventSink;
@@ -1041,7 +1032,7 @@ mod tests {
     }
 
     /// `commit_media_derivatives` always emits a `media:derivatives` event for the
-    /// TS state actor (the sole writer) to apply — no engine-authority branch.
+    /// TS state actor (the sole writer) to apply.
     #[tokio::test]
     async fn commit_derivatives_emits_event() {
         use crate::events::VecEventSink;

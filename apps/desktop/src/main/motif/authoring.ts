@@ -33,8 +33,7 @@ export function builtinMotifs(builtinDir: string): BuiltinMotif[] {
   return out
 }
 
-/** Read any built-in or user Motif's source. Built-ins win. Mirrors
- *  `get_motif_source_core`. */
+/** Read any built-in or user Motif's source. Built-ins win. */
 export function getMotifSource(store: UserMotifStore, builtins: BuiltinMotif[], id: string): MotifSourceTs {
   const b = builtins.find((x) => x.id === id)
   if (b) return { manifest: b.manifest, html: b.html }
@@ -45,18 +44,16 @@ export function getMotifSource(store: UserMotifStore, builtins: BuiltinMotif[], 
 
 /** Serialize manifest + raw html into the picker payload (superset of MCP
  *  list_motifs: every manifest field + html + status + content_hash). One helper
- *  so built-in/installed/draft emit the same shape. Mirrors `motif_to_payload`.
- *  `html` MUST be the composed/stored FULL html (island included) so content_hash
- *  matches Rust's `self.html` hash. */
+ *  so built-in/installed/draft emit the same shape. `html` MUST be the
+ *  composed/stored FULL html (island included) — content_hash is computed over it. */
 export function motifToPayload(manifest: Manifest, html: string, status: string): Record<string, unknown> {
   const content_hash = motifContentHash(manifest, html)
   return { ...manifest, html, status, content_hash }
 }
 
 /** UI catalog: builtins, then installed, then drafts (id-unique; a draft whose id
- *  is already published/built-in is skipped — published wins, matching read_file).
- *  A draft with a recorded Update target carries `target_id`. Mirrors
- *  `list_motifs_inner`. */
+ *  is already published/built-in is skipped — published wins).
+ *  A draft with a recorded Update target carries `target_id`. */
 export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
   for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin'))
@@ -91,8 +88,7 @@ function takenIds(store: UserMotifStore): string[] {
 
 /** Validate + mint id + compose + write the draft. Identity is app-owned: id is
  *  minted from the name and version forced to 1 (any id/version in `manifest` is
- *  ignored). `from` (when set) is recorded as the draft's Update target. Mirrors
- *  `write_motif_draft_core`. */
+ *  ignored). `from` (when set) is recorded as the draft's Update target. */
 export function writeMotifDraftCore(store: UserMotifStore, manifest: Manifest, html: string, from: string | null): string {
   validateManifest(manifest)
   const draftId = assignUniqueId(manifest.name, takenIds(store))
@@ -104,7 +100,7 @@ export function writeMotifDraftCore(store: UserMotifStore, manifest: Manifest, h
 
 /** Parse the island out of an edited full-source doc, force the draft's stable
  *  identity (id + version 1), re-validate, overwrite the SAME draft. Amend never
- *  CREATES. Mirrors `amend_draft_html`. */
+ *  CREATES. */
 export function amendDraftHtml(store: UserMotifStore, draftId: string, source: string): void {
   if (store.getDraft(draftId) === null) throw new Error(`unknown draft '${draftId}'`)
   const parsed = parseManifestIsland(source)
@@ -123,7 +119,7 @@ function getMotifSourceOrNull(store: UserMotifStore, builtins: BuiltinMotif[], i
 
 /** Seed a NEW working draft from a built-in or installed source; for an INSTALLED
  *  source, record it as the draft's Update target (built-ins can't update in place,
- *  so a built-in fork records no target). Mirrors `create_edit_draft_core`. */
+ *  so a built-in fork records no target). */
 export function createEditDraftCore(store: UserMotifStore, builtins: BuiltinMotif[], sourceId: string): string {
   const isBuiltin = BUILTIN_IDS.includes(sourceId)
   const source = getMotifSourceOrNull(store, builtins, sourceId)
@@ -137,7 +133,7 @@ export function createEditDraftCore(store: UserMotifStore, builtins: BuiltinMoti
 
 /** Parse + validate the island from an external .html, mint a FRESH unique id
  *  (ignoring any claimed id/version), write as a from-scratch draft (no target →
- *  installs as new). Mirrors `import_motif_from_source`. */
+ *  installs as new). */
 export function importMotifFromSource(store: UserMotifStore, source: string): string {
   const parsed = parseManifestIsland(source)
   const draftId = assignUniqueId(parsed.name, takenIds(store))
@@ -147,7 +143,7 @@ export function importMotifFromSource(store: UserMotifStore, source: string): st
   return draftId
 }
 
-/** Delete a published user Motif (built-ins rejected). Mirrors `delete_motif_core`. */
+/** Delete a published user Motif (built-ins rejected). */
 export function deleteMotifCore(store: UserMotifStore, id: string): void {
   if (BUILTIN_IDS.includes(id)) throw new Error(`cannot delete the built-in Motif '${id}'`)
   store.deleteUserMotif(id)
@@ -163,7 +159,7 @@ export type InstallArgs = { draft_id: string; mode: { kind: 'new' } | { kind: 'u
 /** Per-layer rebind updates for an Update: every layer whose motif_id is the
  *  working draft id OR the target id ends up on the target id, at the new version,
  *  with props lenient-migrated to the new schema (drop unknown, fill new defaults,
- *  fall back invalid values). Pure. Mirrors `build_rebind_updates`. */
+ *  fall back invalid values). Pure. */
 export function buildRebindUpdates(layers: MotifLayerRef[], workingId: string, target: Manifest): MotifRebindEntry[] {
   const updates: MotifRebindEntry[] = []
   for (const l of layers) {
@@ -180,8 +176,7 @@ export function buildRebindUpdates(layers: MotifLayerRef[], workingId: string, t
 
 /** Publish the draft (store side) + (Update) build rebind updates from the
  *  caller-supplied motif layers; returns `{ publishedId, updates }`. New mode →
- *  empty updates. Does NOT write the actor (the host dispatches rebind_motif).
- *  Mirrors `install_motif_compute`. */
+ *  empty updates. Does NOT write the actor (the host dispatches rebind_motif). */
 export function installMotifCompute(
   store: UserMotifStore,
   motifLayers: MotifLayerRef[],

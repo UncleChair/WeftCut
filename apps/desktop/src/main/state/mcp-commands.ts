@@ -31,8 +31,8 @@ const INTERP_SIMPLE = new Set(['Hold', 'Linear', 'EaseIn', 'EaseOut'])
 const isPair = (v: unknown): v is [number, number] =>
   Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number'
 
-/** Validate an Interpolation (model.ts:16) — mirrors Rust serde from_value::<Interpolation>
- *  (tools.rs:934). Throws McpArgError on malformed input → invalid_params. */
+/** Validate an Interpolation (model.ts) — mirrors the Rust serde form in
+ *  state/animated.rs. Throws McpArgError on malformed input → invalid_params. */
 export function parseInterp(v: unknown): Interpolation {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid interp: not an object`)
   const o = v as Record<string, unknown>
@@ -51,8 +51,8 @@ export function parseInterpOpt(v: unknown): Interpolation | undefined {
   return v === undefined ? undefined : parseInterp(v)
 }
 
-/** Validate an Animated<number> (model.ts:20) — mirrors Rust serde
- *  from_value::<Animated<f64>> (tools.rs:1038). Throws McpArgError → invalid_params. */
+/** Validate an Animated<number> (model.ts) — mirrors the Rust serde form of
+ *  Animated<f64> in state/animated.rs. Throws McpArgError → invalid_params. */
 export function parseAnimatedF64(v: unknown): Animated<number> {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: not an object`)
   const o = v as Record<string, unknown>
@@ -138,7 +138,7 @@ export function parseRole(v: unknown): string {
 
 const TRANSITION_KINDS = new Set(['Crossfade', 'Wipe', 'Slide'])
 const TRANSITION_DIRECTIONS = new Set(['left', 'right', 'up', 'down'])
-/** Flat (kind, direction) wire args → TransitionKind (model.ts:87). Strict on
+/** Flat (kind, direction) wire args → TransitionKind (model.ts). Strict on
  *  the pairing so agents get a precise error instead of a silently ignored
  *  field: Wipe/Slide REQUIRE direction; Crossfade REJECTS one. Shared by the
  *  actor dispatch arms and the MCP parsers (single source — no drift). */
@@ -167,11 +167,9 @@ export function parseTransitionKindOpt(kind: unknown, direction: unknown): Trans
   return parseTransitionKind(kind, direction)
 }
 
-/** Validate an Rgba (color.rs: four u8 fields). Rust serde rejects a non-object
- *  or out-of-range value at the deserialize boundary → invalid_params; the
- *  dedicated mcpCall arms (add_marker/add_color_layer) previously cast `a.color
- *  as Rgba` raw, so a string like "#fff" committed garbage to the actor and
- *  wedged it. Mirror Rust's contract here so it never commits. */
+/** Validate an Rgba (color.rs: four u8 fields). A non-object or out-of-range
+ *  color must reject here → invalid_params; an ungated `a.color as Rgba` lets a
+ *  string like "#fff" commit garbage to the actor. */
 export function parseRgba(v: unknown, field: string): Rgba {
   if (v === null || typeof v !== 'object') throw new McpArgError(`${field} must be an {r,g,b,a} color object`, field)
   const o = v as Record<string, unknown>
@@ -235,10 +233,10 @@ export function toolEmpty(): ToolResultJson { return { content: [] } }
  *  via its own canonicalize() of both sides, so this stays green. */
 export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(sortKeys(v)) }] } }
 
-/** native/src/mcp/keyframes.rs:165 get_param_track result shape (NOT the raw
- *  Animated serde): Static → {mode,value}; Keyframed → {mode, keyframes:[{id,
- *  t_us (timeline-absolute = local + t_start), t_local_us (stored base), value,
- *  interp}]}. Caller wraps in toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
+/** get_param_track result shape (NOT the raw Animated serde): Static →
+ *  {mode,value}; Keyframed → {mode, keyframes:[{id, t_us (timeline-absolute =
+ *  local + t_start), t_local_us (stored base), value, interp}]}. Caller wraps in
+ *  toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
 export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { mode: 'Keyframed'; value: Array<{ id: string; t_us: number; value: number; interp: unknown }> }, tStartUs: number): unknown {
   if (track.mode === 'Static') return { mode: 'Static', value: track.value }
   return {
@@ -265,10 +263,10 @@ export function dryRunErrorString(e: CommandError): string {
   return e.error
 }
 
-/** tools.rs:1512 DryRunResponse: per-op {index, status, output|error} flattened,
- *  plus halted_at (the first failing index, or null). DryRunOutput serde is
- *  tag="kind" rename_all=snake_case: add_layer{layer_id} / split_layer{left_id,
- *  right_id} / void. Wrapped in toolJson (sorted keys). */
+/** Dry-run response: per-op {index, status, output|error} flattened, plus
+ *  halted_at (the first failing index, or null). DryRunOutput is kind-tagged,
+ *  snake_case: add_layer{layer_id} / split_layer{left_id, right_id} / void.
+ *  Wrapped in toolJson (sorted keys). */
 export function shapeDryRunResponse(
   results: Array<{ ok: true; value: { kind: 'AddLayer'; layer_id: string } | { kind: 'SplitLayer'; left_id: string; right_id: string } | { kind: 'Void' } } | { ok: false; error: CommandError }>,
 ): ToolResultJson {
@@ -287,9 +285,9 @@ export function shapeDryRunResponse(
   return toolJson({ results: entries, halted_at: haltedAt })
 }
 
-/** map_command_error (tools.rs:61-118): CommandError → MCP error JSON. Only the
- *  structured `data` (LayerOverlap/MediaInUse) + InvalidArgument message are
- *  gated byte-exact; other prose messages are reasonable-but-ungated. */
+/** CommandError → MCP error JSON. Only the structured `data`
+ *  (LayerOverlap/MediaInUse) + InvalidArgument message are gated byte-exact;
+ *  other prose messages are reasonable-but-ungated. */
 export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'InvalidArgument') return { code: 'invalid_params', message: `${e.field}: ${e.detail}` }
   if (e.error === 'Backend') return { code: 'internal', message: e.detail }
@@ -312,12 +310,8 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   // ── Grid + bounds rules: the only ValidationErrors an agent can fix mechanically ──
-  // Every other rule needs the caller to re-think the edit; these three just need a
-  // corrected number, and `snap_to` already IS that number (computed in validate.ts,
-  // where the lattice is in hand). Letting them fall through to the generic
-  // `invalid_params: ValidationFailed` threw that away and left the agent to
-  // re-derive `round(i * 1e6 * den / num)` — which is precisely the arithmetic the
-  // whole frame-grid effort exists to keep in one place.
+  // These three carry `snap_to` (computed in validate.ts, where the lattice is in
+  // hand), so surface it — the agent must not re-derive the lattice arithmetic.
   if (e.error === 'ValidationFailed' && e.detail.rule === 'OffGridLayerBoundary') {
     const d = e.detail
     // Name the lattice, not just the numbers: an Audio rejection reports fps 48000/1
@@ -366,7 +360,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   return { code: 'invalid_params', message: e.error }
 }
 
-// keyframes.rs:149 require_key presence check (the caller throws McpArgError on false).
+// Presence check; the caller throws McpArgError on false.
 export function keyframePresent(track: { mode: string; value: unknown }, id: string): boolean {
   return track.mode === 'Keyframed' && Array.isArray((track as { value: Array<{ id: string }> }).value)
     && (track as { value: Array<{ id: string }> }).value.some((k) => k.id === id)
@@ -422,12 +416,11 @@ const ANIM_TRACK_SCHEMA = {
 }
 
 // ── Single-source MCP tool table ─────────────────────────────────────────────
-// Each table-exec entry folds §2.5 hardening into parseArgs: every former
-// `a.x as T` cast → parseX(a.x,'x'); optional booleans → parseBoolOpt; patch
-// objects are parser-gated too (parseObj at minimum — a non-object patch must
-// reject, never commit-nothing-and-succeed); all uuid/number/enum scalars are
-// parser-gated. The 19 dedicated stubs exist only so MCP_TOOLS projection
-// stays complete; their behavior lives in actor.ts arms.
+// Every scalar and patch arg of a table-exec entry is parser-gated in parseArgs:
+// uuid/number/enum/boolean scalars through parseX, patch objects through parseObj
+// at minimum — a non-object patch must reject, never commit-nothing-and-succeed.
+// The dedicated stubs exist only so the MCP_TOOLS projection stays complete;
+// their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
@@ -662,7 +655,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. Unrecorded (not undoable). Mute wins over solo; any solo silences non-soloed roles.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'] }, muted: { type: ['boolean', 'null'] }, solo: { type: ['boolean', 'null'] } }, required: ['role'] },
     parseArgs: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }) },
-  // ── dedicated-exec (19) — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
+  // ── dedicated-exec — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
   { name: 'add_color_layer', exec: 'dedicated',
     description: 'Add a solid-color layer to a track. Returns the new layer id. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.',
     inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, height: { type: ['integer', 'null'] }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, width: { type: ['integer', 'null'] } }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },

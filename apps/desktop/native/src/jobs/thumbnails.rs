@@ -1,10 +1,8 @@
-//! Thumbnail extraction. Pulls 10 evenly-spaced frames from a video at
-//! 320 px wide (height auto-scaled to keep aspect). One ffmpeg invocation
-//! per media item — `-vf fps=N/D,scale=320:-2`. The fps filter rounds, so
-//! we cap at exactly N frames with `-frames:v N`.
+//! Thumbnail extraction: one ffmpeg invocation per media item pulls
+//! `THUMB_COUNT` evenly-spaced frames, scaled to `THUMB_WIDTH` (aspect kept).
 //!
-//! Cache layout: `<cache>/thumbnails/<file_hash>/000.jpg .. 009.jpg`.
-//! Skip-if-cached: directory exists AND has 10 non-zero-byte JPGs.
+//! Cache layout: `<cache>/thumbnails/<file_hash>/000.jpg ..`; a set counts as
+//! cached only when every JPG is present and non-empty.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -67,8 +65,9 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let pattern = tmp_dir.join("%03d.jpg");
 
     // -an drops audio (we only want frames). -q:v 5 = mid-quality JPG, ~30 KB
-    // per thumbnail at 320px. -vsync vfr / -fps_mode passthrough so the fps
-    // filter's output isn't second-guessed.
+    // per thumbnail. The fps filter rounds, so `-frames:v` is what caps the set
+    // at exactly `THUMB_COUNT`; -fps_mode passthrough so the fps filter's
+    // output isn't second-guessed.
     let status = Command::new(ffmpeg_path())
         .no_console_window()
         // Reap on future-drop so no orphan keeps writing the temp dir; see

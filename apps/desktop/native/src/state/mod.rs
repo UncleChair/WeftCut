@@ -1,12 +1,12 @@
 //! Project state model: the document types, their serde, and the shared
-//! command-surface types (errors, media patches, `Actor`) that outlive
-//! the deleted Rust state actor.
+//! command-surface types (errors, media patches) — the Rust↔TS wire contract.
+//! No actor machinery lives here; the TS state actor is the only writer.
 //!
 //! Design: `docs/data-model.md`.
 
 // The `pub use` block below re-exports the state crate's whole surface for
-// consumers (commands, MCP, tests, future phases). Many are not yet wired
-// in the lib build but are intentionally public.
+// consumers (commands, MCP, tests). Many are not yet wired in the lib build
+// but are intentionally public.
 #![allow(unused_imports)]
 
 pub mod animated;
@@ -28,9 +28,6 @@ pub mod track;
 pub mod transform;
 pub mod transition;
 
-// No actor machinery lives here — the TS state actor is the only writer.
-// This module carries the shared command/error/patch types (`command`) plus
-// the model serde modules: the Rust↔TS wire contract.
 pub use command::{CommandError, FullProxyLanded, MediaDerivativesPatch, ValidationError};
 pub use decode_route::DecodeRoute;
 

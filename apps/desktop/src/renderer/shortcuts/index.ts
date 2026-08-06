@@ -3,8 +3,9 @@
 // static action catalogue is in `defs.ts`.
 //
 // Consumers:
-// - `App.tsx` calls `useShortcuts({...})` once, passing handlers for
-//   every `ActionId` listed in `ACTION_DEFS`.
+// - `App.tsx` calls `useShortcuts({...})` once for the global actions;
+//   `Timeline.tsx` and `StartupScreen.tsx` mount their own dispatchers
+//   for the scoped subsets they own.
 // - `Menu.tsx`'s `<MenuItem actionId="...">` reads `ACTION_DEFS[id]`
 //   and `resolveAccelerator()` to render the accelerator hint.
 // - `SettingsPanel.tsx`'s Keyboard section uses `eventToBinding`,

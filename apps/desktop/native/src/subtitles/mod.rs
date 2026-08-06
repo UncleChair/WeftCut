@@ -18,8 +18,7 @@ pub enum SubFormat {
 
 impl SubFormat {
     /// Parse a format tag string ("srt", "ass", "vtt", case-insensitive).
-    /// Mirrors the tag-matching in `tools.rs apply_subtitles`. Returns Err for
-    /// unknown tags; None input → use `sniff`.
+    /// Returns Err for unknown tags; None input → use `sniff`.
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_ascii_lowercase().as_str() {
             "srt" => Ok(SubFormat::Srt),

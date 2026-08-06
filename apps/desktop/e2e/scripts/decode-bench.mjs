@@ -50,8 +50,7 @@ if (STRATEGY === "native-copyback" && !["nvdec", "vaapi", "videotoolbox"].includ
   console.error(`[decode-bench] invalid --hw-lane '${HW_LANE}' (expected nvdec|vaapi|videotoolbox)`);
   process.exit(1);
 }
-// Env for every electron.launch: the copy-back strategy pins the resolver to one
-// advertised HW lane; the app itself leaves the lane unforced (real probe picks it).
+// Env for every electron.launch; see `HW_LANE` above for what the pin means.
 const launchEnv = {
   ...process.env,
   WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1",
@@ -321,7 +320,7 @@ if (POOL_SWEEP) {
       }
       const tp = perRun.filter((t) => t?.kind === "throughput");
       // Co-select the median-BY-FPS run so fps and its timing block come from the
-      // SAME run: Stage 3 correlates fps-vs-N with coordRtt-vs-N, and a median fps
+      // SAME run: the sweep correlates fps-vs-N with coordRtt-vs-N, and a median fps
       // paired with a different run's timing would blur that correlation.
       const medianRun = tp.length
         ? [...tp].sort((a, b) => a.fps - b.fps)[Math.floor((tp.length - 1) / 2)]
@@ -357,7 +356,7 @@ if (POOL_SWEEP) {
       `| ${fmt(t?.rustMainBoundaryMs)} | ${fmt(t?.mainRendererTransitMs)} | ${t?.lookaheadGatedSkips ?? "—"} |`,
     );
   }
-  // Round-2 thread time-budget: cadence + where the session thread's wall-time goes.
+  // Thread time-budget: cadence + where the session thread's wall-time goes.
   // idle% = recvBlock.mean * recvBlock.n / window(ms) — fraction of the window the
   // thread sat blocked in recv_timeout. Wake tallies show what unblocks it.
   console.log(`\n| fixture | N | interEmit p50/mean | interAck p50/mean | recvBlock mean | idle% | timeoutTicks | ackMsgs | reqMsgs |`);
@@ -374,7 +373,7 @@ if (POOL_SWEEP) {
       `| ${t?.recvTimeoutTicks ?? "—"} | ${t?.recvAckMsgs ?? "—"} | ${t?.recvReqMsgs ?? "—"} |`,
     );
   }
-  // Round-3 stall attribution: which pump early-return dominated + terminal state.
+  // Stall attribution: which pump early-return dominated + terminal state.
   // The dominant counter names the halt (eof / poolFull / acquireFail / lookahead);
   // finalFree/finalEof snapshot the pump's terminal condition.
   console.log(`\n| fixture | N | eofReturns | poolFullReturns | acquireFailed | lookaheadSkips | finalFree | finalEof |`);

@@ -105,11 +105,9 @@ export type PreviewGpuColorSpace = {
 ///              renderer/render/decoder/transports/slotFenceQueue.ts) and acks
 ///              back over the same port. WebGPU's signal is a PROMISE, so a slot
 ///              that is not ready costs nothing to keep waiting for — that, not
-///              a faster signal, is the win. The earlier deadline-based build
-///              measured zero spin and barrier-less tick cost, but those numbers
-///              are not a throughput promise for today's signal-only contract:
-///              completion has been observed at 83–97ms, so a three-slot pool
-///              can cap one session around 31–36 delivered fps.
+///              a faster signal, is the win. Completion has been observed at
+///              83–97ms, so a three-slot pool can cap one session around 31–36
+///              delivered fps.
 ///              Ownership is signal-only: elapsed wall time never releases an
 ///              unfinished slot. Stream teardown drops remaining probes without
 ///              acking because native destroys those slots as the session closes.
@@ -125,11 +123,11 @@ export type PreviewGpuColorSpace = {
 ///              1080p track, 0.35-0.42 thread-s/s at 4K. NOT fixable by widening
 ///              its deadline; see `FENCE_DEADLINE_MS`, where the wider bound
 ///              measured worse. Retained as the A/B control.
-///   readback — no longer the default, but still CORRECT and shipped for years:
-///              rasterize + read back 1px, which blocks until Chromium's
-///              cross-device read has GPU-completed. ~20ms of renderer-thread
-///              time per frame — the wall that capped hardware preview at 2
-///              smooth 1080p tracks. Now the A/B control and the safe fallback.
+///   readback — CORRECT but expensive: rasterize + read back 1px, which blocks
+///              until Chromium's cross-device read has GPU-completed. ~20ms of
+///              renderer-thread time per frame — the wall that caps hardware
+///              preview at 2 smooth 1080p tracks. The A/B control and the safe
+///              fallback.
 ///   gpuflush — force the copy on the GPU only (texImage2D + flush), no CPU
 ///              readback. MEASURED AND REJECTED: reorders exactly as `none`
 ///              does, so submitting the copy is not what the ack was waiting
@@ -202,13 +200,12 @@ export type PreviewGpuBudgetSnapshot = {
   /// × that session's slot count, from main's session records (admission
   /// leases don't know pool sizes). The pool-VRAM instrument: admission still
   /// prices coded AREA only — this field exists so a run can SEE the bytes
-  /// that area implies instead of assuming them (A′ RGBA is ×2.67 the old
-  /// NV12 pool).
+  /// that area implies instead of assuming them.
   slotVram: { usedBytes: number; bytesPerPixel: 4 }
 }
 
-/// Per-metric ms summary from the native preview timing accumulator (decode-bench
-/// Stage 3). Field names are the napi camelCase of the Rust `TimingSummary`.
+/// Per-metric ms summary from the native preview timing accumulator. Field
+/// names are the napi camelCase of the Rust `TimingSummary`.
 export type PreviewGpuTimingSummary = {
   count: number
   meanMs: number
@@ -236,7 +233,7 @@ export type PreviewGpuTimingReport = {
   /// one nothing would display. 0 = the pipeline kept up; sustained non-zero = a
   /// decode shortfall the drop policy is absorbing.
   lateFrameDrops: number
-  /// Round-2 thread time-budget probe: production/ack cadence (interEmit/interAck),
+  /// Thread time-budget probe: production/ack cadence (interEmit/interAck),
   /// the session thread's recv_timeout block distribution (recvBlock — its sum ~=
   /// total thread idle), and wake-reason tallies (idle ticks / acks / anchor nudges).
   interEmit: PreviewGpuTimingSummary
@@ -245,7 +242,7 @@ export type PreviewGpuTimingReport = {
   recvTimeoutTicks: number
   recvAckMsgs: number
   recvReqMsgs: number
-  /// Round-3 stall attribution: which pump early-return dominated (eofReturns /
+  /// Stall attribution: which pump early-return dominated (eofReturns /
   /// poolFullReturns / acquireFailed / lookaheadGatedSkips), plus the terminal
   /// free-slot count + eof flag when the pump last gave up.
   eofReturns: number
@@ -281,9 +278,9 @@ export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummar
 ///
 /// `format` discriminates the packed layout — NV12 (8-bit, every session
 /// historically) or I420P10 (tightly-packed u16LE Y then U then V planes, the
-/// `copyToTenBit` layout — the 10-bit VideoToolbox-lane sessions, issue #10
-/// ticket 03). The transport dispatches PER FRAME on this tag, never on what
-/// it asked for at open.
+/// `copyToTenBit` layout — the 10-bit VideoToolbox-lane sessions). The
+/// transport dispatches PER FRAME on this tag, never on what it asked for at
+/// open.
 ///
 /// `width`/`height` are the SHIPPED dimensions, which are the media's ONLY at
 /// `scaleDiv` 1 — a downscaled preview frame is smaller, and `data.byteLength`
@@ -388,7 +385,7 @@ export interface DecodeHwProbeResult {
   device: string | null
 }
 
-// Data-root migration IPC surface (ticket 03). Types single-sourced in
+// Data-root migration IPC surface. Types single-sourced in
 // src/shared/data-root.ts (imported by main's handlers + renderer wrappers too).
 import type {
   DataRootCurrent,
@@ -515,8 +512,8 @@ export interface WeftcutApi {
     ///
     /// `outFormat` selects the session's CPU transport format (absent = NV12 =
     /// today's path byte-for-byte): 'I420P10' opens 10-bit output for a 10-bit
-    /// source on the videotoolbox lane (issue #10 ticket 03); every frame then
-    /// carries the matching `format` tag.
+    /// source on the videotoolbox lane; every frame then carries the matching
+    /// `format` tag.
     open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: 'NV12' | 'I420P10' | null }): Promise<{ width: number; height: number }>
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
@@ -564,8 +561,8 @@ export interface WeftcutApi {
     probeSw(path: string): Promise<DecodeCapabilityProbeResult>
     probeHw(path: string, classKey: string): Promise<DecodeHwProbeResult>
   }
-  /// User-managed data location (ticket 03). Main-process actions (not backend
-  /// commands): report the effective root, pick+migrate to a new root
+  /// User-managed data location. Main-process actions (not backend commands):
+  /// report the effective root, pick+migrate to a new root
   /// (copy/verify/rollback or adopt, progress on `evt:dataRoot:progress`),
   /// relaunch onto it, open it in the file manager, and the post-relaunch
   /// delete-the-old-copy flow. `relaunch` is separate from `pickAndMigrate` so

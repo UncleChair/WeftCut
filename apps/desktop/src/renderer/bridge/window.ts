@@ -53,7 +53,7 @@ export function getCurrentWindow() {
   }
 }
 
-// Taskbar progress states used by App.tsx.
+// Taskbar progress states, consumed by app/useExportFlow.ts.
 export const ProgressBarStatus = {
   None: 'none',
   Normal: 'normal',

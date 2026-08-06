@@ -5,21 +5,13 @@
 //! Every pool slot is an RGBA8 texture; each delivered frame renders the
 //! decoded NV12 surface through a session-owned pixel shader into the slot,
 //! and the browser-side `createImageBitmap` of the imported `rgba` frame is a
-//! pure byte copy (proven byte-exact by the A′ ticket-01 probe). Explicitly
+//! pure byte copy (byte-exact end to end; see ADR 0040). Explicitly
 //! NOT `ID3D11VideoContext::VideoProcessorBlt`: its conversion math is
 //! driver-defined, which can neither be pinned to the conformance goldens nor
 //! reproduced cross-machine.
 //!
-//! The coefficient math is the Rust twin of the renderer's
-//! `render/tenbit/yuv10.ts` (`coefForMatrix` + `inverseCoef`) and the
-//! normalization matches `Nv12Ingest`'s shader: y=(Y·255−yOff)/yScale,
-//! c=(C·255−128)/cScale with (16,219,224) limited / (0,255,255) full. Both
-//! planes are POINT-sampled (nearest chroma upsample), matching Nv12Ingest's
-//! `scaleMode: "nearest"` plane sources so the two lanes agree byte-for-byte
-//! on the conformance fixtures. Constants are baked into the shader as
-//! `#define`s at session open (color tags are per-stream constants), so the
-//! per-frame cost is one staging copy + one full-screen triangle, no constant
-//! buffer updates.
+//! The coefficient + normalization math is the Rust twin of the renderer's
+//! `render/tenbit/yuv10.ts`; the whys live on the functions below.
 
 use windows::core::{Interface, HRESULT, PCSTR};
 use windows::Win32::Graphics::Direct3D::Fxc::{D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL3};
@@ -53,7 +45,7 @@ pub const BT601: YuvCoef = YuvCoef { kr: 0.299, kb: 0.114 };
 /// renderer's `coefForMatrix` (yuv10.ts): smpte170m and bt470bg are both
 /// BT.601; everything else — including untagged — is BT.709, the app's
 /// working-space default. The tag string is the same one the renderer derives
-/// (`deriveColorSpace`) and previously handed to `importSharedTexture`.
+/// (`deriveColorSpace`).
 pub fn coef_for_matrix(matrix: &str) -> YuvCoef {
     if matrix == "smpte170m" || matrix == "bt470bg" {
         BT601
@@ -82,11 +74,8 @@ pub fn norm_consts(full_range: bool) -> (f64, f64, f64) {
     }
 }
 
-/// The conversion shader. The vertex stage emits one full-screen triangle from
-/// `SV_VertexID` (no vertex buffer); the pixel stage point-samples the Y (R8)
-/// and interleaved CbCr (R8G8) planes and applies the matrix baked in via the
-/// `#define`s below. RG order in the UV plane is U then V, so `.x` is Cb and
-/// `.y` is Cr — same as Nv12Ingest's `texture(uUV).rg`.
+/// The conversion shader. RG order in the UV plane is U then V, so `.x` is Cb
+/// and `.y` is Cr — same as Nv12Ingest's `texture(uUV).rg`.
 const HLSL: &str = r#"
 Texture2D<float>  texY  : register(t0);
 Texture2D<float2> texUV : register(t1);
@@ -190,7 +179,9 @@ impl ConvertPass {
     /// Build the pass on `device` for a `width`×`height` stream whose color
     /// tags are `matrix` (renderer-derived tag string) + `full_range`. `slots`
     /// are the session's RGBA8 pool textures (RTVs are created here so the
-    /// per-frame path never allocates).
+    /// per-frame path never allocates). Color tags are per-stream constants, so
+    /// they bake into the shader as `#define`s here: the per-frame cost is one
+    /// staging copy + one full-screen triangle, no constant-buffer updates.
     pub fn new(
         device: &ID3D11Device,
         width: u32,
@@ -478,8 +469,8 @@ mod tests {
     use super::*;
 
     /// Golden coefficient sets for the four encodings — the same numbers the
-    /// renderer's `inverseCoef` produces (and Result 6's shader hardcoded).
-    /// Guards drift between this Rust twin and `yuv10.ts`.
+    /// renderer's `inverseCoef` produces. Guards drift between this Rust twin
+    /// and `yuv10.ts`.
     #[test]
     fn inverse_coef_matches_ts_twin() {
         let close = |a: f64, b: f64| (a - b).abs() < 1e-6;

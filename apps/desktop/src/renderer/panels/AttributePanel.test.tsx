@@ -227,9 +227,8 @@ describe("AttributePanel Layer envelope", () => {
     expect(screen.queryByText("voice.wav")).toBeNull();
   });
 
-  // A uuid is never a display name. Groups made from the UI are always
-  // `label: null`, so the old `group.label ?? group.id` fallback put a raw uuid
-  // on the identity line of every grouped Layer.
+  // A uuid is never a display name, and groups made from the UI are always
+  // `label: null` — so an unnamed group must describe itself by member count.
   it("describes an unnamed group by its member count, not its uuid", () => {
     summaryWithGroups([
       {

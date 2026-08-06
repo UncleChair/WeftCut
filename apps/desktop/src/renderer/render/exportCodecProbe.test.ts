@@ -36,8 +36,7 @@ describe("probeEncoderSupported", () => {
 
 // smokeEncode backs three live call sites: the export flow's explicit-pin
 // probe + consent-gated fallback (useExportFlow) and the dialog's support
-// badge (ExportSettingsDialog). Ported from the deleted resolveEncodePath
-// tests — same intent, calling the primitive directly.
+// badge (ExportSettingsDialog).
 describe("smokeEncode", () => {
   it("short-circuits H.264 to true without touching VideoEncoder", async () => {
     vi.stubGlobal("VideoEncoder", undefined);

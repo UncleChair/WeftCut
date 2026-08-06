@@ -6,12 +6,12 @@
 // ListTools — is a clean, disjoint union where every advertised tool routes to a
 // bucket that actually serves it, and every required scalar is enforced by its parser.
 //
-// The Rust snapshot is now the LIVE rust-native surface ONLY: ping, the clip-audio
-// compute tools (detect_silences, transcribe_clip), and the hybrid-import tools
-// (import_media, apply_subtitles, synthesize_speech). The 47 mutation tools and the
-// 6 motif defs are TS-owned — their Rust arms were deleted in the state migration, so
-// TS is their source of truth and there is nothing left to "be faithful to" (the old
-// faithfulness gate is gone). Because the snapshot == what the addon advertises,
+// The Rust snapshot is the LIVE rust-native surface ONLY: ping, the clip compute
+// tools (detect_silences, transcribe_clip, analyze_clip, compare_frames,
+// describe_clip), and the hybrid-import tools (import_media, apply_subtitles,
+// synthesize_speech). The mutation defs (MCP_TOOL_DEFS) and the motif defs are
+// TS-owned — TS is their source of truth, so there is nothing for them to "be
+// faithful to". Because the snapshot == what the addon advertises,
 // snapshot ∪ TS tables == the exact runtime catalog, so these assertions describe what
 // actually ships. Rust-side schema drift is guarded by regenerating the fixture
 // (`node scripts/snapshot-mcp-catalog.mjs`) and diffing — not by this suite, which
@@ -36,12 +36,12 @@ const mergedNames = merged.map((t) => t.name)
 
 // ── Assertion 6: structural-field exclusions ─────────────────────────────────
 // (tool, field) pairs excluded from the "omit a required field → throw" probe.
-// EMPTY since the mcp-agent-hardening pass: every required `patch` now goes
-// through a parse gate (parseObj at minimum — a missing/non-object patch throws
-// instead of committing nothing and reporting success), and the two fields
-// whose omission IS the wire contract (set_keyframe.interp = inherit previous
-// easing, add_motif.props = all defaults) left the schema `required` lists so
-// the advertised contract matches the parser. New entries need the same bar:
+// Empty: every required `patch` goes through a parse gate (parseObj at
+// minimum — a missing/non-object patch throws instead of committing nothing and
+// reporting success), and the two fields whose omission IS the wire contract
+// (set_keyframe.interp = inherit previous easing, add_motif.props = all
+// defaults) are absent from the schema `required` lists so the advertised
+// contract matches the parser. New entries need the same bar:
 // ONLY a structural object/array field whose omission is a documented semantic
 // may go here — never a plain scalar.
 const STRUCTURAL_REQUIRED: Record<string, ReadonlySet<string>> = {}
@@ -96,7 +96,7 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
 
   it('5. every rust-native snapshot tool routes to rust or hybrid (never a TS engine)', () => {
     // The snapshot is the surface the backend owns; none of it may be claimed by a TS
-    // engine. ping/detect_silences/transcribe_clip → 'rust'; the imports → 'hybrid'.
+    // engine.
     for (const n of rustNames) expect(['rust', 'hybrid'], n).toContain(routeMcpTool(n))
   })
 

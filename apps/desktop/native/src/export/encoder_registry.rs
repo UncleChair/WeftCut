@@ -918,10 +918,6 @@ fn build_plan(intent: EncoderIntent, adapter: AdapterId) -> Result<EncoderPlan, 
             buffer_bits,
         } => {
             args.extend::<Vec<OsString>>(vec!["-b:v".into(), target_bps.to_string().into()]);
-            // The rate the VBV ceiling is set to, if any. CBR pins it to the
-            // target and additionally floors the stream with `-minrate`; VBR
-            // caps only when the user asked for a peak, so an unset peak keeps
-            // emitting bare `-b:v` (plain ABR) exactly as it always has.
             let ceiling = match mode {
                 BitrateMode::Constant => Some(target_bps),
                 BitrateMode::Variable => max_bps,

@@ -12,10 +12,9 @@ import { regionRootOf } from "../focus/focusRegion";
 ///
 /// Focus goes back to the control's REGION, not to `<body>` (ADR 0041). Body
 /// meant no part of the app owned the keyboard, which is the whole reason
-/// `captureGlobal` exists — `defs.ts` spells it out on `togglePlay`: "Space
-/// must toggle playback even when focus is parked on a menubar trigger /
-/// toolbar button after a click". Handing focus to the region instead keeps
-/// panel-scoped bindings (`ActionDef.scope`) alive across a toolbar click.
+/// `captureGlobal` exists — see the `captureGlobal` note on `togglePlay` in
+/// `defs.ts`. Handing focus to the region instead keeps panel-scoped bindings
+/// (`ActionDef.scope`) alive across a toolbar click.
 /// Controls in app chrome have no region and still fall back to a bare blur.
 export function blurAfterMouseActivation(e: SyntheticEvent<HTMLElement>): void {
   if ((e.nativeEvent as UIEvent).detail === 0) return;

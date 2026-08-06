@@ -7,8 +7,10 @@
 // Per-CLIP (not per-source) decoders: overlapping clips of one source need
 // independent anchors — a shared ring thrashes its anchor across disjoint
 // source regions and resets every clip per tick (nothing stabilises). The
-// cost is memory + decode slots, but modern H.264/HEVC stacks allow 8–32
-// concurrent HW sessions, so a handful of overlapping clips is within budget.
+// cost is memory + decode slots: the WebCodecs lane absorbs a handful of
+// overlapping clips, while native hardware sessions are capped by main's
+// admission budget (`PREVIEW_GPU_MAX_SESSIONS`) — hence the retained-session
+// reclaim this pool implements.
 //
 // See docs/render.md#decoder-pool (and #why-per-clip-decoders).
 
@@ -571,11 +573,6 @@ interface SourceDecoderPoolDeps {
 }
 
 /// Process-wide pool. One instance lives in the Compositor.
-///
-/// Two-tier keying: `handles` are per-layer (each clip gets its own
-/// `VideoDecoder` + `FrameRing`), while `medias` are per-mediaId and
-/// refcounted (so the demuxer + sample table is shared across every
-/// handle referencing the same source proxy).
 export class SourceDecoderPool {
   private handles = new Map<string, SourceHandle | FfmpegSource>();
   private medias = new Map<string, MediaEntry>();
@@ -601,9 +598,8 @@ export class SourceDecoderPool {
   /// (`resolveDecodeEngine`) is the chooser in production. The ffmpeg branch
   /// skips `acquireMedia` entirely — there is no shared, proxy-backed
   /// `SourceMedia` for an ffmpeg session, so `mediaId` here is just a pool
-  /// bookkeeping key (see `releaseHandle`, whose `medias.get(mediaId)` miss is
-  /// a no-op for these handles). `poolSize` stays bench-only (decode-bench
-  /// Stage 3).
+  /// bookkeeping key (`releaseHandle` returns early for ffmpeg handles, so it
+  /// never decrements a refcount they never took). `poolSize` is bench-only.
   acquire(init: SourceHandleInit): SourceHandle | FfmpegSource {
     if (init.engine === "ffmpeg") {
       const existingFfmpeg = this.handles.get(init.layerId);
@@ -696,8 +692,7 @@ export class SourceDecoderPool {
     }
   }
 
-  /// Drop the handle for `layerId` if present. The handle's referenced
-  /// `SourceMedia` is freed only when its refcount falls to 0.
+  /// Public alias for `releaseHandle`.
   release(layerId: string): void {
     this.releaseHandle(layerId);
   }
@@ -738,8 +733,8 @@ export class SourceDecoderPool {
 
   /// Dispose the handle for `layerId` (if present) and drop the
   /// matching media-refcount. When the refcount hits 0 the shared
-  /// `SourceMedia` is disposed and removed from the pool, releasing
-  /// the cached proxy ArrayBuffer + sample table.
+  /// `SourceMedia` is disposed and removed from the pool, releasing the
+  /// mediabunny `Input`, its sample table, and any in-flight Range reads.
   private releaseHandle(layerId: string): void {
     const h = this.handles.get(layerId);
     if (!h) return;
@@ -821,9 +816,7 @@ export class SourceDecoderPool {
     if (this.sweepTimer !== null) return;
     this.sweepTimer = setInterval(() => {
       const now = performance.now();
-      // Collect first so `releaseHandle` can safely mutate the map.
-      // Collecting plain layerIds avoids the `delete-during-iteration`
-      // hazard the previous in-loop `handles.delete(mediaId)` had.
+      // Collect first — `releaseHandle` mutates the map.
       const idle: string[] = [];
       for (const [layerId, h] of this.handles) {
         if (h.isIdle(now)) idle.push(layerId);

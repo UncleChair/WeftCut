@@ -60,8 +60,6 @@ describe("setPixiPresentationVisible", () => {
     const app = { ticker: { add, remove }, render } as unknown as Application;
 
     installTimedPresent(app);
-    // A second install would register the same closure twice and silently
-    // render the whole scene twice per tick.
     installTimedPresent(app);
 
     expect(remove).toHaveBeenCalledOnce();

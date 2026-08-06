@@ -27,8 +27,8 @@ export function canonicalString(value: unknown): string {
 /** Like canonicalize() but WITHOUT the wall-clock sentinel: recursively sorts
  *  object keys (arrays preserve order) and leaves every value verbatim. This is
  *  the PRODUCTION variant for MCP tool results — they must mirror Rust's
- *  serde_json BTreeMap key ordering yet keep real timestamps (Rust returned
- *  real DateTime<Utc> in e.g. list_checkpoints.created_at). canonicalize() stays
+ *  serde_json BTreeMap key ordering yet keep real timestamps
+ *  (list_checkpoints.created_at is a real instant). canonicalize() stays
  *  the harness-only variant that additionally sentinels created_at/modified_at/
  *  started_at for deterministic differential comparison. */
 export function sortKeys(value: unknown): unknown {

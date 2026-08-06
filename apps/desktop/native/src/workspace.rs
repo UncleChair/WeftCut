@@ -2,11 +2,12 @@
 //!
 //! Per `docs/data-model.md`, a workspace is a folder. `WorkspaceSlot`
 //! is the runtime singleton that remembers the current workspace path; it's
-//! `None` only during the blank-on-boot window before any `project_save_as` /
-//! `project_open` runs.
+//! `None` only during the blank-on-boot window before a workspace is opened
+//! or created.
 //!
-//! The slot is updated by `project_save_as` / `project_open` in commands/persistence.rs
-//! and read wherever a job or command needs the workspace root (cache
+//! `NativeBackend::commit_workspace` (napi_backend.rs) is the slot's sole
+//! writer, driven by the TS persistence orchestrator; it's read wherever a job
+//! or command needs the workspace root (cache
 //! layout, import copies, fs-scope grants). Media paths themselves don't
 //! route through here: the TS project loader (`persistence.ts`) reconciles
 //! `MediaItem.path_abs` from the workspace-relative `path_rel` at load time,
@@ -31,8 +32,6 @@ impl WorkspaceSlot {
         self.inner.read().expect("workspace slot poisoned").clone()
     }
 
-    /// Set the workspace path. Called from `project_save_as` and
-    /// `project_open` right after the on-disk operation succeeds.
     pub fn set(&self, workspace: PathBuf) {
         *self.inner.write().expect("workspace slot poisoned") = Some(workspace);
     }

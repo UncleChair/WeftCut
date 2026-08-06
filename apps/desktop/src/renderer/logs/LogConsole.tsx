@@ -24,11 +24,6 @@ import { useLogStore } from "./store";
 /// Expanded console overlay — lifts above the editor. Layout decision +
 /// deferred-features list: `docs/status-log.md`.
 ///
-/// Layout (top to bottom):
-///   * toolbar — filter chips, search, Clear/Copy/Open-folder
-///   * entry list — collapsed-by-op rows, expand for details
-///   * footer — counts, JSONL path
-///
 /// Defaults: level `Info+`, ops collapsed.
 ///
 /// Non-virtualised — the ring is 1000 entries, which renders fine on
@@ -127,8 +122,7 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
   }, [acknowledgeErrorSticky]);
 
   // Resolve the workspace's Logs/ path so the "Open log folder" action
-  // can hand it to the OS file manager. Re-resolves on workspace
-  // switch via `project:changed`.
+  // can hand it to the OS file manager.
   useEffect(() => {
     let cancelled = false;
     logDirPath()
@@ -188,8 +182,8 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
     return rows;
   }, [entries, minLevelOrd, categoryFilters, sourceFilters, search]);
 
-  // Autoscroll on new entries when enabled. Pause toggle suspends it
-  // (the user scrolled up to read history).
+  // Autoscroll on new entries when enabled; the toolbar's autoscroll toggle
+  // suspends it (the user scrolled up to read history).
   useEffect(() => {
     if (autoscroll && listRef.current) {
       listRef.current.scrollTop = 0;

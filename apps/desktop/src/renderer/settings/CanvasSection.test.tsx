@@ -79,7 +79,7 @@ async function typeSize(
 /// opens the popup only for the first Select touched in a given test file — every
 /// later one leaves it `aria-expanded="false"` and the assertions silently look at
 /// a closed popup. Keyboard activation (and `user.pointer`, used by `pickOption`)
-/// is unaffected. Verified against AppSelect directly before writing these tests.
+/// is unaffected.
 async function openSelect(user: ReturnType<typeof userEvent.setup>, name: string) {
   const trigger = screen.getByRole("combobox", { name });
   trigger.focus();

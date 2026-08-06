@@ -18,9 +18,8 @@
 //!     itself, not from here, to avoid feedback).
 //!   * Never call `tracing::*!` macros inside `emit` — see
 //!     [[feedback_async_block_on_in_async]] for the analogous trap.
-//!     A future `tracing_layer` forwards `tracing::error!` events
-//!     into `emit`, so re-emitting tracing events inside `emit` would
-//!     recurse.
+//!     `tracing_layer` forwards `tracing::error!` events into `emit`,
+//!     so re-emitting tracing events inside `emit` would recurse.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -69,17 +68,13 @@ struct Inner {
 impl LogBus {
     /// Spawn a fresh bus rooted at `<workspace>/Logs/`. Creates the dir
     /// if needed. Returns immediately; the writer task runs in the
-    /// background. Old session files (>20) are pruned by the writer on
-    /// startup.
+    /// background.
     pub fn spawn(workspace: &PathBuf, events: Arc<dyn EventSink>) -> Self {
         let logs_dir = workspace.join("Logs");
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (writer_tx, writer_rx) = mpsc::channel(WRITER_CAPACITY);
 
-        // Writer task — appends each entry as one JSON line; rotates
-        // session files; prunes oldest. Owns its own file handle and
-        // is the only writer. Exits when the mpsc closes (last bus
-        // clone dropped).
+        // Writer task — see `logs/writer.rs`.
         tokio::spawn(writer::run(logs_dir, writer_rx));
 
         // Broadcast → UI-event bridge. One subscriber, fan-out into

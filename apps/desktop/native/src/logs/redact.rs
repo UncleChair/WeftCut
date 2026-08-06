@@ -9,9 +9,8 @@
 //!     keeping `message` itself free of secrets.
 //!   * Patterns are conservative — we'd rather miss an exotic leak than
 //!     redact a legitimate api-key-shaped value in production code.
-//!   * After redaction, `details` is also size-capped to ~4 KB; the
-//!     truncation tag `{"truncated": true}` is appended so a reader can
-//!     tell the payload was cut.
+//!   * After redaction, `details` is also size-capped — an oversized
+//!     payload is replaced by a truncation stub (see `redact_and_cap`).
 
 use std::sync::OnceLock;
 

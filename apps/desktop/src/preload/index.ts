@@ -162,8 +162,7 @@ const api: WeftcutApi = {
     return ipcRenderer.invoke('app:emit', { event, payload }) as Promise<void>
   },
 
-  // Stream one raw frame to the native video sink over IPC (the Electron-native
-  // alternative to the loopback WebSocket transport).
+  // Stream one raw frame to the native video sink over IPC.
   videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void> {
     return ipcRenderer.invoke('export:videosink_write', bytes) as Promise<void>
   },
@@ -174,10 +173,8 @@ const api: WeftcutApi = {
   // MessagePort/ImageBitmap can't be handed across the contextBridge. consumeAck
   // is NOT exposed — it's fired preload-side, after createImageBitmap resolves.
   previewGpu: {
-    // The reply's `barrierMode` is the CONFIGURED label, for a caller that wants
-    // to check a run's observed barrier against what it asked for. It is NOT how
-    // the preload learns the mode — see the `evt:previewGpu:barrier` latch below
-    // for why a reply cannot do that job.
+    // The reply's `barrierMode` is the CONFIGURED label only. The preload learns
+    // the mode from the `evt:previewGpu:barrier` latch below, which explains why.
     open(args: { streamId: string; path: string; poolSize: number; colorSpace: PreviewGpuColorSpace; codedWidth: number; codedHeight: number }): Promise<PreviewGpuOpenReply> {
       return ipcRenderer.invoke('previewGpu:open', args) as Promise<PreviewGpuOpenReply>
     },
@@ -215,11 +212,8 @@ const api: WeftcutApi = {
     },
   },
 
-  // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
-  // WebCodecs-blind-format path). Unlike previewGpu, decoded NV12 frames DO
-  // cross the contextBridge directly — no shared texture / MessagePort dance —
-  // arriving on the dedicated `previewSw:frame` channel (NOT the generic
-  // `evt:*` EventSink relay), so `onFrame` subscribes to that channel directly.
+  // Native SOFTWARE-decode preview — implements `WeftcutApi.previewSw`, which
+  // owns the why (see shared/ipc.ts).
   previewSw: {
     open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: 'NV12' | 'I420P10' | null }): Promise<{ width: number; height: number }> {
       return ipcRenderer.invoke('previewSw:open', args) as Promise<{ width: number; height: number }>
@@ -238,13 +232,9 @@ const api: WeftcutApi = {
   },
 
   // Native SOFTWARE export-decode relay — the EXPORT-side mirror of previewSw.
-  // Frames AND control signals (rangeEnd/ended/error) cross the contextBridge
-  // as tagged ExportSwMsgs on the ONE dedicated `exportSw:msg` channel
-  // (surfaced via `onMsg`); the renderer main thread is a pure relay to the
-  // export Worker. The single ordered channel is load-bearing: control can
-  // never overtake frames (see ExportSwMsg in shared/ipc.ts) — never split it.
-  // `decodeRange` / `returnCredit` / `close` are fire-and-forget renderer →
-  // main commands.
+  // Implements `WeftcutApi.exportSw`; the single-ordered-channel contract that
+  // keeps control from overtaking frames lives on `ExportSwMsg` in
+  // shared/ipc.ts.
   exportSw: {
     open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }): Promise<ExportSwOpenReply> {
       return ipcRenderer.invoke('exportSw:open', args) as Promise<ExportSwOpenReply>
@@ -322,14 +312,11 @@ const importedByKey = new Map<string, SharedTextureImported>()
 const announceQueue: { streamId: string; slot: number }[] = []
 // The renderer-main-world end of each session's frame channel, keyed by streamId.
 //
-// LANDMINE: this was ONE global `mainPort` that every `requestPort()` overwrote.
-// Since `window.postMessage` is a broadcast, every live GpuTransport's listener
-// also grabbed the newest port — so with 2+ concurrent GPU sessions all of them
-// ended up sharing the last channel, one `onmessage` survived, and every frame
-// whose `streamId` didn't match that transport was silently dropped. Every
-// session but the newest went permanently dark: rings frozen, painter stuck on a
-// stale frame, and (because eof/error pokes ride the same port) FfmpegSource
-// never saw the failure so the HW→SW fallback never fired. One port per stream.
+// LANDMINE: one port PER STREAM, never a shared module-level port.
+// `window.postMessage` is a broadcast, so every live GpuTransport's listener
+// grabs the newest port — a single shared channel silently darkens every session
+// but the newest (rings frozen, and eof/error pokes lost with the frames, so the
+// HW→SW fallback never fires either).
 const portByStream = new Map<string, MessagePort>()
 // The barrier strategy each live session runs, latched from the
 // `evt:previewGpu:barrier` event main sends before creating the native session
@@ -365,10 +352,11 @@ const barrierModeByStream = new Map<string, HwBarrierMode>()
 // announce-queue entries BEFORE awaiting the main-process close, not after.
 // The renderer handle nulls its side synchronously on dispose, but a
 // `frameReady` poke can still be in flight; if it lands while this function
-// is awaiting the invoke, it must find `importedByKey` already empty for this
-// stream so the handler's `if (!imp || !mainPort) return` guard short-circuits
-// it — otherwise it snapshots a bitmap onto a gone consumer (leaked, never
-// closed) and fires a consumeAck against a session main is mid-closing.
+// is awaiting the invoke, it must find this stream's port already dropped so
+// the handler's `if (!port) return` short-circuits it — otherwise it snapshots
+// a bitmap onto a gone consumer (leaked, never closed) and fires a consumeAck
+// against a session main is mid-closing. (A still-live stream missing only its
+// import takes the handler's other branch: ack the slot, then return.)
 // Clearing first also means this cleanup no longer depends on the invoke's
 // outcome, so there's nothing left to strand if it rejects (main's close is
 // idempotent and could still reject for an unrelated reason) — a plain
@@ -476,14 +464,13 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 // of WHY any barrier is needed at all — which is why the race is documented here
 // rather than beside either fence.
 //
-// What the switch measured, and what it means for anyone changing this code:
-// submitting the copy costs ~0.1ms and WAITING for it costs ~19.9ms, and a
-// submit-only barrier (`gpuflush`) reorders exactly like no barrier at all. So
-// the ack was never waiting on submission — it waits on COMPLETION, and there is
-// no cheaper way to spell "completed". What the barrier never needed to gate is
-// DELIVERY: only RECYCLING. Today's code conflates the two because it is
-// synchronous. `fence` splits them (see the fence barrier below) — same hard
-// completion signal, off the critical path.
+// What the switch settled, and what it means for anyone changing this code: the
+// ack was never waiting on SUBMISSION — it waits on COMPLETION, and there is no
+// cheaper way to spell "completed" (the submit-vs-wait split is priced on
+// `forceSharedTextureReadCompleteOnGpu` below). What the barrier never needed to
+// gate is DELIVERY: only RECYCLING. The synchronous readback conflates the two;
+// `fence` and `rendererFence` split them — same hard completion signal, off the
+// critical path.
 
 /// What one barrier cost, split by phase. Reported per frame so the readback's
 /// two halves can be told apart: the 2D context is created with
@@ -557,27 +544,13 @@ function forceSharedTextureReadCompleteOnGpu(bmp: ImageBitmap): BarrierCost | nu
 /// politely and forces the wait. Two display intervals.
 ///
 /// LANDMINE: 4 intervals (66.7ms) was tried and is WORSE — do not re-widen this.
-/// On an IDLE GPU the fence essentially never signals on its own, at any bound
-/// we set, because nothing forces the pipeline along; under load the surrounding
-/// traffic does, and the fence signals inside one interval. Widening therefore
-/// does not convert timeouts into natural signals. It only holds a pool slot
-/// longer, still times out, and pays more per timeout:
-///
-///   1080p, 1 track      deadline 33.3   deadline 66.7
-///   fenceWaitP50            34.9ms          88.5ms
-///   fenceForcedWaits           98             206
-///   spin per 20s window      1.96s           4.12s
-///   tick p99                 23.7 (smooth)   34.1 (STUTTER)
-///
-/// 2-4 tracks force nothing at either bound, so the idle case is the only one
-/// this constant is really arbitrating — and for it, tighter is strictly better.
-///
-/// Why not shorter still: under load a fence does signal on its own within an
-/// interval, and a deadline inside that window would force-wait frames that were
-/// about to complete — the synchronous barrier back again by another name. Why
-/// not longer: the table above, plus every slot parked in the pending queue is a
-/// frame native cannot decode; the pool is only `poolSize` deep and
-/// `fencePendingQueuePeak` already sits at `poolSize`.
+/// On an IDLE GPU the fence never signals on its own at ANY bound, because
+/// nothing forces the pipeline along, so widening buys no natural signals: it
+/// only parks a pool slot longer (a slot parked here is a frame native cannot
+/// decode), still times out, and pays more per timeout — measured in
+/// docs/playback-perf.md. Shorter is no better: under load a fence does signal
+/// within an interval, so a tighter deadline force-waits frames that were about
+/// to complete — the synchronous barrier back again by another name.
 const FENCE_DEADLINE_MS = 2 * (1000 / 60)
 
 /// Wall-clock budget for that forced wait. Sized at the ~20ms the synchronous
@@ -774,12 +747,11 @@ function receiveSlotAck(port: MessagePort, data: unknown): void {
 // Per-frame loop — this is where the ACK-AFTER-READ discipline lives. On a
 // frameReady poke: snapshot the slot's shared texture into an ImageBitmap, post
 // it to the main world over the MessagePort, and consumeAck only once the
-// snapshot's cross-device read has GPU-COMPLETED (`createImageBitmap` resolving
-// is NOT that guarantee across devices, see above), so native may safely reuse
-// the slot. Acking earlier lets native overwrite the slot mid-read
-// (reorder/tearing). Native's AcquireSync on a still-held slot now times out
-// (finite, Error-poke + skip) rather than hanging, but an early ack would still
-// corrupt a frame, so the ordering stays load-bearing.
+// snapshot's cross-device read has GPU-COMPLETED — why that is not the same as
+// `createImageBitmap` resolving is the barrier block above. The ordering is
+// load-bearing: native's AcquireSync on a still-held slot times out (finite,
+// Error-poke + skip) rather than hanging, but an early ack still corrupts the
+// frame.
 //
 // WHERE the ack happens depends on the mode, and exactly one place does it per
 // delivered bitmap: here (the synchronous barriers), in the fence queue above, or
@@ -847,42 +819,24 @@ ipcRenderer.on(
       }
       // Barrier: block until Chromium's cross-device read of the slot texture
       // into `bmp` has GPU-completed, BEFORE the outer finally's consumeAck
-      // frees the slot for the producer to overwrite. Without this the native-hw
+      // frees the slot for the producer to overwrite — without it the native-hw
       // lane presents frames pool_size out of order (see the block comment).
-      // Stamped DIRECTLY rather than left to be derived as
-      // `resident - gvf - cib`: the subtraction also absorbs `vf.close()` and
-      // any scheduling gap around the await, which made the derived figure read
-      // several times the real drain and INVERT with load.
+      // What each mode does is `HwBarrierMode` in shared/ipc.ts.
       //
-      // `barrierMs` stays the TOTAL for whichever mode ran (its readers predate
-      // the split); `barrierDrawMs`/`barrierReadMs` are the phases within it.
+      // `barrierMs` is the TOTAL for whichever mode ran (its readers predate the
+      // split), `barrierDrawMs`/`barrierReadMs` the phases within it. Stamp them
+      // DIRECTLY, never derived as `resident - gvf - cib`: the subtraction also
+      // absorbs `vf.close()` and the scheduling gap around the await, which reads
+      // several times the real drain and INVERTS with load.
       //
-      // `none` is the KNOWN-INCORRECT control: it reintroduces the reorder this
-      // whole path exists to prevent, and is only ever reached because someone
-      // set WEFTCUT_HW_BARRIER to measure what the barrier costs. All three
-      // stamps read 0 then, so a run with no barrier is unmistakable in the data.
-      //
-      // `barrierApplied` is the barrier that ACTUALLY RAN, assigned from the
-      // branch that produced the cost — never copied from `mode`. The configured
-      // value can lie in both directions (main never picked the env up; the
-      // gpuflush fallback quietly ran readback because WebGL2 was missing), and a
-      // bench leg labelled by intent rather than by outcome reports "removing the
-      // barrier buys nothing" when the barrier never left. A leg whose applied
-      // mode disagrees with its label is INVALID, not slow — so the applied value
-      // has to travel with the samples for anyone to be able to tell.
-      //
-      // Under `fence` the barrier stamps stay SUBMIT-ONLY (~0.1ms). The wait it
-      // defers is real but is not cost on the loop, so it is reported apart, in
-      // `fence` — conflating the two is how a mechanism that moved the cost
-      // would look like one that removed it.
-      //
-      // `rendererFence` runs NOTHING here. The whole point of that mode is that
-      // this process has no context worth fencing on, so it delegates: the copy,
-      // the completion signal and the ack all happen on the renderer's presented
-      // device (renderer/render/decoder/transports/slotFenceQueue.ts). It also
-      // owns the `barrierApplied` stamp — only it knows which rung of its own
-      // fallback ladder ran — so this side leaves the stamp off rather than
-      // guessing, and `ackDelegated` is what carries the obligation across.
+      // `barrierApplied` is the barrier that ACTUALLY RAN, taken from the branch
+      // that produced the cost — never copied from `mode`, which can lie in both
+      // directions (main never picked the env up; a GPU path quietly fell back to
+      // readback). A leg whose applied mode disagrees with its label is INVALID,
+      // not slow, so the applied value has to travel with the samples. Under
+      // `rendererFence` it stays UNDEFINED: only the renderer knows which rung of
+      // its own fallback ladder ran, and `ackDelegated` is what carries the ack
+      // obligation across with the frame.
       const mode = barrierModeByStream.get(streamId) ?? 'readback'
       const delegateToRenderer = mode === 'rendererFence'
       let barrierApplied: HwBarrierMode | undefined = delegateToRenderer ? undefined : 'none'

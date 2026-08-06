@@ -15,8 +15,7 @@ import {
 ///
 /// When the right-click landed within the click-tolerance band of a cut
 /// between same-track adjacent visual layers (`transitionCut` non-null), an
-/// "Add transition" section appends: Crossfade, then Wipe/Slide × 4
-/// directions as a flat list (the app's menus are flat — no submenus).
+/// "Add transition" section appends — flat, like every menu here (no submenus).
 export function LayerContextMenu({
   x,
   y,

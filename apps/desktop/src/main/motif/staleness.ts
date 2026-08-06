@@ -1,6 +1,6 @@
 // apps/desktop/src/main/motif/staleness.ts
 //
-// Cross-project staleness (upload-authoring spec §7-B). A placed Motif layer
+// Cross-project staleness (docs/motifs.md, "User Motifs"). A placed Motif layer
 // stores the motif_version it was created with as a SEEN-AT marker — it does
 // NOT pin rendering (the frame cache key is source-derived). On project open,
 // comparing each marker against the catalog's current version surfaces "this
@@ -26,7 +26,7 @@ export interface MotifStaleEntry {
 
 /** Current catalog versions: motif_id -> { name, version }. Built-ins first,
  *  then published user Motifs (insertion order makes the store win on a
- *  collision, matching Rust). Drafts are deliberately absent: always version 1,
+ *  collision). Drafts are deliberately absent: always version 1,
  *  content-hash-keyed, so a draft layer can never read as stale. */
 export function currentVersions(
   builtins: BuiltinMotif[],
@@ -42,8 +42,7 @@ export function currentVersions(
  *  reports (downgrades included — same message shape); ids missing from
  *  `current` are skipped (the "unknown Motif" placeholder owns that case);
  *  layers already at current don't count. Sorted by motif id for a
- *  deterministic order (motif ids are sanitized ASCII, so default string sort
- *  matches the Rust BTreeMap byte order). */
+ *  deterministic order. */
 export function buildStalenessReport(
   layers: Array<{ motifId: string; placedVersion: number }>,
   current: Map<string, { name: string; version: number }>,

@@ -89,15 +89,9 @@ export const RANGE_REVEAL_MS = 900;
 /**
  * True for a moment after the range last changed.
  *
- * Drives the out-of-range dimming, which is deliberately NOT permanent: it is
- * a full-width wash over the user's clips serving a feature used twice a
- * session, so it reads as operation FEEDBACK ("the span I just changed is
- * this one") rather than as standing chrome. What survives between marks is
- * the ruler's end caps, which cost no lane pixels.
- *
- * Re-marking the same point still re-triggers, because the mutators always
- * write — a second `I` at one playhead is a deliberate re-confirmation, and
- * flashing the span back is the right answer to it.
+ * Drives the out-of-range dimming, transient by design: it reads as operation
+ * feedback, not standing chrome — the ruler's end caps are what persist.
+ * Re-marking the same point re-triggers, because the mutators always write.
  */
 export function useRangeReveal(durationMs: number = RANGE_REVEAL_MS): boolean {
   const [revealed, setRevealed] = useState(false);

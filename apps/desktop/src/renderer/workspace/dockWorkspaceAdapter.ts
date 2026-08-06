@@ -55,7 +55,8 @@ export interface DockWorkspaceSnapshot {
   empty: boolean;
 }
 
-/** The app-facing workspace seam. No Dockview object or JSON escapes it. */
+/** The app-facing workspace seam. No live Dockview object or API escapes it;
+ *  layouts cross only as opaque, validated `WeftCutLayout` snapshots. */
 export interface DockWorkspaceController {
   getSnapshot(): DockWorkspaceSnapshot;
   subscribe(listener: () => void): () => void;
@@ -125,8 +126,7 @@ function overlayDataTransfer(
 }
 
 /**
- * Dockview is deliberately contained here. Callers deal only in PanelKind;
- * no group, panel, API, placement, or serialized Dockview object escapes.
+ * Dockview is deliberately contained here. Callers deal only in PanelKind.
  */
 export class DockWorkspaceAdapter implements DockWorkspaceController {
   private readonly disposables: Disposable[] = [];

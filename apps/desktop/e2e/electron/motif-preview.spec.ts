@@ -9,9 +9,6 @@
 // add the countdown layer, seek to t=2.5 s, then poll weftcutSampleComposite
 // until accent-colored (#ff4d4d ≈ rgb 255,77,77) pixels exceed a threshold —
 // proving the CDP frames reached the live compositor on the Pixi canvas.
-//
-// The seek hook (`weftcutSeekUs`) throws until the PixiPreview bridge registers;
-// we swallow and retry per the documented e2e gotcha.
 
 import { test, expect } from '@playwright/test'
 import { launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
@@ -96,7 +93,6 @@ test('motif live preview: accent pixels reach the Pixi compositor via CDP', asyn
     if (!s) throw new Error('never sampled the composite')
 
     // 6. Assert accent-colored pixels from the countdown are present.
-    //    #ff4d4d = rgb(255,77,77): high-red, low-green/blue.
     expect(s.accentCount).toBeGreaterThan(200)
     expect(s.accentR).toBeGreaterThan(180)
     expect(s.accentG).toBeLessThan(150)

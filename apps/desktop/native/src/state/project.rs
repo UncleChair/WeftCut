@@ -19,7 +19,6 @@ use super::transition::Transition;
 /// anything below `SCHEMA_VERSION` with a clear error rather than migrating —
 /// older `.vproj` folders must be re-created. Rust only ever deserializes
 /// already-gated JSON. Per-version history lives in git / the ADRs.
-// v10: proxy fields replaced by a single `decode_route: DecodeRoute` enum on MediaItem.
 pub const SCHEMA_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,7 +41,7 @@ pub struct Project {
     /// `LayerId`s; flat membership (a layer is in at most one group). The
     /// actor maintains a derived `LayerId → GroupId` index for fast lookup
     /// and fans out move/trim/split ops across members. `#[serde(default)]`
-    /// makes v2 `.vproj` files load as v3 projects with no groups.
+    /// keeps the field optional on the wire.
     #[serde(default)]
     pub groups: imbl::Vector<Group>,
     /// Per-role mix-bus settings (`docs/audio.md`). Absent keys resolve to
@@ -61,10 +60,10 @@ impl Project {
         // land on the same track and render as one combined row. See
         // `docs/data-model.md`.
         //
-        // Data-model ordering is bottom-up (index 0 = bottom of z-stack, last
-        // = top): A roll is the primary base, B roll overlays paint on top.
-        // Separated-audio rows insert adjacent to their source video; on-screen
-        // order is derived from this data order, not stored.
+        // A roll is the primary base and B roll overlays paint on top, per the
+        // z-order convention on the `tracks` field. Separated-audio rows insert
+        // adjacent to their source video; on-screen order is derived from this
+        // data order, not stored.
         let mut a_roll = Track::new();
         a_roll.label = Some("A roll".into());
         a_roll.removable = false;
@@ -112,7 +111,9 @@ pub struct ProjectMetadata {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectSettings {
-    /// Proxy resolution used for live preview (Pixi compositor draft pass).
+    /// Declared preview resolution. Wire-only — nothing reads the pair today;
+    /// the Pixi preview sizes off the composition and the playback-resolution
+    /// setting.
     pub preview_width: u32,
     pub preview_height: u32,
     pub autosave_interval_secs: Option<u32>,
@@ -121,13 +122,13 @@ pub struct ProjectSettings {
     /// stream creates both a `VideoClip` and an `Audio` layer pointing at
     /// the same media, and groups them. See `docs/features.md#groups`. When
     /// `false`, only the `VideoClip` layer is created (audio is silently
-    /// dropped, matching pre-v3 behavior).
+    /// dropped).
     #[serde(default = "default_auto_pair_audio_on_import")]
     pub auto_pair_audio_on_import: bool,
     /// When `true` (default), deleting the last layer on a track also
     /// deletes the now-empty track inside the same history entry, so one
-    /// undo restores both. Role-stamped tracks (A/B roll and the legacy
-    /// audio roles), non-removable tracks, and locked tracks always stay.
+    /// undo restores both. Role-stamped tracks (A/B roll and their audio
+    /// pairs), non-removable tracks, and locked tracks always stay.
     /// When `false`, an emptied track lingers until deleted explicitly.
     #[serde(default = "default_auto_delete_empty_tracks")]
     pub auto_delete_empty_tracks: bool,

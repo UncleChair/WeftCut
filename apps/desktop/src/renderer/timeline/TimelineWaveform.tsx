@@ -22,8 +22,9 @@ export const STEREO_LANES_MIN_PX = 28;
 
 /// Param-churn (pxPerSec / src window) re-fetch delay: coalesces a burst of
 /// zoom-wheel or trim-drag frames into one assembly run instead of one per
-/// intermediate value. Mount, mediaId changes, and engine `subscribe`
-/// notifications bypass this and fetch immediately — see `useWindowData`.
+/// intermediate value. Mount, mediaId changes, visibility changes, and engine
+/// `subscribe` notifications bypass this and fetch immediately — see
+/// `useWindowData`.
 export const WAVEFORM_REFETCH_DEBOUNCE_MS = 120;
 
 export interface WaveformLane {
@@ -76,10 +77,8 @@ interface SegmentGeom {
 /// segments extended by one segment width each side (near-viewport peaks warm
 /// before they scroll in), clamped to the strip, then mapped px→us across the
 /// layer's [srcInUs, srcOutUs) span. Null when no segment is visible —
-/// nothing to assemble. Hidden segments contribute nothing — that clipping is
-/// the memory bound: covering a layer's entire src window would materialize
-/// every peak of a long clip (and pin its engine tiles) no matter what's on
-/// screen. Same rationale as TimelineFilmstrip's visibleSegmentWindows.
+/// nothing to assemble. Hidden segments contribute nothing — memory bound, see
+/// TimelineFilmstrip's `visibleSegmentWindows`.
 function visibleWindowUs(
   segments: SegmentGeom[],
   isSegmentVisible: (startPx: number) => boolean,

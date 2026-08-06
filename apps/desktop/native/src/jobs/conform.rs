@@ -96,7 +96,6 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         let _ = tokio::fs::remove_file(&dest).await;
     }
 
-    // Mono stays mono; everything else (stereo and >2ch) lands stereo.
     let out_channels: u32 = if audio_meta.channels <= 1 { 1 } else { 2 };
 
     let tmp = temp_path(&dest);

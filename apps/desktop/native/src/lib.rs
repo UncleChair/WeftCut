@@ -2,9 +2,9 @@
 //! Architecture: see `docs/architecture.md` and `docs/mcp.md`.
 
 // imbl's persistent collections have deep type chains (`Vector<T>` → internal
-// RRB nodes → Arc<Chunk<Node<T>>>); proving `Send`/`Sync` of the actor's future
-// blows the default trait-recursion limit when the actor captures a deeply
-// nested `Arc<Project>`.
+// RRB nodes → Arc<Chunk<Node<T>>>); proving `Send`/`Sync` for the nested
+// project state (`state::Project` → `Vector<Track>` → `Vector<Layer>`) blows
+// the default trait-recursion limit.
 #![recursion_limit = "512"]
 
 // `audio::{conform_reader, mix}` read the VCONF conform format produced by

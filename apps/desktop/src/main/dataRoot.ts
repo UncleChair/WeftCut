@@ -1,7 +1,7 @@
 // Resolves the user-configurable DATA ROOT once, early at boot, and exposes the
 // fixed internal subdirectory layout every large-content consumer takes its
 // path from (the Backend media cache, UserMotifStore, the fs guard, future
-// downloads — wired by ticket 02). See .scratch/data-root/spec.md.
+// downloads).
 //
 // Layout:
 //   <dataRoot>/            default: <userData>/data
@@ -11,11 +11,7 @@
 //
 // The path lives in the `data_root` field of app_settings.json (it cannot live
 // under the data root itself — bootstrap chicken-and-egg — so it stays in
-// userData). Resolution rules:
-//   - unset / empty        → default `<userData>/data`; create the layout silently.
-//   - set + available      → use it (probe: create the root + write a temp file).
-//   - set + unavailable     → blocking native dialog (Re-set / Quit); NEVER a
-//                             silent fallback that would hide the user's data.
+// userData).
 //
 // Both the filesystem surface and the native dialog/picker are INJECTED so the
 // resolver is unit-testable without real Electron or real fs (mirrors the
@@ -107,7 +103,6 @@ export function resolveDataRoot(deps: DataRootDeps): ResolvedDataRoot {
     return finalize(join(deps.userDataDir, 'data'))
   }
 
-  // Configured + available → use it as-is.
   if (isAvailable(configured)) {
     return finalize(configured)
   }

@@ -9,8 +9,8 @@ import {
 } from "./exportDecodeRouting";
 
 // The setting × component × route × bit-depth matrix for the export decode
-// resolver (spec decisions 2/3/8). Mirrors resolveDecodeEngine.test.ts's
-// base-factory shape.
+// resolver (docs/render.md §Export source resolution). Mirrors
+// resolveDecodeEngine.test.ts's base-factory shape.
 
 type Route = MediaSummary["decode_route"];
 const ROUTES = {
@@ -217,11 +217,7 @@ describe("routingSourceCounts", () => {
   });
 });
 
-// The 8-bit WebCodecs export lane's HW-decode ALLOWLIST: only platforms where
-// a GPU-backed VideoFrame is proven readable by JS import paths may drop the
-// prefer-software black-frame workaround. Windows and macOS are
-// hardware-verified (issue #7 §5); Linux is the platform the workaround
-// exists for.
+// Why the allowlist exists: see the doc comment on `hwExportDecodeAllowed`.
 describe("hwExportDecodeAllowed", () => {
   it("allows hardware decode on Windows and macOS only", () => {
     expect(hwExportDecodeAllowed("windows")).toBe(true);

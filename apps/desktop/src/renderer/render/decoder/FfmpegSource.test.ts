@@ -101,15 +101,13 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
 
     gpu.finishEof();                             // transport signals end-of-stream
     await src.requestFrameAt(2000);
-    // No further IPC nudge past eof — the old handle used to gate on eof;
-    // the transports no longer do, so FfmpegSource must gate it itself.
+    // No further IPC nudge past eof — FfmpegSource owns the gate.
     expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(1);
   });
 
   it("stops nudging while the ring's lookahead is full, and resumes as it drains", async () => {
-    // The lane's brake. Before this, `isLookaheadFull` was computed on every
-    // ffmpeg source and consulted by nobody, so nothing bounded what the decoder
-    // PRODUCED — only what the ring kept.
+    // The lane's brake — bounds what the decoder PRODUCES, not just what the
+    // ring keeps.
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
@@ -424,10 +422,10 @@ describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => 
   });
 });
 
-// Ticket 03 (issue #10): the transport FORMAT decision at the byte-shipping
-// seam. A 10-bit source on the videotoolbox lane opens I420P10; every other
-// combination stays NV12 (no `outFormat` key at all — the seam's exact-match
-// payload IS the regression guard for "software behavior unchanged").
+// The transport FORMAT decision at the byte-shipping seam. A 10-bit source on
+// the videotoolbox lane opens I420P10; every other combination stays NV12 (no
+// `outFormat` key at all — the seam's exact-match payload IS the regression
+// guard for "software behavior unchanged").
 describe("FfmpegSource — I420P10 profile for a 10-bit source on the videotoolbox lane", () => {
   const proresInit = {
     layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mov",
@@ -524,13 +522,8 @@ describe("FfmpegSource — I420P10 profile for a 10-bit source on the videotoolb
 });
 
 describe("FfmpegSource — HW open failure: capacity vs capability", () => {
-  // `markHwUnusable` is a sticky per-MEDIA, session-lifetime verdict. The
-  // concurrent-HW-session budget is a transient CAPACITY limit, so recording it
-  // pinned a source to the software lane for the rest of the app session the
-  // moment its concurrent load exceeded admission — and kept it
-  // there after the extra clips were deleted. Symptom: a single 4K clip that had
-  // been fine suddenly stutters through the SW lane with nothing on the timeline
-  // to explain it.
+  // Locks the capacity/capability split: only a CAPABILITY failure may reach
+  // `markHwUnusable` — see the LANDMINE in FfmpegSource.ts for why.
   const openFails = (
     reason: string,
     options: { width?: number | null; height?: number | null; playbackScaleDiv?: number } = {},
@@ -895,11 +888,11 @@ describe("FfmpegSource — backward seek", () => {
   });
 
   it("resets the transport's same-target dedup whenever the eof latch re-arms", async () => {
-    // The SW transport dedups on last-sent target and FfmpegSource latches eof;
-    // the two were introduced by different commits with no shared reset point.
-    // Frame-grid snapping makes exact-repeat targets routine, so a re-arm that
-    // does not clear the dedup can have its very first request swallowed while
-    // the ring it should refill sits empty.
+    // The SW transport dedups on last-sent target and FfmpegSource latches eof,
+    // with no shared reset point between them. Frame-grid snapping makes
+    // exact-repeat targets routine, so a re-arm that does not clear the dedup
+    // can have its very first request swallowed while the ring it should refill
+    // sits empty.
     const gpu = fakeTransport();
     const reset = vi.fn();
     (gpu.t as DecodeTransport).resetRequestDedup = reset;
@@ -946,10 +939,8 @@ describe("FfmpegSource — dispose racing the recovery path", () => {
   });
 
   it("swallows per-tick nudges after a total open failure instead of re-rejecting each one", async () => {
-    // `ensureReady` caches the rejection and `fireFatal` already reported it;
-    // before the guard, every subsequent `void requestFrameAt(...)` from the
-    // Compositor's tick minted a fresh unhandled rejection for the same
-    // failure, forever.
+    // Locks the swallow-catch in `requestFrameAt` (see FfmpegSource.ts): the
+    // cached rejection must not mint a fresh unhandled rejection per tick.
     const sw = fakeTransport({ openRejects: "sw-open-boom" });
     const onFatal = vi.fn();
     const src = new FfmpegSource(

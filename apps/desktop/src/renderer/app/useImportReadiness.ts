@@ -59,7 +59,7 @@ export function useImportReadiness(deps: {
 
   const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
 
-  // Import queue subscription (docs/data-model.md Q6). The
+  // Import queue subscription (docs/data-model.md § `MediaItem`). The
   // background-copy worker pushes a fresh history list on every state
   // change. MediaPool reads the in-flight set out of this so pool items
   // can show a "Copying…" badge while their bytes are being moved into
@@ -84,10 +84,9 @@ export function useImportReadiness(deps: {
     };
   }, []);
 
-  // Set of media_ids currently being copied into <workspace>/Media/. The
-  // pool item renders a "Copying…" badge for these. Items that have moved
-  // past Pending/Copying (Completed/Failed/Cancelled) shouldn't show a
-  // copying badge — the path_abs has either landed or never will.
+  // In-flight = Pending/Copying only. Once an entry moves past those
+  // (Completed/Failed/Cancelled) its path_abs has either landed or never
+  // will, so a copying badge would lie.
   const importingMediaIds = useMemo(() => {
     const set = new Set<string>();
     for (const entry of importQueue) {
@@ -113,10 +112,7 @@ export function useImportReadiness(deps: {
   // proxy_bypass only. We do NOT gate the UI on thumbnails / waveform;
   // those are decorations.
   // The listener owns transitions started → pending, complete → ready,
-  // error → failed. `MediaSummary.decode_route` from the next summary
-  // refresh is the durable source of truth; this map is the fast,
-  // session-scoped reflection so the UI flips the moment the event
-  // fires instead of waiting on the project:changed round-trip.
+  // error → failed.
   useEffect(() => {
     let unlisteners: Array<() => void> = [];
     let cancelled = false;
@@ -360,8 +356,11 @@ export function useImportReadiness(deps: {
         {
           name: t("dialogs.media_filter"),
           // Mirrors the backend's extension fallback (io/probe.rs detect_kind)
-          // EXCEPT tif/tiff: Electron/Chromium's createImageBitmap can't decode TIFF,
-          // so offering it would import a layer that composites nothing.
+          // EXCEPT tif/tiff, avif and apng. TIFF: Electron/Chromium's
+          // createImageBitmap can't decode it, so offering it would import a
+          // layer that composites nothing. APNG: those files carry the `.png`
+          // extension, already listed. AVIF: not offered by the picker; it
+          // still imports through drag-drop / MCP.
           extensions: [
             "mp4", "mov", "mkv", "webm", "avi", "m4v", "mpg", "mpeg", "m2v",
             "wav", "mp3", "flac", "aac", "m4a", "ogg", "opus",

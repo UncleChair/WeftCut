@@ -1,9 +1,10 @@
 /// THE frame-grid surface for the renderer, the timeline UI, and the main-process
 /// actor (via `main/state/snap.ts`). Every primitive here is the wasm-backed
-/// `weftcut-eval` leaf — the SAME crate the Rust actor and export link natively —
-/// so there is one frame grid, not hand-mirrored copies (ADR 0025). What this
-/// module adds on top is composition-level policy: the playhead's last-frame
-/// anchor, a neighbouring boundary, layer-local indexing, and SMPTE timecode.
+/// `weftcut-eval` leaf — the SAME crate the native audio and state code link
+/// natively — so there is one frame grid, not hand-mirrored copies (ADR 0025).
+/// What this module adds on top is composition-level policy: the playhead's
+/// last-frame anchor, a neighbouring boundary, layer-local indexing, and SMPTE
+/// timecode.
 ///
 /// DO NOT reimplement a primitive in TS. The leaf is i128 precisely because JS
 /// doubles have a ceiling here: a 24 h timeline at 60000/1001 evaluates
@@ -140,17 +141,11 @@ export function boundaryDisplayFrameUs(
 /// spans 3603.6 s of wall clock (~3.6 s/hour of "drift"). That is correct NDF
 /// behaviour, not a rounding bug.
 ///
-/// Drop-frame was DECLINED, not deferred (spec R2-D3): DF never changes a stored
-/// microsecond — it is purely a label — and its value chain needs an interchange
-/// consumer (EDL / AAF / OTIO / FCPXML) that does not exist here, while export
-/// writes no timecode track. It would cost a persisted field, a schema migration,
-/// `;` parsing, and skipped-label rejection to relabel numbers that are already
-/// right. The honest fix for the one thing that actually misleads a user — reading
-/// a DURATION and assuming wall clock — is `wallClockAside` below, shown beside
-/// duration readouts. Starting timecode is fixed at zero for schema v1 (R2-D4);
-/// this function and `parseTimecode` are the single insertion point if that is
-/// ever revisited, and DF + a start offset must then be revisited TOGETHER
-/// (they share one migration). See ADR 0038.
+/// Drop-frame is DECLINED, not deferred (ADR 0038); `wallClockAside` below is the
+/// answer for the readout it would have addressed. Starting timecode is likewise
+/// fixed at zero. This function and `parseTimecode` are the single insertion point
+/// for either, and DF + a start offset must be introduced TOGETHER — they share
+/// one migration.
 ///
 /// Frame field zero-pads to two digits, which stays correct because there is no
 /// custom-rate entry — the preset ceiling is 60 fps (R2-D5).

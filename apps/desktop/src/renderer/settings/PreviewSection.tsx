@@ -33,8 +33,7 @@ export function PreviewSection({
 }
 
 /// Per-engine one-liner under each card's title. The titles come from
-/// `decodeEngineOptions` (shared with the export dialog so the two surfaces
-/// can't drift in wording); the descriptions are preview-only — the export
+/// `decodeEngineOptions`; the descriptions are preview-only — the export
 /// dialog's select stays title-only.
 const ENGINE_DESC_KEYS = {
   auto: "settings.decode_engine_auto_desc",
@@ -45,8 +44,7 @@ const ENGINE_DESC_KEYS = {
 /// Decode engine as radio cards: every option visible with its trade-off
 /// inline, instead of hiding the comparison behind a dropdown + hint pair.
 /// The Standard (FFmpeg) card disables — with the reason shown underneath —
-/// when its component isn't installed, replacing the old select-then-error
-/// flow.
+/// when its component isn't installed.
 function DecodeEngineCards({ onError }: { onError: (msg: string) => void }) {
   const { t } = useTranslation();
   const engine = useDecodeEngine();
@@ -102,12 +100,7 @@ function DecodeEngineCards({ onError }: { onError: (msg: string) => void }) {
   );
 }
 
-/// Preview quality dial as a three-stop slider — 流畅 (¼) on the left, 画质
-/// (Full) on the right, one stop per fraction. Uses the Slider primitives
-/// directly instead of AppSlider so the stops can render as dots inside the
-/// track; the .app-slider* skin is unchanged. Drafts while dragging and
-/// commits on release / keypress settle, so a drag from ¼ to Full re-opens
-/// the decode transports once, not per stop crossed.
+/// Slider stops in track order: 流畅 (¼) on the left → 画质 (Full) on the right.
 const RESOLUTION_STOPS = ["quarter", "half", "full"] as const;
 
 /// Tick label under each stop, same order as RESOLUTION_STOPS.
@@ -117,6 +110,10 @@ const STOP_LABEL_KEYS = [
   "settings.playback_resolution_full",
 ] as const;
 
+/// Preview quality dial. Uses the Slider primitives directly instead of
+/// AppSlider so the stops can render as dots inside the track. Drafts while
+/// dragging and commits on release / keypress settle, so a drag from ¼ to Full
+/// re-opens the decode transports once, not per stop crossed.
 function PlaybackResolutionSlider({
   onError,
 }: {

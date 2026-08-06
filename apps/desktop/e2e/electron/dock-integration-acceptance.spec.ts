@@ -173,8 +173,9 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
 
     // Preview has no tab strip while solo, so maximize it the way a user
     // would: hover its surface and press Backquote. The Dock Tree is
-    // untouched (still six Panels), the snapshot reports the runtime maximize
-    // overlay, and Preview fills the workspace while the others go non-visible.
+    // untouched (still the same Panel set), the snapshot reports the runtime
+    // maximize overlay, and Preview fills the workspace while the others go
+    // non-visible.
     const workspaceWidth = (await rect(page, ".dock-workspace")).width;
     await dockPanel(page, "preview").hover();
     await page.keyboard.press("Backquote");
@@ -184,7 +185,7 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
     expect(maximized / workspaceWidth).toBeGreaterThan(0.9);
 
     // A second Backquote press reverses the overlay: no Panel is maximized,
-    // the tree is still the six built-in Panels (maximize never persisted),
+    // the tree is still the built-in Panel set (maximize never persisted),
     // and the layout is a genuine multi-column split again — Preview back to
     // a shared column alongside Media and Timeline (both single-Panel groups,
     // so robustly visible).
@@ -258,8 +259,8 @@ test("Reset Workspace atomically replaces a populated arrangement", async () => 
   try {
     await setupEditor(page, "dock-reset-populated");
 
-    // Make the live arrangement differ from Editing, then reset it while the
-    // reference Panels that used to drive incremental reconstruction are open.
+    // Make the live arrangement differ from Editing, then reset it from that
+    // populated arrangement.
     await viewMenuTrigger(page).click();
     await menuItem(page, /^Caption$/).click();
     await expect(dockPanel(page)).toHaveCount(PANEL_COUNT + 1);
@@ -319,7 +320,8 @@ test("an edge drop splits a Panel into its own group beside the target", async (
 
     // Nearby starts tabbed with Attribute and Effect in the contextual group, so
     // only the active contextual tab's content is visible; Nearby's content is
-    // hidden. Every group's tab shows its label — except solo Preview's.
+    // hidden. Every group's tab shows its label except the two `visibleTabLabels`
+    // documents (solo Preview, and Quick Actions' grip).
     expect(await panelVisible(page, "nearby")).toBe(false);
     expect((await visibleTabLabels(page)).sort()).toEqual([
       "Attribute",
@@ -342,7 +344,7 @@ test("an edge drop splits a Panel into its own group beside the target", async (
 
     await expect.poll(() => panelVisible(page, "nearby")).toBe(true);
     expect(await panelVisible(page, "timeline")).toBe(true);
-    // Still the six built-in Panels open, just re-split into a new group.
+    // Still the same built-in Panels open, just re-split into a new group.
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
     // Nearby left the contextual strip for its own group; its tab stays visible
     // there (single-Panel groups show their header), so every tab but solo
@@ -569,11 +571,7 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     expect(await effectOrder()).toEqual(reordered);
     await page.locator(".weft-dock-tab-label", { hasText: "Attribute" }).click();
     await expect(dockPanel(page, "attribute").locator(".placeholder")).toHaveCount(0);
-    // Attribute is bound to the primary Layer: the Duration timing field (whose
-    // edits route through the same `trim_layer` command Timeline gestures use) is
-    // present for the selection. Duration, not Start — both are timing fields on
-    // the same envelope, but Start sits in the always-collapsed Advanced section,
-    // and expanding a Section is not what this dock test is about.
+    // Same Attribute binding check as above.
     await expect(
       dockPanel(page, "attribute").getByRole("textbox", { name: /^(Duration|时长)$/ }),
     ).toBeVisible();

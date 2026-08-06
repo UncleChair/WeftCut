@@ -169,9 +169,8 @@ describe("normalizeLayout", () => {
 describe("createEditingLayout", () => {
   it("builds the complete strip + 22/53/25 by 72/28 Editing baseline", () => {
     const result = createEditingLayout({ width: 1_000, height: 800 });
-    // A node's `size` is measured along its PARENT's axis, and branches
-    // alternate: horizontal root (widths) → vertical body (heights) → the
-    // horizontal editor row (widths).
+    // Axis/size semantics: see createEditingLayout's grid comment in
+    // workspaceLayout.ts.
     const dockview = result.dockview as unknown as {
       grid: {
         orientation: string;
@@ -211,8 +210,6 @@ describe("createEditingLayout", () => {
       size: 44,
       data: { views: ["quick-actions"] },
     });
-    // The strip spans the full height because it sits BESIDE the body branch,
-    // which is what holds both the editor row and the Timeline row.
     expect(body).toMatchObject({ type: "branch", size: 956 });
     const [editor, timeline] = body.data;
     expect(editor).toMatchObject({ type: "branch", size: 576 });

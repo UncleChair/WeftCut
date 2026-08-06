@@ -114,8 +114,7 @@ export function hwSessionCount(): number {
 ///
 /// `slotVram` is computed HERE from the live session records (the admission
 /// lease knows coded area but not pool size): Σ w×h×4×slots over open
-/// sessions — the observable that decides the A′ ×2.67-bytes question with a
-/// measurement instead of arithmetic.
+/// sessions — the measured pool VRAM, not an estimate.
 export function hwBudget(): PreviewGpuBudgetSnapshot {
   let usedBytes = 0
   for (const s of sessions.values()) usedBytes += s.width * s.height * 4 * s.imported.length
@@ -233,8 +232,8 @@ async function doOpenPreviewGpu(
           // The slots are native-converted RGBA (A′): import as 'rgba' tagged
           // sRGB passthrough, NOT the source's colorSpace — the color math
           // already happened in the native shader, and this tag is what makes
-          // the preload's createImageBitmap a pure byte copy (ticket-01 probe:
-          // byte-exact both geometries). Chromium gets no YUV to convert.
+          // the preload's createImageBitmap a pure byte copy (byte-exact on
+          // both geometries). Chromium gets no YUV to convert.
           pixelFormat: 'rgba',
           colorSpace: SRGB_PASSTHROUGH,
           timestamp: 0,

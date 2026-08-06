@@ -1,18 +1,9 @@
-// Prop canonicalizer for motifs.
+// Prop canonicalizer for motifs. Logic lives once in
+// src/shared/motifs/catalog.ts; this file is the adapter over it.
 //
-// `canonicalizeProps` fills missing props from schema defaults, rejects
-// unknown keys, validates prop values, and emits a key-order-stable object
-// (alphabetical — BTreeMap order) so the canonical JSON form (used in raster
-// cache keys) is deterministic. It mirrors the Rust `Motif::canonicalize_props`
-// validator. Logic lives once in src/shared/motifs/catalog.ts.
-//
-// NOTE: argument order here is (raw, manifest) — intentionally opposite of the
-// shared function — to preserve the existing call sites unchanged.
-//
-// Only the prop canonicalizer lives here (the file name predates the removal
-// of the SVG rasterizer that once shared it). Importers: `exportBake.ts`
-// (and the canonicalizer twin-checks in catalog / motifFrameDescriptor
-// tests).
+// Name is historical: only the prop canonicalizer lives here. Importers:
+// `exportBake.ts` (and the canonicalizer twin-checks in catalog /
+// motifFrameDescriptor tests).
 
 import type { MotifManifest } from "./catalog";
 import { canonicalizeProps as _sharedStrict } from "../../../shared/motifs/catalog";

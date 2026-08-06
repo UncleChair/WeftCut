@@ -3,13 +3,8 @@
 // (consumer via ipc). One definition → no main↔renderer drift. Twin of
 // shared/speech-config.ts.
 //
-// Same secrecy split as ADR 0036: a cloud VLM API KEY is secret and stays in
-// safeStorage (main/keys.ts, cloud_keys.json) — NEVER stored here. This store
-// holds only NON-secret config: the preferred engine, each LOCAL engine's
-// binary/model/mmproj paths (+ device hint), and a BYO endpoint's URL/model (its
-// optional key is secret and would live in safeStorage). Electron main merges
-// the non-secret config + the cloud key into the Rust `vlm_config` snapshot the
-// stateless describe_clip resolver reads (see toVlmBackendSnapshot).
+// Non-secret config only; the cloud API key lives in safeStorage (main/keys.ts).
+// See ADR 0036 "Config splits by secrecy".
 
 /// The engine the user prefers for description. `"auto"` lets the resolver pick
 /// by availability (its local-first default order). The concrete tags mirror the
@@ -43,8 +38,9 @@ export interface VlmLocalEngineConfig {
 
 /// A BYO OpenAI-compatible endpoint (self-hosted llama-server / vLLM / SGLang).
 /// `url` is the full `/v1/chat/completions` URL; `model` names the served model.
-/// `api_key` is optional and secret — persisted only if a self-hosted server
-/// needs one (kept out of logs by the redactor).
+/// `api_key` is optional — set only when a self-hosted server needs one. Unlike
+/// the cloud key it is persisted here in vlm_config.json, not safeStorage (kept
+/// out of logs by the redactor).
 export interface VlmEndpointConfig {
   url: string;
   model?: string;

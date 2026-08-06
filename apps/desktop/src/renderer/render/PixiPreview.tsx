@@ -678,10 +678,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     });
   }, []);
 
-  // A composition-size change under an open project re-applies the current
-  // fraction rather than dropping back to 1: `renderer.resize` takes size and
-  // resolution together, so passing one without the other is what would reset
-  // it. No-ops while the sizes are unchanged (Pixi compares pixel dimensions).
+  // Re-applies size + fraction together (why: `applyPlaybackRenderResolution`).
+  // No-ops while the pixel dimensions are unchanged — Pixi compares them.
   const compositionWidth = composition?.width;
   const compositionHeight = composition?.height;
   useEffect(() => {
@@ -715,11 +713,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // A draft edit / install / delete updates the runtime Motif catalog (via the
   // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
   // subscribe to the catalog CHANGE-NOTIFIER rather than the raw backend event so
-  // we refresh only AFTER `merged` actually carries the new content_hash —
-  // subscribing to the raw event races the async re-sync and re-captures stale
-  // source. Refresh the live Motif sprites against the fresh catalog + recapture
-  // at the current playhead. The compositor may not be initialized yet (async
-  // onInit) — read the ref live and bail if absent.
+  // we refresh only AFTER `setUserMotifs` has landed the new manifests in the
+  // catalog and bumped its revision — subscribing to the raw event races the
+  // async re-sync and re-captures stale source. Refresh the live Motif sprites
+  // against the fresh catalog + recapture at the current playhead. The
+  // compositor may not be initialized yet (async onInit) — read the ref live
+  // and bail if absent.
   useEffect(() => {
     return subscribeMotifCatalog(() => {
       const c = compositorRef.current;
@@ -835,6 +834,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   );
 });
 
+/// Field semantics for `opts`: `PixiPreviewHandle.runExport` in
+/// pixiPreviewFlag.ts, which most of them are threaded straight into.
 async function handlePixiExport(
   opts: {
     onProgress?: (encoded: number, total: number) => void;
@@ -844,16 +845,9 @@ async function handlePixiExport(
     endUs?: number;
     keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
-    /// Pre-rasterized Motif-layer frames (baked by App before launching the
-    /// export). Threaded straight into `runExport`; the Worker binds them.
     motifFrames?: Record<string, ImageBitmap[]>;
-    /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
-    /// Present ⇒ the worker packs frames to this format and streams them to
-    /// the native ffmpeg sink instead of WebCodecs-encoding.
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
-    /// Per-media decode routing table (see exportDecodeRouting.ts). Threaded
-    /// straight into `runExport`.
     decodeRouting?: ExportDecodeRouting;
   },
   compositor: Compositor | null,

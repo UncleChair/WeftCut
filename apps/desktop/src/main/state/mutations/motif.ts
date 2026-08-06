@@ -3,8 +3,7 @@ import type { MotifRebindEntry } from '../model'
 import { defaultTransform } from './add'
 
 /** Build Motif LayerParams from canonicalized props + manifest version.
- *  Mirrors the MotifParams construction in commands/motifs.rs:198-205 and
- *  mcp/tools.rs:2079-2086. src_in_us=0, identity transform, Static(1) opacity. */
+ *  src_in_us=0, identity transform, Static(1) opacity. */
 export function motifLayerParams(motifId: string, motifVersion: number, canonicalProps: Record<string, unknown>): LayerParams {
   return {
     kind: 'Motif',

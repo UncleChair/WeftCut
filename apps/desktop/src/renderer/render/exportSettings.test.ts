@@ -557,12 +557,7 @@ describe("encoderHwHint", () => {
     expect(encoderHwHint("software")).toBe("prefer-software");
   });
 
-  // The invariant, not an implementation detail: Chromium treats the hint as
-  // MANDATORY, so ANY prefer-hardware ask under "auto" is a configure() hard
-  // error on machines with no WebCodecs HW encoder — which is a per-machine
-  // fact (GPU/driver/Electron build), so no OS or codec allowlist can gate it
-  // safely. A previous windows|mac allowlist reproduced on Windows the very
-  // Linux failure it was written to prevent (issue #7 boundary #10).
+  // Why "auto" may never ask for hardware: see the LANDMINE on `encoderHwHint`.
   it("never asks for hardware under auto", () => {
     expect(encoderHwHint("auto")).toBeUndefined();
   });

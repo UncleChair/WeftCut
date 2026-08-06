@@ -1,10 +1,10 @@
-//! MCP resource readers, transport-free. `read_resource(b, uri)` dispatches the
-//! `project://*` JSON resources and the binary `media://*` resources, returning
-//! the wire `ResourceResult`.
+//! MCP resource readers, transport-free. `read_resource(b, uri, state_json)`
+//! dispatches `project://compiled`, `composition://meter` and `media://*`,
+//! returning the wire `ResourceResult`; the `project://*` state views are
+//! served by the TS MCP host, not here.
 //!
-//! JSON resources serialize the project snapshot (pretty-printed) into a
-//! `ResourceContent::Text`. Binary resources base64-encode the bytes into a
-//! `ResourceContent::Blob`.
+//! JSON resources are pretty-printed into a `ResourceContent::Text`; binary
+//! ones base64-encode the bytes into a `ResourceContent::Blob`.
 
 use serde_json::Value;
 use uuid::Uuid;
@@ -40,8 +40,7 @@ const IMAGE_JPEG: &str = "image/jpeg";
 /// compute: `project://compiled` needs the full project (audio mix
 /// plan); `media://*` needs the `MediaItem` resolved by id. `composition://meter`
 /// reads live Rust state and needs neither. Both fields `serde(default)` so a
-/// stateless read (`{}`) parses cleanly. The `project://*` state views are served
-/// directly by the TS host and never reach this reader.
+/// stateless read (`{}`) parses cleanly.
 #[derive(Default, serde::Deserialize)]
 struct ResourceState {
     #[serde(default)]
@@ -82,22 +81,18 @@ pub(crate) async fn read_resource(
         McpToolError::internal_error(format!("resource state injection: {e}"), None)
     })?;
 
-    // media://* paths return binary content (image bytes, peaks file) and need the
-    // MediaItem the TS host resolved by id (TS owns state). We peel them
-    // off here so the rest of `read_resource` can stay text/JSON oriented.
+    // media://* needs the MediaItem the TS host resolved by id (TS owns state).
+    // Peeled off ahead of the URI match: thumbnail / frame / waveform return
+    // blobs, /description and /analysis return JSON.
     if let Some(tail) = uri.strip_prefix(PREFIX_MEDIA) {
-        // media://{id}/description is the cached video-understanding view — a
-        // separate reader because, unlike the always-computable frame/waveform,
-        // it needs the injected VLM config to resolve the default backend + key,
-        // and may report "not computed yet" (reflecting the incremental cache).
+        // /description — cached VLM view, needs the injected config; see
+        // `read_description_resource`.
         #[cfg(feature = "speech")]
         if let Some(id_part) = tail.strip_suffix("/description") {
             return read_description_resource(b, uri, id_part, state.media, &state.vlm_config).await;
         }
-        // media://{id}/analysis is the deterministic shot-layer view. Unlike
-        // /description it is ALWAYS computable, so a cache miss COMPUTES on demand
-        // + writes through rather than 404ing (see read_analysis_resource). It is
-        // self-contained — only the injected MediaItem, no backend config.
+        // /analysis — always computable, computes on miss; see
+        // `read_analysis_resource`.
         #[cfg(feature = "jobs")]
         if let Some(id_part) = tail.strip_suffix("/analysis") {
             return read_analysis_resource(b, uri, id_part, state.media).await;
@@ -106,15 +101,14 @@ pub(crate) async fn read_resource(
     }
 
     let body: Value = match uri {
-        // The preview master-bus meter is live Rust state (no project needed).
         URI_METER => meter_payload(b),
         URI_COMPILED => {
             // The audio mix plan IS the compiled view of the export audio pipeline
-            // (the lavfi IR it replaced is gone; ADR 0019). Envelope point COUNTS,
-            // not values — keyframed gain on a long layer would be hundreds of
-            // thousands of floats. A transient ConformMissing state reports inline
-            // instead of failing the read. The TS host injects the full project
-            // — this resource is agent-triggered and infrequent.
+            // (ADR 0019). Envelope point COUNTS, not values — keyframed gain on a
+            // long layer would be hundreds of thousands of floats. A transient
+            // ConformMissing state reports inline instead of failing the read. The
+            // TS host injects the full project — this resource is agent-triggered
+            // and infrequent.
             let project = state.project.ok_or_else(|| {
                 McpToolError::internal_error(
                     "project://compiled requires the injected project (TS host)".to_string(),
@@ -201,8 +195,7 @@ async fn read_media_resource(
     let media_id: MediaId = Uuid::parse_str(id_part).map_err(|_| {
         McpToolError::resource_not_found(format!("media URI has invalid UUID: {id_part}"), None)
     })?;
-    // The MediaItem is resolved by the TS host (the sole state owner) and injected
-    // in the request. `None` → the id was absent from the project state.
+    // `None` → the id was absent from the project state.
     let media = media.ok_or_else(|| {
         McpToolError::resource_not_found(format!("media {media_id} not found"), None)
     })?;
@@ -522,8 +515,8 @@ mod stateless_tests {
         assert_eq!(body["live"], false);
     }
 
-    /// project://* state views are now served by the TS MCP host — the Rust reader
-    /// no longer handles them and returns a clear not-found.
+    /// project://* state views are TS-served; the Rust reader returns a clear
+    /// not-found.
     #[tokio::test]
     async fn project_views_are_not_served_by_rust() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));

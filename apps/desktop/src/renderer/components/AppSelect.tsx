@@ -24,8 +24,7 @@ interface AppSelectProps {
 /// `<select>`: the popup is app-styled (reusing the app-menu-list/app-menu-item
 /// chrome instead of the OS-rendered list), keyboard/typeahead behavior
 /// comes from Base UI, and the selected item shows a ✓ in the popup.
-/// String values only — numeric call sites convert at the boundary,
-/// matching the old `e.target.value` shape.
+/// String values only — numeric call sites convert at the boundary.
 export function AppSelect({
   value,
   onValueChange,

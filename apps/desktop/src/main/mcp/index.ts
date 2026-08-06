@@ -32,7 +32,6 @@ export async function startMcpHost(backend: Backend, getTsHost: () => import('..
   const appExpress = express()
   appExpress.use(express.json({ limit: '50mb' }))
 
-  // Bearer enforcement is done in this middleware.
   // Constant-time compare: a plain `!==` leaks timing. Not a real attack surface
   // for a 256-bit localhost token, but timingSafeEqual is the correct form.
   const bearerOk = (header: string | undefined): boolean => {

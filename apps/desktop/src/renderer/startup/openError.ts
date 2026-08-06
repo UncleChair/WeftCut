@@ -1,12 +1,12 @@
 import type { TFunction } from "i18next";
 
 /// Sentinel error strings returned by `project_open`. Mirror the literals
-/// in `commands/persistence.rs`.
+/// thrown by `openProject` in `main/state/workspace-orchestrator.ts`.
 ///
 /// The workspace folder itself is gone — typically a recents entry whose
 /// folder was moved or deleted after the fact. Checked before the
-/// project.json probe on the Rust side so the user sees "folder is gone"
-/// rather than "isn't a WeftCut project".
+/// project.json probe so the user sees "folder is gone" rather than
+/// "isn't a WeftCut project".
 export const PROJECT_FOLDER_MISSING_SENTINEL = "PROJECT_FOLDER_MISSING";
 
 /// The folder exists but has no `project.json`.

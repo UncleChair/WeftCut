@@ -1,11 +1,10 @@
-// Chromakey shader sources — GLSL (WebGL: 10-bit export) and WGSL (WebGPU:
-// preview + 8-bit export) side by side so they cannot drift apart unnoticed.
+// Chromakey shader sources — GLSL (WebGL: export) and WGSL (WebGPU: preview)
+// side by side so they cannot drift apart unnoticed.
 // Algorithm: color-difference (Vlahos) matte with Keylight-style screen
 // balance → clip levels → nested shrink/feather (alpha recomputed at taps;
 // single pass, no matte texture, no TexturePool interaction) → screen
 // subtraction (output = premultiplied foreground) → despill + fixed neutral
-// luma restore. Keyer v2 (despill bias, clip rollback, despot, IBK
-// clean-plate, linear-light) is post-v1 backlog, not missing work.
+// luma restore.
 //
 // LANDMINE: this file must remain valid plain JavaScript (no TS-only syntax,
 // no imports) — the f16 parity gate (e2e/effects-f16-parity/index.html) loads

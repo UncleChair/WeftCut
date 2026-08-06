@@ -16,9 +16,9 @@ const ALL_52_NAMES = new Set<string>([
   'update_marker', 'remove_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
-  // dedicated-exec tools (21) — add_motif added Phase 4a-ii §2.2;
-  // auto_split_by_shot is a TS-owned HYBRID def (routes 'hybrid', not an actor
-  // arm) that carries a parseDedicated for the bijection required-scalar gate.
+  // dedicated-exec tools (21) — auto_split_by_shot is a TS-owned HYBRID def
+  // (routes 'hybrid', not an actor arm) that carries a parseDedicated for the
+  // bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
   'add_motif',
   'lock_history', 'unlock_history',
@@ -54,15 +54,15 @@ describe('MCP tool table projections', () => {
   })
 
   it('hardened parseArgs rejects malformed input (was a silent as-cast)', () => {
-    // force must be a boolean; previously `(a.force as boolean) ?? false` let a string through
+    // force must be a boolean
     expect(() => MCP_ARG_PARSERS['remove_track']({ track_id: '00000000-0000-7000-8000-000000000001', force: 'yes' })).toThrow()
-    // gain_db must be a finite number (was `a.gain_db` raw)
+    // gain_db must be a finite number
     expect(() => MCP_ARG_PARSERS['set_role_gain']({ role: 'music', gain_db: 'loud' })).toThrow()
   })
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(21) // add_motif (Phase 4a-ii §2.2) + auto_split_by_shot (scene-analysis ticket 04)
+    expect(dedicated.length).toBe(21)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }

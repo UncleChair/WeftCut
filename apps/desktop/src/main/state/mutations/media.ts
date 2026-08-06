@@ -26,11 +26,10 @@ export function imageOverlayParams(media: Uuid): LayerParams {
     opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 }
 }
 
-/** Fixed-defaults media-pool item; the byte-identical twin of the driver's
- *  media_item helper. imported_at is reconciled against the regenerated oracle
- *  (the only Rust-DateTime-fragile field). path_abs uses forward slashes so
- *  Rust PathBuf serialization is platform-stable.
- *  withAudio mirrors prod_driver.rs AudioStreamMeta { sample_rate:0, channels:0, codec:"" }
+/** Fixed-defaults media-pool item. imported_at is reconciled against the
+ *  regenerated oracle (the only Rust-DateTime-fragile field). path_abs uses
+ *  forward slashes so Rust PathBuf serialization is platform-stable.
+ *  withAudio fills state/media.rs AudioStreamMeta { sample_rate:0, channels:0, codec:"" }
  *  — the auto-pair predicate checks audio.is_some(), not the field values. */
 export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs: number | null, withAudio = false): MediaItem {
   return {

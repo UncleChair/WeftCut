@@ -6,8 +6,9 @@
 // Chromium's cross-device read of that slot has GPU-COMPLETED (the race, and why
 // `await createImageBitmap` is not that guarantee, is documented once at the
 // barrier block in src/preload/index.ts). The preload can express that wait
-// itself — mode `fence` — but only on a private offscreen WebGL2 context, where
-// on an IDLE GPU the fence does not signal on its own at all: the drain's
+// itself — mode `fence` — but only on a private offscreen WebGL2 context, which
+// offers no blocking wait (`MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0 on Chromium):
+// on an IDLE GPU the fence does not signal on its own at all, so the drain's
 // flush-and-poll SPIN is what completes it, ~20ms of renderer thread a time, and
 // a single quiet track spends ~2s per 20s window doing it.
 //
@@ -58,11 +59,9 @@ export interface SlotFenceBackend {
 }
 
 /// What actually ran for one submitted bitmap. `applied` is the rung of the
-/// fallback ladder that ran, never the mode that was configured: a
-/// `rendererFence` session whose device is missing runs the CPU readback
-/// instead, and a bench leg that reported its label rather than its outcome
-/// would publish the readback's cost under the fence's name. `drawMs`/`readMs`
-/// split the blocking cost the same way the preload's `BarrierCost` does.
+/// fallback ladder that ran, never the configured mode — see
+/// `barrierModeObserved` in handoffTimings.ts. `drawMs`/`readMs` split the
+/// blocking cost the same way the preload's `BarrierCost` does.
 export interface SlotFenceSubmission {
   applied: HwBarrierMode;
   drawMs: number;
@@ -90,9 +89,9 @@ type StreamStats = {
 
 /// CPU-readback fallback: rasterize 1px of the bitmap and read it back, which
 /// blocks until Chromium materializes the `createImageBitmap` copy. Correct but
-/// synchronous (~20ms of renderer thread per frame per session) — the barrier
-/// `fence` replaced. Reached only when no device is registered, so that a
-/// missing device degrades to SLOW rather than to INCORRECT.
+/// synchronous (~20ms of renderer thread per frame per session). Reached only
+/// when no device is registered, so that a missing device degrades to SLOW
+/// rather than to INCORRECT.
 ///
 /// Null = not even a 2D context, so nothing ran. Reported as `none`, which is an
 /// alarm and not a cost.
@@ -119,9 +118,9 @@ export class SlotFenceQueue {
   private pumpTimer: ReturnType<typeof setTimeout> | null = null;
 
   /// Production uses `signal-only`: an unsignalled probe retains ownership until
-  /// it signals or its stream closes. `unsafe-deadline` explicitly opts into the
-  /// old compatibility behavior and exists only for diagnostics/tests; it may
-  /// recycle a shared texture while Chromium is still reading it.
+  /// it signals or its stream closes. `unsafe-deadline` releases on a timer and
+  /// exists only for diagnostics/tests; it may recycle a shared texture while
+  /// Chromium is still reading it.
   constructor(
     private readonly releasePolicy: SlotFenceReleasePolicy = { mode: "signal-only" },
   ) {}
@@ -313,11 +312,9 @@ type MaybeWebgpuRenderer = { gpu?: { device?: GPUDevice | null } | null };
 /// disturb, every frame, to establish the same dependency.
 ///
 /// `onSubmittedWorkDone` is the fence equivalent, and better in the way that
-/// matters: it is a promise, so there is no polling and no spin. WebGL2 has no
-/// blocking wait to offer (`MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0 on Chromium), so
-/// the preload's variant must flush-and-poll at its deadline — and on an idle GPU
-/// that spin is what completes the fence rather than merely observing it. This
-/// one resolves on its own; it is just slow to.
+/// matters: it is a promise, so there is no polling and no spin (the header
+/// carries the contrast with the preload's WebGL2 variant). This one resolves on
+/// its own; it is just slow to.
 class WebgpuSlotFence implements SlotFenceBackend {
   /// One 1×1 destination, created lazily and reused for the whole session. The
   /// pixels are never read — only the dependency matters.

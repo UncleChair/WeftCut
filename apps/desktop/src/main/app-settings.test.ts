@@ -42,9 +42,7 @@ describe('app-settings store', () => {
     expect(got.delta_window_us).toBe(10_000_000)
     expect(got.tail_snap_enabled).toBe(true)
     expect(got.tail_snap_strength_px).toBe(12)
-    // Additive pair: a file predating preview snapping has no key here, and both
-    // MUST land on their defaults — the settings UI reads the number into a
-    // slider and the gizmo reads the boolean as a gate.
+    // The preview-snap pair must default too — see app-settings.ts for why.
     expect(got.preview_snap_enabled).toBe(true)
     expect(got.preview_snap_strength_px).toBe(12)
   })
@@ -116,9 +114,6 @@ describe('app-settings store', () => {
   })
 
   it('playback_resolution defaults to full on a file written before the field existed', () => {
-    // The additive-field trap: an existing app_settings.json has no
-    // `playback_resolution` key at all, and the renderer feeds the value
-    // straight into a <select> — undefined there renders a blank control.
     expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().playback_resolution).toBe('full')
     expect(store().get().playback_resolution).toBe('full')
     expect(store().apply({ playback_resolution: 'half' }).playback_resolution).toBe('half')

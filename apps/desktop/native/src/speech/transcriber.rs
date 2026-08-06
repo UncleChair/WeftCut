@@ -2,7 +2,7 @@
 //! [`RawTranscript`] out.
 //!
 //! The trait is deliberately *thin*: a backend produces one raw output style
-//! (SRT or whisper JSON), it does NOT normalize. Normalization is a separate
+//! (SRT, whisper JSON, or FunASR JSON), it does NOT normalize. Normalization is a separate
 //! pluggable layer ([`super::parse`]) so no backend reimplements SRT→words.
 //! Honoring the request's
 //! [`want_word_timing`](TranscribeRequest::want_word_timing) hint, a backend

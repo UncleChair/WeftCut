@@ -42,8 +42,7 @@ impl AudioRole {
 }
 
 /// Per-role mix-bus settings. `gain_db` is a recorded edit; `muted`/`solo`
-/// are unrecorded preferences (see `RoleFlagsPatch`). Effects insert here
-/// in a later plan (`effects: Vec<AudioEffect>`); v1 adds no DSP.
+/// are unrecorded preferences (see `RoleFlagsPatch`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoleMixSettings {
     #[serde(default)]

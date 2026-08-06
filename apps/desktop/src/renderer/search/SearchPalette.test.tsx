@@ -17,16 +17,16 @@ import { buildEntries } from "./buildEntries";
 import { SearchPalette } from "./SearchPalette";
 import type { ProjectSummary } from "../ipc";
 
-// jsdom (this repo's ^25.0.1) doesn't implement Element.scrollIntoView at
-// all — the active-row ref callback calls it unconditionally (see
-// panels/MediaPool.tsx's precedent for the same call), so every render
-// with an active row throws "scrollIntoView is not a function" without
-// this no-op shim. Test-environment gap only; not a component bug.
+// jsdom doesn't implement Element.scrollIntoView at all — the active-row
+// ref callback calls it unconditionally (see panels/MediaPool.tsx's
+// precedent for the same call), so every render with an active row throws
+// "scrollIntoView is not a function" without this no-op shim.
+// Test-environment gap only; not a component bug.
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
-/// Trimmed Task-6 fixture: media m1 "beach.mp4" used by ONE clip (l1 on
+/// Trimmed fixture: media m1 "beach.mp4" used by ONE clip (l1 on
 /// track t1 "A-Roll" — no second usage), caption layer "lc" with content
 /// "字幕第一行" at 1 s, marker mk1 "章节一" at 5 s. Kept to a single media
 /// usage (unlike buildEntries.test.ts's two-usage fixture) so the

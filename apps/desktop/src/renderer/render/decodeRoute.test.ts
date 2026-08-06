@@ -17,10 +17,9 @@ describe("resolveDecode — full route × readiness matrix", () => {
     // Quick proxy gone but full master present (e.g. an older import whose quick
     // was cleaned up): preview must fall back to the full proxy, not go blank.
     ["proxied, quick gone, full ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: "f.mp4", format_version: 3 }), "f.mp4", "f.mp4"],
-    // native-sw carries proxy paths like Proxied and resolves identically
-    // (Option B): with the experimental toggle OFF a ProRes clip previews via
-    // its proxy — no regression. The "use the native-SW original" behavior is a
-    // later overlay (the decode-engine resolver), NOT a resolveDecode change.
+    // native-sw carries proxy paths like proxied and resolves identically:
+    // original-vs-proxy is the engine resolver's call at decode time, never
+    // resolveDecode's.
     ["native-sw, quick ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: null, format_version: 0 }), "q.mp4", null],
     ["native-sw, both ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: "f.mp4", format_version: 3 }), "q.mp4", "f.mp4"],
     ["image is bypass-like", M("Image", { route: "bypass" }), "orig.mp4", "orig.mp4"],

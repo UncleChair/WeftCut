@@ -5,12 +5,9 @@
 //! future Deepgram or ElevenLabs client. Per-request timeouts and routing
 //! stay the caller's job — this module never builds the request body.
 //!
-//! [`retry_delay_for_status`] lets providers retry
-//! transient failures (429 / 5xx) with sensible backoff. The retry loop
-//! lives in each provider's `transcribe` / `synthesize` impl — we don't
-//! abstract the loop here because the request body needs to be rebuilt
-//! each iteration (multipart `Form`s aren't cheaply cloneable) and the
-//! success-path body extraction differs per provider.
+//! [`retry_delay_for_status`] lets providers retry transient failures
+//! (429 / 5xx) with sensible backoff; the retry loop itself is not abstracted
+//! here — it lives in each provider's `transcribe` / `synthesize` impl.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -47,13 +44,10 @@ pub fn bearer_auth(key: &str) -> String {
 /// Beyond this the loop returns the last error rather than burning more time.
 pub const MAX_RETRY_ATTEMPTS: u32 = 3;
 
-/// Time budget spent **between** retries — i.e., sum of sleep durations. This
-/// is NOT a tail-latency cap on a wedged single attempt; the per-request
-/// timeout in [`shared_client`] (180s) bounds that. If OpenAI hangs on the
-/// first send for 180s and we never get a response, this budget is irrelevant
-/// because we never enter [`retry_delay_for_status`]. The budget kicks in
-/// once we've actually received an error response and need to decide whether
-/// the cumulative back-off so far makes another attempt worth waiting for.
+/// Ceiling on the whole retry sequence: before scheduling another attempt the
+/// caller checks elapsed-since-first-send plus the proposed delay against this.
+/// NOT a tail-latency cap on one wedged attempt — [`shared_client`]'s
+/// per-request timeout bounds that.
 pub const RETRY_TOTAL_BUDGET: Duration = Duration::from_secs(45);
 
 /// `Retry-After`-header cap. OpenAI sometimes returns large values during
@@ -115,9 +109,7 @@ mod tests {
 
     #[test]
     fn missing_key_returns_structured_error() {
-        // No real keyring access — this test relies on the user not having a
-        // bogus "test-only" backend key. For now we just verify the error
-        // constructor is wired up and its message hints Settings.
+        // Constructor-only check: the MissingKey message must hint Settings.
         let err = SpeechError::MissingKey {
             provider: SpeechBackend::OpenAi,
         };

@@ -5,9 +5,8 @@
 // Renders nothing when the session was clean, so the transport bar stays
 // clean in the common case.
 //
-// Two counts, never merged into a total: a dropped frame means the
-// decoder was behind, a late frame means the composite loop stalled, and
-// they point at different fixes.
+// Two counts, never merged into a total — see `render/underrunTracker.ts`
+// for why the two causes stay apart.
 
 import { useTranslation } from "react-i18next";
 

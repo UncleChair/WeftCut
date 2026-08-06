@@ -7,10 +7,8 @@
 //! This module owns everything that MUST be identical across those engines and
 //! is easy to get wrong per-backend:
 //!
-//! - **conhost suppression** (`no_console_window`) so no console window flashes
-//!   on Windows under the GUI-subsystem Electron host;
-//! - **`kill_on_drop(true)`** so a cancelled/timed-out run never orphans the
-//!   child (see `jobs/hwaccel.rs` for the same landmine on ffmpeg);
+//! - **conhost suppression** (`no_console_window`);
+//! - **`kill_on_drop(true)`** (the same landmine as ffmpeg in `jobs/hwaccel.rs`);
 //! - the **timeout kill** and the **exit-code → [`SpeechError`]** mapping.
 //!
 //! A backend supplies only the binary, the built argument vector, where the

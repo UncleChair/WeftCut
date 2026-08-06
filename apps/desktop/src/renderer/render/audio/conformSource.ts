@@ -1,9 +1,6 @@
 // Range-reads over a VCONF conform file served via weftcut-media://. No decode —
 // the file IS the samples (48 kHz f32le interleaved; header per
-// `native/src/jobs/conform.rs`). Loop-read discipline per the weftcut-media://
-// ~1 MB 206 cap: a single Range response may come back short, so reads
-// re-issue until the exact byte count arrives (same rule as
-// `MediaRangeSource`).
+// `native/src/jobs/conform.rs`).
 
 export interface ConformHeader {
   version: number;

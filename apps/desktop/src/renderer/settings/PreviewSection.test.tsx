@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
 // Covers the "Preview" Settings section (PreviewSection.tsx): the decode
-// engine radio cards and the playback resolution segmented control. The
+// engine radio cards and the playback resolution three-stop slider. The
 // app-settings store and decode-component store are stubbed at the module
 // boundary so each test drives exactly one state combination.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

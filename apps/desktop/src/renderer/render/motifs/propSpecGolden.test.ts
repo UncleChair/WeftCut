@@ -11,9 +11,6 @@ const _catalogIsIpc: IpcPropSpec = {} as PropSpec;
 void _ipcIsCatalog;
 void _catalogIsIpc;
 
-// The other half of the parity guard lives in Rust
-// (native/src/motifs/catalog.rs `propspec_parity_golden`): the same fixture,
-// asserted against the Rust validator. Both sides must handle every variant.
 describe("PropSpec parity golden (TS render path)", () => {
   for (const entry of fixture.variants) {
     const spec = entry.spec as PropSpec;

@@ -3,8 +3,7 @@
 // (submit/retrieve, see PboFrameReader — byte-exact). The pass samples the
 // composite BILINEARLY at output resolution, so encoder downscale folds in
 // here. Chroma = one bilinear tap at each 2×2 block midpoint (an exact box
-// average). GL readback rows are bottom-up; rows are flipped on the CPU copy
-// (PACK_ROW_FLIP, pinned by the parity e2e).
+// average). Readback needs no CPU row flip — see `PACK_ROW_FLIP`.
 //
 // NOTE: VERT, FRAG_Y, and FRAG_C below are duplicated by the 10-bit
 // GL-parity gate — keep both copies byte-identical.

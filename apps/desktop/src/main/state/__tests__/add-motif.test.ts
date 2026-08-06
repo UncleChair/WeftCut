@@ -1,6 +1,5 @@
 // apps/desktop/src/main/state/__tests__/add-motif.test.ts
-// TDD tests for Task 5: add_motif as a pure TS recorded mutation.
-// Written FIRST (RED) before implementation; must go GREEN after all changes land.
+// add_motif as a pure TS recorded mutation.
 import { describe, it, expect } from 'vitest'
 import { routeChannel } from '../router'
 import { routeMcpTool } from '../../mcp/mutationTools'
@@ -186,7 +185,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     expect(layer!.params.kind).toBe('Motif')
     // No-track MCP path mints the Overlay track FIRST, then the layer — so the
     // returned layer id is ordered AFTER the minted track id (idGen call order).
-    // This mirrors the command-path id-order assertion and guards the Task 7 MCP differential.
+    // This mirrors the command-path id-order assertion.
     const overlayTrack = snap.tracks.find((t) => t.label === 'Overlay' && t.role === null)
     expect(overlayTrack).toBeDefined()
     expect(overlayTrack!.id < text!).toBe(true)

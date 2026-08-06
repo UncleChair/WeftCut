@@ -2,11 +2,10 @@ import type { PreviewGpuBudgetSnapshot } from '../shared/ipc'
 
 export const PREVIEW_GPU_MAX_SESSIONS = 5
 // Admission currency is coded pixel AREA (30fps-calibrated), not bytes — but
-// area implies pool VRAM, and the A′ RGBA8 slots made that conversion worth
-// writing down: slot bytes = area × 4 (RGBA8) × poolSize (3 by default), i.e.
-// this cap fully subscribed ≈ 3×(3840×2160) × 4B × 3 slots ≈ 299MB of shared
-// pool — ×2.67 the NV12 pools it replaced (area × 1.5B). The live number (not
-// this arithmetic) is `hwBudget().slotVram` / takeTimings' `poolSlotBytes`.
+// area implies pool VRAM: slot bytes = area × 4 (RGBA8) × poolSize (3 by
+// default), i.e. this cap fully subscribed ≈ 3×(3840×2160) × 4B × 3 slots ≈
+// 299MB of shared pool. The live number (not this arithmetic) is
+// `hwBudget().slotVram` / takeTimings' `poolSlotBytes`.
 export const PREVIEW_GPU_MAX_CODED_PIXEL_AREA = 3 * 3840 * 2160
 export const PREVIEW_GPU_BUDGET_CALIBRATED_FPS = 30
 

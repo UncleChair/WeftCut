@@ -16,8 +16,6 @@ export function clampSigned(d: number, min: number, max: number): number {
 /** The RAW µs constraints on a trim delta. `trimEdgeWindowUs` is the bound the
  *  mutation path clamps against — it lifts these onto the composition frame grid.
  *
- *  motifMaxDurUs is null for all Phase-1 kinds → the
- *  motif-cap branches collapse to ±INF; only timeline + src bounds remain.
  *  `sourceDurationUs` is the normalized media content duration for AV layers;
  *  it caps OUT trims so `src_out_us` never extends past source content.
  *
@@ -87,7 +85,8 @@ function sourceDurationForLayer(p: Project, layer: Layer): number | null {
   return p.media_pool[pa.media]?.metadata.duration_us ?? null
 }
 
-/** No Motif duration cap is implemented. */
+/** Trim one edge. Unless `escapeGroup`, every group sibling whose matching edge
+ *  sits at the same t moves with it, clamped to the tightest member's window. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeGroup: boolean): void {
   const fps = p.composition.fps
   const loc = locateLayer(p, id)

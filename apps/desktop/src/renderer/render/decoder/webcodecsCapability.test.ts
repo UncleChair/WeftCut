@@ -7,10 +7,6 @@ import {
 
 beforeEach(() => resetWebcodecsCapabilitySession());
 
-// The sticky per-media "WebCodecs-confirmed-unusable" marker — the runtime
-// signal behind PixiPreview's `webcodecsCanDecodeOriginal: "fail"` feed, set
-// only on a DEFINITIVE codec-unsupported sweep verdict (never a transient
-// stall). Mirrors ffmpegCapability's markFfmpegUnusable/isFfmpegUnusable tests.
 describe("markWebcodecsUnusable / isWebcodecsUnusable", () => {
   it("is false initially, true after marking, false again after a session reset", () => {
     expect(isWebcodecsUnusable("m")).toBe(false);

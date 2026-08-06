@@ -190,9 +190,8 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         const label = path.replace(/\\/g, '/').split('/').pop() ?? null
         return (await applySubtitleBody(body, null, label, deps)).track_id
       }
-      // Hash-first import: probeMedia is stat-only, so
-      // the item carries a PROVISIONAL hash; insert it first so the clip appears in
-      // the timeline immediately.
+      // Insert the probed item FIRST so the clip appears in the timeline
+      // immediately.
       const item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem
       const r = deps.actor.dispatch('add_media_item', { media: item })
       if (!r.ok) throw new Error(JSON.stringify(r.error))
@@ -230,11 +229,8 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       return simplified ? `${track_id} (some ASS styling was simplified)` : track_id
     }
     case 'synthesize_speech': {
-      // Rust: TTS compute (validate text → pick synthesizer → cache key →
-      // synthesize+write → spawn_blocking probe → build MediaItem). Returns
-      // {media_item, duration_us, cached}. The TS host applies the WRITES:
-      // add_media_item + enqueueDerivatives + resolve track + add Audio layer
-      // (Voiceover role, single commit).
+      // The TS host applies the WRITES: add_media_item + enqueueDerivatives +
+      // resolve track + add Audio layer (voiceover role, single commit).
       const { media_item, duration_us, cached } = JSON.parse(
         await deps.compute.synthesizeSpeechCompute(JSON.stringify(args)),
       ) as { media_item: { id: string }; duration_us: number; cached: boolean }
@@ -249,11 +245,9 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
 
       const trackId = (args.target_track_id as string | undefined) ?? ensureAudioTrack(deps)
 
-      // Add the Audio layer in a SINGLE commit with role:'voiceover' — mirrors
-      // synthesize_speech's one `add_layer(AudioParams{role:Voiceover})`
-      // (tools.rs:2803-2819). The add_layer 'audio' arm accepts the optional
-      // `role` override (actor.ts), so no separate update_layer_params commit —
-      // matching the Rust history granularity (one entry for the layer add).
+      // ONE add_layer carrying role:'voiceover' — the 'audio' arm accepts the
+      // optional `role` override (actor.ts), so no separate update_layer_params
+      // commit and the whole synthesis is a single history entry.
       const layerR = deps.actor.dispatch('add_layer', {
         kind: 'audio',
         track: trackId,
@@ -267,9 +261,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       if (!layerR.ok) throw new Error(JSON.stringify(layerR.error))
       const layerId = layerR.value as string
 
-      // Return a JSON STRING — server.ts wraps via String(result), so returning
-      // an object would surface as "[object Object]" (the Task-4 apply_subtitles
-      // trap). Mirrors SynthesizeSpeechResult snake_case serde (tools.rs:2396).
+      // Return a JSON STRING, never the object — runHybrid's result contract.
       return JSON.stringify({ layer_id: layerId, media_id: media_item.id, t_start_us: tStart, t_end_us: tEnd, cached })
     }
     case 'auto_split_by_shot': {
@@ -277,10 +269,8 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // Rust detects the source's shot cuts (VSHOT cache, shared with
       // analyze_clip); the TS host clips them to this layer's window, maps them
       // to timeline time, and splits at every in-window cut in ONE commit
-      // (split_layer_multi → single undo, the ticket's key acceptance). Returns
-      // a JSON STRING `{ layer_ids }` — the new segment ids in timeline order.
-      // server.ts wraps the result via String(), so (like synthesize_speech) an
-      // object would surface as "[object Object]"; hence the explicit stringify.
+      // (split_layer_multi → single undo). Returns a JSON STRING
+      // `{ layer_ids }` — the new segment ids in timeline order.
       const layerId = args.layer_id
       if (typeof layerId !== 'string' || layerId.length === 0)
         throw new Error('auto_split_by_shot: layer_id is required')

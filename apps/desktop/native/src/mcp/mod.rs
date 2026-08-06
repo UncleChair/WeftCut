@@ -36,8 +36,7 @@ pub(crate) use resources::read_resource;
 pub(crate) use tools::{synthesize_speech_audio, SynthesizeSpeechArgs};
 
 // The `mcp:change` notification is emitted by the TS host (the TS actor's
-// `mcpCall` notifies via `mcpNotify`) post-4b; the Rust `ChangeEventSummary`
-// wire-projection + its `From<&ChangeEvent>` impl went with the deleted actor.
+// `mcpCall` notifies via `mcpNotify`).
 
 /// Empty arg shape for tools that take no parameters. The dispatch table
 /// deserializes `{}` (or any object) into this; `schemars` advertises it as an

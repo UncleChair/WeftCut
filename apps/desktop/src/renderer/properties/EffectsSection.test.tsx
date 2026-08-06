@@ -103,7 +103,6 @@ describe("EffectsSection", () => {
   it("renders one row per effect, named from the catalog", () => {
     render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     // effects.blur.name has no translation in the mock → falls back to defaultValue "blur".
-    // Scope to the row so we don't accidentally match the select trigger's label.
     expect(within(screen.getByTestId("effect-row-0")).getByText("blur")).toBeTruthy();
   });
 

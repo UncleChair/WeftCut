@@ -1,11 +1,9 @@
 // apps/desktop/src/main/state/__tests__/pbt/stryker-holes.test.ts
 //
-// Focused tests written to kill surviving Stryker mutants after the initial
-// 60.31% run. Each describe block targets one specific code region. See
-// task-8-report.md for full triage.
+// Example tests targeting specific Stryker-surviving mutants; each describe block
+// covers one code region.
 //
 // Approach: minimal, fast, deterministic example tests — no fc.assert overhead.
-// These are additive to the existing suite; no existing tests are touched.
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../../model'
@@ -124,17 +122,8 @@ describe('validate: srcOut vs media duration allows null duration', () => {
 })
 
 // ── validate.ts: stacked unauthorized overlaps on one lane ───────────────────
-// This asserts a REAL property: a track with multiple unauthorized same-lane
-// overlaps is rejected. It does NOT exercise the prevVisual "longest-reaching"
-// branch (validate.ts:96-97 `prevVisual.t_end_us >= layer.t_end_us`): because
-// `long` and `short` both start at 0 they already overlap, so the validator
-// throws on the long-vs-short pair before `late` is ever reached. The
-// longest-reaching `>=`→`>`/`<` mutants therefore SURVIVE and are treated as
-// effectively equivalent/hard: under the linear-NLE rule any unauthorized
-// same-lane overlap throws on first contact, and an *authorized* overlap (the
-// only way two clips coexist) requires `duration < both layer lengths`, which
-// is impossible for two clips sharing a t_start — so no clean fixture forces the
-// traversal through the longest-reaching path. See task-8-report.md.
+// Any unauthorized same-lane overlap throws on first contact, so validateTrack's
+// longest-reaching `prevVisual` update is unreachable from a clean fixture.
 describe('validate: stacked unauthorized overlaps on one lane', () => {
   it('rejects a track with multiple unauthorized same-lane overlaps', () => {
     const p = mkProject()
@@ -149,14 +138,9 @@ describe('validate: stacked unauthorized overlaps on one lane', () => {
 })
 
 // ── validate.ts: pairKey lookup (authorized overlap) ─────────────────────────
-// Asserts a REAL property: an authorized transition overlap is accepted when the
-// stored key and the per-track lookup key agree. NOTE: this does NOT kill the
-// pairKey ordering mutants (`a < b` → `a <= b` / `a >= b`, validate.ts:12). Those
-// are EQUIVALENT here — pairKey is used symmetrically (the same comparator builds
-// both the stored key and the lookup key), so flipping the comparator flips both
-// sides identically and the keys still match. The empty-string template mutant
-// (`${a}|${b}` → '') IS killed separately by the "non-empty canonical key" test
-// below. See task-8-report.md.
+// pairKey is used symmetrically (the same comparator builds the stored key and
+// the lookup key), so comparator flips cancel; the empty-key mutant is covered by
+// the "non-empty canonical key" test below.
 describe('validate: pairKey lookup (authorized overlap)', () => {
   it('accepts an authorized overlap regardless of from/to ID ordering', () => {
     // Use IDs where 'id-b' < 'id-a' lexicographically, so the authorized pair
@@ -315,7 +299,7 @@ describe('applyMoveLayer: zero-delta group sibling move is a no-op shift', () =>
 })
 
 // ── applyTrimLayer: re-sort after In trim ───────────────────────────────────
-// Mutants on lines 87-91 — the sort block and its comparator.
+// Mutants on applyTrimLayer's re-sort block and its comparator.
 describe('applyTrimLayer: track re-sorted after In trim changes start', () => {
   it('layers remain sorted by t_start_us after In-trim moves a layer earlier', () => {
     const p = mkProject()
@@ -348,7 +332,7 @@ describe('applyTrimLayer: track re-sorted after In trim changes start', () => {
 })
 
 // ── validate.ts: transition duration checks ─────────────────────────────────
-// Mutants on line 47: tr.duration_us <= 0 variants; fromLen/toLen boundaries.
+// Mutants in transitionInvariantError: tr.duration_us <= 0 variants; fromLen/toLen boundaries.
 describe('validate: transition duration boundary checks', () => {
   it('rejects a transition with duration_us === 0', () => {
     const p = mkProject()
@@ -387,7 +371,7 @@ describe('validate: transition duration boundary checks', () => {
 })
 
 // ── trimDeltaBounds: Audio kind — separate arm from VideoClip ────────────────
-// Mutants on trim.ts:25 and 30: 'pa.kind === "Audio"' → '' or removed — Audio
+// Mutants on trimDeltaBounds' In/Out arms: 'pa.kind === "Audio"' → '' or removed — Audio
 // kind not constrained. The VideoClip tests above cover the VideoClip half;
 // these cover the Audio half (same expression, different discriminant).
 describe('trimDeltaBounds: Audio layer src-bound constraints', () => {
@@ -437,7 +421,7 @@ describe('trimDeltaBounds: Audio layer src-bound constraints', () => {
 })
 
 // ── applyMoveLayer: locked destination track check ──────────────────────────
-// Mutants on move.ts:17-19 — the cross-track lock check for dst.
+// Mutants on applyMoveLayer's cross-track lock check for dst.
 describe('applyMoveLayer: locked destination track', () => {
   it('rejects a cross-track move when the destination track is locked', () => {
     const p = mkProject()
@@ -454,7 +438,7 @@ describe('applyMoveLayer: locked destination track', () => {
 })
 
 // ── applyMoveLayer: sibling insertion sort (group fanout) ───────────────────
-// Mutants on move.ts:57-58: sibling re-insertion position sorted wrong.
+// Mutants on applyMoveLayer's group-sibling re-insertion: position sorted wrong.
 describe('applyMoveLayer: group sibling insertion position', () => {
   it('group sibling is reinserted in sorted order after following the delta', () => {
     const p = mkProject()
@@ -601,14 +585,8 @@ describe('validate: ImageOverlay missing media', () => {
 })
 
 // ── validate.ts: overlap detection is storage-order-independent ──────────────
-// Asserts a REAL property: an unauthorized overlap is caught no matter what order
-// the layers are stored in. NOTE: this does NOT kill the sort-removal mutant
-// (validate.ts:78 `[...track.layers].sort(...)` → no-op). With this 2-layer
-// geometry (l1=[0,800k), l2=[600k,1.4M)) the validator catches the overlap with
-// or without the sort — whichever layer is processed first, the second is seen to
-// start inside the first's range. The sort-removal mutant is therefore treated as
-// equivalent for the overlap check (it would only matter for a >2-layer ordering
-// that the linear-NLE rule rejects anyway). See task-8-report.md.
+// Overlap is caught in either storage order; validateTrack's layer sort only
+// matters for >2 layers, so the sort-removal mutant survives here.
 describe('validate: overlap detection is storage-order-independent', () => {
   it('detects an unauthorized overlap regardless of layer storage order', () => {
     const p = mkProject()

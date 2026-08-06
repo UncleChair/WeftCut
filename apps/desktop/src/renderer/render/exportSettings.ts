@@ -1,6 +1,7 @@
 // Pure logic for the export settings dialog. No React, no DOM — every
 // function here is unit-tested in exportSettings.test.ts. The renderer owns
-// this schema end to end; Rust persists it as an opaque JSON blob.
+// this schema end to end; TS main persists it as an opaque JSON blob
+// (src/main/export-settings.ts).
 
 export type CodecId = "h264" | "av1" | "hevc" | "prores" | "dnxhr";
 /// Codecs a WebCodecs VideoEncoder can emit; intermediates are native-only.
@@ -14,9 +15,9 @@ export type RateMode = "vbr" | "cbr" | "quality";
 export type ProresProfile = "proxy" | "lt" | "422" | "hq";
 export type DnxhrProfile = "lb" | "sq" | "hq";
 export type SpeedPreset = "fast" | "medium" | "slow";
-/// Which encode engine writes the video stream. "auto" resolves per machine
-/// (E2: legacy behavior; E4: native-first). "native" = the ffmpeg sink;
-/// "webcodecs" = the in-renderer VideoEncoder + fMP4 path.
+/// Which encode engine writes the video stream. "auto" resolves per machine,
+/// native-first. "native" = the ffmpeg sink; "webcodecs" = the in-renderer
+/// VideoEncoder + fMP4 path.
 export type EncoderEngine = "auto" | "native" | "webcodecs";
 /// Which decode engine reads video sources during export — the DECODE mirror
 /// of `encoderEngine`, an independent axis (the two sides have different
@@ -100,7 +101,7 @@ export interface ExportSettings {
   /// forces a software encoder). null ⇒ defaultCrf(codec).
   crf: number | null;
   /// Software-encoder speed/quality preset (native engine; HW encoders and
-  /// intermediates ignore it). "medium" matches the pre-E3 hardcoded value.
+  /// intermediates ignore it).
   preset: SpeedPreset;
   /// Seconds between forced keyframes (IDR cadence). Both encode paths derive
   /// their GOP from this via gopFrames, so WebCodecs and the ffmpeg transcode
@@ -457,8 +458,8 @@ export function isBitDepthValid(codec: CodecId, d: BitDepth): boolean {
 }
 
 /// Sources whose ORIGINALS Chromium/Electron decodes to copyTo-able I420P10, so the
-/// 10-bit export lane can read them at full precision: H.264 Hi10P (probe P1)
-/// and AV1 10-bit (probed in real Chromium/Electron: dav1d under prefer-software gives
+/// 10-bit export lane can read them at full precision: H.264 Hi10P and AV1
+/// 10-bit (probed in real Chromium/Electron: dav1d under prefer-software gives
 /// I420P10 with a clean 875-step ramp; the default/HW path "succeeds" but
 /// yields format=null OPAQUE frames — so the lane's preferSoftware flag is a
 /// correctness requirement for AV1, not just a fallback shortcut). HEVC

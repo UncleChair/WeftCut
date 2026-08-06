@@ -4,7 +4,7 @@
 // GainNode → ChannelMerger matrix, the same 2×2 mix StereoPannerNode does
 // internally, but with coefficients we control so preview and export run one
 // law. Coefficient curves are sampled on the 10 ms grid and lerped by
-// setValueCurveAtTime (the X parity contract; twin of mix.rs::pan_coeffs_at).
+// setValueCurveAtTime (the X parity contract; twin of envelope.rs::pan_coeffs_at).
 import { panCoeff } from "../../eval";
 import { type Envelope } from "./envelope";
 

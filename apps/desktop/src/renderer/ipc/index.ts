@@ -1,3 +1,11 @@
+// Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
+// renderer reads back. It owns no state and no persistence.
+//
+// Re-export convention: types shared with main are single-sourced under
+// `src/shared/` (main owns persistence, the renderer consumes) and re-exported
+// from here, so every call site can import them from "../ipc". `@/` only
+// aliases src/renderer, hence the relative paths to `../../shared/`.
+
 import { invoke } from "@/bridge/ipc";
 
 import type { ExportSettings } from "../render/exportSettings";
@@ -254,8 +262,9 @@ export interface AudioView {
 /// also back the project-level role mixer (`ProjectSummary.audio_roles`).
 export type AudioRole = "dialogue" | "music" | "sfx" | "voiceover";
 
-/// Canonical role order — matches the Rust `RoleMixView` ordering so a role
-/// mixer can render rows index-aligned with `ProjectSummary.audio_roles`.
+/// Canonical role order — the order `ProjectSummary.audio_roles` is built in
+/// (`src/main/state/summary.ts`), so a role mixer can render rows index-aligned
+/// with it.
 export const AUDIO_ROLES: AudioRole[] = ["dialogue", "music", "sfx", "voiceover"];
 
 export interface RoleMixView {
@@ -272,11 +281,9 @@ export type TrackRole = "a-roll" | "b-roll" | "audio-a" | "audio-b" | "caption";
 
 export interface TrackSummary {
   id: string;
-  /// V.5 (A/B-roll v2): tracks are kind-agnostic on the backend, but
-  /// this field is preserved as a derived "dominant layer class" label
-  /// (Video / Audio / Subtitle) so the existing timeline CSS + drag-
-  /// drop checks keep working through V.10's frontend cleanup. After
-  /// V.10 this field goes away.
+  /// Tracks are kind-agnostic on the backend; this is a derived "dominant
+  /// layer class" label (Video / Audio / Subtitle) that the timeline CSS and
+  /// the drag-drop checks read.
   kind: string;
   label: string | null;
   enabled: boolean;
@@ -292,7 +299,7 @@ export interface TrackSummary {
   role: TrackRole | null;
   /// True when the track was spawned by the "one new hidden track per
   /// import" path and is therefore auto-pruned the moment its layers go
-  /// to zero (R.4). The UI may render the track-header chrome differently
+  /// to zero. The UI may render the track-header chrome differently
   /// to signal the impermanence.
   transient: boolean;
   layers: LayerSummary[];
@@ -475,9 +482,10 @@ export interface AudioPatch {
   role?: AudioRole;
 }
 
-/// Tagged union mirroring `LayerParamsPatch` in state/actor.rs. The napi/serde
-/// boundary expects the discriminant in `kind` to match the layer's current
-/// LayerParams kind; mismatches return `LayerParamsKindMismatch`.
+/// Tagged union mirroring `LayerParamsPatch` in
+/// `src/main/state/mutations/params.ts`. The discriminant in `kind` must match
+/// the layer's current LayerParams kind; mismatches fail with
+/// `LayerParamsKindMismatch`.
 export type LayerParamsPatch =
   | ({ kind: "Text" } & TextPatch)
   | ({ kind: "VideoClip" } & VideoClipPatch)
@@ -490,9 +498,8 @@ export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
 
-// Process-tree resource snapshot. Now an Electron-native main-process capability
-// (app.getAppMetrics()) rather than a Rust command — re-exported from the bridge
-// so existing `import { getSystemStats, type SystemStats } from "../ipc"` holds.
+// Process-tree resource snapshot from main (app.getAppMetrics()) — re-exported
+// from the bridge so `../ipc` stays the import site.
 export { getSystemStats, type SystemStats } from "@/bridge/metrics";
 
 // Live HW-decode session budget from main. Same re-export shape as the metrics
@@ -637,10 +644,7 @@ export async function recentsSetReopenOnLaunch(value: boolean): Promise<void> {
 // An empty `keys` array means "explicitly unbound" — distinct from
 // "use the default."
 //
-// KeybindingsMap is single-sourced in src/shared/keybindings.ts (main owns
-// persistence; renderer consumes). Imported locally for the wrappers below +
-// re-exported so existing `import { KeybindingsMap } from "../ipc"` call sites
-// keep working.
+// Single-sourced in src/shared/keybindings.ts; re-export convention in the file header.
 import type { KeybindingsMap } from "../../shared/keybindings";
 export type { KeybindingsMap };
 
@@ -674,9 +678,7 @@ export async function keybindingsImport(src: string): Promise<KeybindingsMap> {
 // defaults and set silently no-ops.
 // ============================================================
 
-// Single-sourced in src/shared/view-state.ts (main owns persistence; renderer
-// consumes). Imported locally for the wrappers below + re-exported so existing
-// `import { ViewState } from "../ipc"` call sites keep working.
+// Single-sourced in src/shared/view-state.ts; re-export convention in the file header.
 import type { ViewState } from "../../shared/view-state";
 export type { ViewState };
 
@@ -714,11 +716,8 @@ export async function workspaceDir(): Promise<string | null> {
 // subscribers re-render without an extra round-trip.
 // ============================================================
 
-// App-settings types are single-sourced in src/shared/app-settings.ts so the
-// main process (persistence owner, src/main/app-settings.ts) and the renderer
-// (consumer) can't drift. (`@/` only aliases src/renderer, hence the relative path.)
-// Imported locally (the wrappers below reference them) and re-exported so
-// existing `import { AppSettings } from "../ipc"` call sites keep working.
+// Single-sourced in src/shared/app-settings.ts (persistence owner:
+// src/main/app-settings.ts); re-export convention in the file header.
 import type {
   DisplayMode,
   MediaPoolLayout,
@@ -751,8 +750,7 @@ export const APP_SETTINGS_EVENTS = {
 // commit immediately and return the resulting document.
 // ============================================================
 
-// Single-sourced in src/shared/workspace.ts (main owns persistence; renderer
-// consumes). Imported locally for the wrappers below + re-exported for call sites.
+// Single-sourced in src/shared/workspace.ts; re-export convention in the file header.
 import type {
   WorkspaceDocument,
   WorkspaceProfile,
@@ -956,8 +954,8 @@ export interface TrackFlagsPatch {
   locked?: boolean;
 }
 
-/// Unrecorded toggle path (timeline redesign spec §3): eye/M/S/lock changes
-/// never enter undo history; the actor patches every history snapshot instead.
+/// Unrecorded toggle path: eye/M/S/lock changes never enter undo history; the
+/// actor patches every history snapshot instead.
 export async function updateTrackFlags(
   trackId: string,
   patch: TrackFlagsPatch,
@@ -1101,11 +1099,11 @@ export async function groupsDissolve(groupId: string): Promise<void> {
   return invoke<void>("groups_dissolve", { groupId });
 }
 
-/// V.7: lift an Audio layer onto a freshly-created non-transient
-/// track inserted directly after its source. Group membership
-/// survives. Returns the new track's id. UI consequence: V.6's
-/// combined-row collapses to V-only on the source row; the new row
-/// below shows the waveform on its own (J/L-cut friendly).
+/// Lift an Audio layer onto a freshly-created non-transient track inserted
+/// directly after its source. Group membership survives. Returns the new
+/// track's id. UI consequence: the combined row collapses to V-only on the
+/// source row; the new row below shows the waveform on its own (J/L-cut
+/// friendly).
 export async function separateAudioToNewTrack(
   layerId: string,
 ): Promise<string> {
@@ -1235,9 +1233,6 @@ export async function updateProjectSettings(
   return invoke<void>("update_project_settings", { patch });
 }
 
-// mpvPlayFile / mpvPlayMedia were the media-pool "click to preview a
-// raw clip" surface. Deleted in P12-d alongside the libmpv module.
-
 export interface McpInfoView {
   bind: string;
   url: string;
@@ -1246,8 +1241,10 @@ export interface McpInfoView {
 
 /// Returns the live MCP server connection details, or `null` if the server is
 /// still starting. Used by the Settings "Agent" tab.
+///
+/// This and `resetMcpToken` go through main-process handlers — named
+/// `window.api.mcp` APIs, not `invoke` commands.
 export async function getMcpInfo(): Promise<McpInfoView | null> {
-  // Main-process handler (not a Rust command) — named API, not backend.invoke.
   return (await window.api.mcp.getInfo()) as McpInfoView | null;
 }
 
@@ -1256,7 +1253,6 @@ export async function getMcpInfo(): Promise<McpInfoView | null> {
 /// reuses the new token. Returns the fresh token so the panel can update
 /// without a follow-up `getMcpInfo` call.
 export async function resetMcpToken(): Promise<string> {
-  // Main-process handler (not a Rust command) — named API, not backend.invoke.
   return (await window.api.mcp.resetToken()) as string;
 }
 
@@ -1519,10 +1515,11 @@ export async function reportAudioMeter(report: {
 // Motifs
 // ============================================================
 
-/// Discriminated union mirroring `motifs::catalog::PropSpec`. The picker and
-/// the property panel switch on `type` to render the right input. A new prop
-/// type must be added here, in `render/motifs/catalog.ts`, AND in both form
-/// generators (MotifPicker `PropField` + PropertyPanel `MotifPropField`).
+/// Discriminated union mirroring `PropSpec` in `src/shared/motifs/catalog.ts`
+/// (which `render/motifs/catalog.ts` re-exports). The picker and the property
+/// panel switch on `type` to render the right input. A new prop type must be
+/// added here, in the shared catalog, AND in both form generators (MotifPicker
+/// `PropField` + PropertyPanel `MotifPropField`).
 /// `enum` renders as a dropdown; `string.multiline` renders as a textarea.
 export type PropSpec =
   | { type: "string"; default: string; max_length?: number; multiline?: boolean }
@@ -1595,11 +1592,11 @@ export async function addMotif(args: {
 }
 
 // ============================================================
-// Motif lifecycle IPC wrappers (Stage 3b)
+// Motif lifecycle IPC wrappers
 // ============================================================
 
-/// The event the backend emits after a user-Motif lifecycle mutation.
-/// Mirrors Rust `MOTIFS_CHANGED_EVENT`.
+/// The event the backend emits after a user-Motif lifecycle mutation (emit
+/// sites: `src/main/state/ts-actor-host.ts`, `src/main/motif/watcher.ts`).
 export const MOTIFS_CHANGED_EVENT = "motifs:changed";
 
 export interface MotifSource {
@@ -1815,7 +1812,7 @@ export async function restyleCaptions(patch: CaptionStylePatch): Promise<void> {
 }
 
 // ============================================================
-// Data location (user-managed data root, ticket 03)
+// Data location (user-managed data root)
 // ============================================================
 //
 // Main-process actions (not backend/Rust commands) — thin wrappers over

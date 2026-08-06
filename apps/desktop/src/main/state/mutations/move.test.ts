@@ -58,10 +58,6 @@ describe('move group lock checks (not corpus-gated)', () => {
   })
 
   // ── The zero boundary: a move stops, it does not deform ────────────────────
-  // The pre-fix code clamped each member's `t_start_us` independently and never
-  // floored the target at all, so dragging toward zero SHORTENED a group sibling
-  // (start lifted, end left behind) and let a lone layer land at a negative time.
-  // Clamping the shared delta instead is what makes "stops as a set" true.
   it('stops a lone layer at 0 with its duration intact instead of writing a negative start', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [color('a', 1_000_000, 2_000_000)]

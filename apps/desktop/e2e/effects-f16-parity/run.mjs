@@ -21,14 +21,6 @@
 //   f16-pool:     BlurFilter and the chromakey pass-through through an
 //                 rgba16float pool intermediate
 //                 → gradient preserves ~1024 distinct values (full precision)
-//
-// Assertions:
-//   distinctDefaultPool <= 260   (bands to ~256)
-//   distinctF16Pool     >  900   (preserves ~1024)
-//
-// Future elevation: a full-pipeline e2e (run an actual filtered 10-bit export
-// end-to-end and verify the output file's pixel precision) is out of scope here.
-// This gate validates the pool technique and regression-guards Pixi upgrades.
 
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
@@ -37,8 +29,8 @@ import path from "path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Primary checkout's Electron binary — this repo (wt2) has no Electron binary
-// of its own; it shares the one from the primary checkout.
+// Absolute default for the repo's own Electron binary; override with
+// ELECTRON_BIN when running from another checkout.
 const DEFAULT_ELECTRON =
   "C:/Users/jonny/Desktop/learning/videtor/node_modules/electron/dist/electron.exe";
 const ELECTRON_BIN = process.env.ELECTRON_BIN ?? DEFAULT_ELECTRON;

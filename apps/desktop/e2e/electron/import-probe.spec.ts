@@ -7,17 +7,18 @@ import { launchApp, waitForHook } from './helpers/driver'
 // Investigation for GitHub issue #7 boundary #1: a HARDWARE-decoded (GPU-backed)
 // `VideoFrame` drawn into a 2D canvas is a silent no-op on Linux/NVIDIA-GL, so
 // the WebCodecs export lane emits black frames (worked around today by an
-// unconditional `preferSoftware` at exportWorker.ts). Web research points at the
-// *2D-canvas* GL import being the broken path, while WebGL `texImage2D` and
-// `createImageBitmap` are Chromium's supported GPU-import paths (the preview lane
-// already uses createImageBitmap and is HW-verified on this host).
+// allowlist-gated `preferSoftware` — `hwExportDecodeAllowed` — at
+// exportWorker.ts). Web research points at the *2D-canvas* GL import being the
+// broken path, while WebGL `texImage2D` and `createImageBitmap` are Chromium's
+// supported GPU-import paths (the preview lane already uses createImageBitmap
+// and is HW-verified on this host).
 //
 // This spec drives `window.__weftcutTest.importProbe`, which decodes the clip's
 // first frame under prefer-hardware AND prefer-software and, for each, imports
-// the raw frame three ways (2D drawImage / createImageBitmap / WebGL texImage2D),
-// reading pixels back as mean luma. It runs the probe on the renderer MAIN THREAD
-// and in a dedicated WORKER (the export bug's real context) so we can localise a
-// silently-black cell.
+// the raw frame four ways (2D drawImage / createImageBitmap / WebGL texImage2D /
+// copyTo), reading pixels back as mean luma. It runs the probe on the renderer
+// MAIN THREAD and in a dedicated WORKER (the export bug's real context) so we
+// can localise a silently-black cell.
 //
 // Reads out a {context}×{hw,sw}×{method} luma matrix. The hard assertion is only
 // the CONTROL (software decode must import faithfully everywhere — else the probe

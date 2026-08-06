@@ -25,8 +25,6 @@ const PAGE_ZOOM_CODES = new Set([
 export function isPageZoomShortcut(input: KeyInput): boolean {
   if (input.type !== 'keyDown' || input.alt || (!input.control && !input.meta)) return false
 
-  // `code` is layout-independent. The key fallback covers synthetic events and
-  // platforms which report an empty/unknown physical code for keypad input.
   return PAGE_ZOOM_CODES.has(input.code) || ['-', '+', '=', '0'].includes(input.key)
 }
 

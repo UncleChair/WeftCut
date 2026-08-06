@@ -241,8 +241,7 @@ export function useLayerDrag(opts: {
   // -------- Layer drag (move / trim) --------
 
   /// Measure the rendered lanes, then band-select. Cost is one forced reflow
-  /// per pointer event — the same one the previous canvas-rect read paid —
-  /// after which the remaining rect reads hit clean layout.
+  /// per pointer event; the remaining rect reads then hit clean layout.
   const trackUnderPointer = useCallback(
     (clientY: number): TrackSummary | null => {
       const rows: MeasuredTrackRow[] = [];

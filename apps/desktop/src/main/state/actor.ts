@@ -38,8 +38,8 @@ import { readLayerTrack } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
-/** native/src/mcp/tools.rs:46 agent_actor() — the actor MCP-created checkpoints
- *  store; surfaces in list_checkpoints' result (Rust agent_actor() = Agent{mcp}). */
+/** The actor stamped on MCP-created checkpoints; surfaces in list_checkpoints'
+ *  result. */
 const MCP_ACTOR: Actor = { kind: 'Agent', client: 'mcp' }
 
 export type Clock = () => string
@@ -111,7 +111,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function current(): Project { return history.current() }
 
   /** validate(next) → throw CommandFailure(ValidationFailed) on a rule failure.
-   *  Shared by commit and set_composition's atomic combined-probe pre-check. */
+   *  Every path that must reject before minting an op_id calls this. */
   function runValidate(next: Project): void {
     try { validate(next) } catch (e) {
       if (e instanceof ValidationFailure) throw new CommandFailure({ error: 'ValidationFailed', detail: e.err })
@@ -120,7 +120,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
 
   /** Run a draft mutation, then reconcile transitions, then validate, record,
-   *  emit. Mirrors actor.rs commit: validate FIRST, op_id AFTER validate.
+   *  emit — validate FIRST, op_id AFTER validate.
    *  Returns the recipe's value. Throws CommandFailure on a mutation error or a
    *  validation failure.
    *
@@ -132,8 +132,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function commit<T>(summary: string, affected: EntityRef[], diff: DiffHint, recipe: (draft: Project) => T): T {
     let value!: T
     let droppedTransitions: DroppedTransition[] = []
-    // produce: a throw inside the recipe aborts and discards the draft (Rust:
-    // the clone is dropped on error → authoritative state untouched).
+    // produce: a throw inside the recipe aborts and discards the draft.
     const next = produce(current(), (draft) => {
       value = recipe(draft)
       droppedTransitions = reconcileTransitions(draft)
@@ -207,21 +206,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // "Temporal content" is deliberately ONE LAYER ON ANY TRACK — not markers, not
     // a pinned duration, not imported-but-unplaced media. `blankProject` mints two
     // tracks and no layers, so a fresh project stays freely re-rateable; marker
-    // re-snapping is lossless, so a stray marker must not brick the rate. The layer
-    // threshold is also what keeps a future "dropping the first clip offers to match
-    // the sequence rate" flow reachable — it sets fps while the timeline is still
-    // layer-less, then adds.
+    // re-snapping is lossless, so a stray marker must not brick the rate.
     //
-    // The judgement spans the STORED HISTORY, not just the current state, because
-    // the write does: an unrecorded rate change lands in every snapshot, so a
-    // current-state-only test would let `undo` / `restore_checkpoint` resurrect
-    // layers authored on the old grid into a project now running at the new rate.
-    // Neither revert path re-validates, so nothing downstream would catch it.
-    // Hence: judgement scope == write scope (History.storedSnapshotsHoldLayer).
-    // The practical reading is "the rate is settable until the timeline has ever
-    // held anything", and the escape hatch is the one every NLE prescribes —
-    // empty the timeline, then reopen the project (`replace_state` resets the
-    // stack and checkpoints, so the history-scope condition clears with it).
+    // Judgement scope == write scope: the fps write is unrecorded, so it lands in
+    // every stored snapshot. `History.storedSnapshotsHoldLayer` owns why a
+    // current-state-only test is unsound; `errors.ts` FpsLockedByContent owns the
+    // caller-facing remedy. See docs/features.md #undo-stack-scope.
     if (fpsChanged) {
       const layerCount = cur.tracks.reduce((n, t) => n + t.layers.length, 0)
       // `storedSnapshotsHoldLayer` subsumes the current state; test the live count
@@ -244,17 +234,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
     //   · the fps re-snap runs against THAT snapshot's own markers and layers,
     //   · `applyDurationAutofit` floors a pinned duration at THAT snapshot's own
     //     content high-water mark, so no snapshot ends up shorter than its own
-    //     content — the overflow guard doubles as the per-snapshot safety net that
-    //     used to be the reason a duration write had to record at all.
+    //     content.
     const buildProbe = (d: Project): void => {
       applyCanvasFields(d.composition, patch)
       if (durationChange !== undefined) { d.composition.duration_us = durationChange; d.composition.duration_pinned = true }
       if (fpsChanged) {
         const nf = d.composition.fps
-        // The layer loop is unreachable BY CONSTRUCTION — and more thoroughly so
-        // than before: the history-scoped rate lock means EVERY snapshot this
-        // recipe runs over is layer-less, not just the current one. It stays on
-        // purpose, as the correctness backstop for the two ways that can change:
+        // The layer loop is unreachable BY CONSTRUCTION: the history-scoped rate
+        // lock means EVERY snapshot this recipe runs over is layer-less. It stays
+        // on purpose, as the correctness backstop for the two ways that can change:
         // a future "match the sequence to the first clip" flow (which sets the rate
         // while still layer-less, then adds), and any relaxation of the lock. The
         // marker + duration re-snap below is NOT dead: a layer-less project can hold
@@ -315,16 +303,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
 
   /** Event summary for an unrecorded composition patch. Unrecorded events never
-   *  reach the history panel, so this is log/e2e-facing only — but the three
-   *  original strings are load-bearing there, so they stay verbatim. */
+   *  reach the history panel, so this is log/e2e-facing only — but the four
+   *  strings are load-bearing in logs/e2e, so they stay verbatim. */
   function compositionSummary(fps: boolean, canvas: boolean, duration: boolean): string {
     if (fps) return 'Updated composition fps'
     if (canvas && duration) return 'Updated composition canvas and duration'
     if (canvas) return 'Updated composition canvas'
     return 'Updated composition duration'
   }
-  /** Copy the present canvas fields of `patch` into a composition draft
-   *  (history.rs:391 apply_canvas_fields covers exactly these 7). */
+  /** Copy the present canvas fields of `patch` into a composition draft. */
   function applyCanvasFields(c: Composition, patch: Record<string, unknown>): void {
     if (typeof patch.width === 'number') c.width = patch.width
     if (typeof patch.height === 'number') c.height = patch.height
@@ -362,14 +349,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const reason = history.lockReason()
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
     if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
-    const opId = idGen() // entry op_id (history.rs:151 new_id, FIRST)
+    const opId = idGen() // entry op_id — minted FIRST
     const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
     broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (the SECOND id)
   }
   function listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }> {
-    // Mirrors Rust NamedCheckpointSummary (history.rs:426 {id,label,actor,created_at};
-    // list_checkpoints serializes history_view().checkpoints, which INCLUDES actor —
-    // only the snapshot is dropped). The MCP path stores the agent actor (Fix 2).
+    // list_checkpoints serializes history_view().checkpoints, which INCLUDES actor
+    // — only the snapshot is dropped. The MCP path stores the agent actor.
     return history.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
   }
 
@@ -499,7 +485,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    checkpoints + lock — they reference a different project_id) then broadcast
   //    unrecorded. modified_at is NOT touched. Mints exactly 2 ids on success
   //    (reset op_id + broadcast event id); a caller that built `next` via
-  //    blankProject already spent its 3 ids → 5 total (see the plan's id contract). ──
+  //    blankProject already spent its 3 ids → 5 total. ──
   function replaceState(next: Project): void {
     runValidate(next)                              // throws CommandFailure(ValidationFailed); no id spent
     history.reset(next, actor, idGen(), clock())   // +1 id (the 'Initial' op_id)
@@ -539,7 +525,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return results
   }
 
-  // ── string dispatch (used by the replay driver + shadow comparator) ──
+  // ── string dispatch — the op-name core that command(), mcpCall() and the unit
+  //    tests all route through. ──
   function dispatch(channel: string, a: Record<string, unknown>): DispatchResult {
     try {
       switch (channel) {
@@ -552,8 +539,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'video': params = videoClipParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             // Optional `role` override (default 'music'): mirrors the add-layer-site
             // role stamp at actor.ts add_media_layer auto-pair (role:'dialogue') and the
-            // synthesize_speech hybrid (role:'voiceover'). ADDITIVE — corpus add_layer
-            // 'audio' seqs pass no role, so the default-'music' path is byte-unchanged.
+            // synthesize_speech hybrid (role:'voiceover').
             case 'audio': params = a.role
               ? { ...audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')), role: a.role as AudioRole }
               : audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
@@ -667,7 +653,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
         case 'add_transition': {
           // kind/direction parsed BEFORE commit — a bad enum combo burns no
-          // op_id. Absent kind defaults to Crossfade (the pre-tool behavior).
+          // op_id. Absent kind defaults to Crossfade.
           const kind = parseTransitionKind(a.kind ?? 'Crossfade', a.direction)
           return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind)) }
         }
@@ -709,9 +695,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: commit('Rebound motif layers', affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
         }
         case 'replace_state': {
-          // Differential-corpus vehicle: build a blank from the args (mirrors
-          // Project::new_blank + project_new_workspace's canvas override) so both
-          // engines mint the same 3 blank ids before the swap. Production callers
+          // Test vehicle — builds a blank from the args; production callers
           // (project_open) call replaceState(loadedProject) directly.
           const next = blankProject(idGen, (a.name as string) ?? 'untitled')
           if (typeof a.width === 'number') next.composition.width = a.width
@@ -739,8 +723,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     try {
       switch (channel) {
         case 'add_color_layer': {
-          // add_color_layer_impl: resolve overlay track when
-          // trackId absent (reverse-scan non-reserved; create "Overlay" if none free).
+          // Resolve the overlay track when trackId is absent (reverse-scan
+          // non-reserved; create "Overlay" if none free).
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
@@ -751,10 +735,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
           }
-          // No free track — create "Overlay" in its OWN commit (matching Rust's
-          // resolve_overlay_track which calls handle.add_track — a SEPARATE committed
-          // op with its own op_id), THEN add the layer in a second commit. Two op_ids,
-          // matching the overlay-track resolution + color-layer-default logic.
+          // No free track — create "Overlay" in its OWN commit (the track add is a
+          // separate commit, so it gets its own op_id), THEN add the layer in a
+          // second commit. Two op_ids.
           const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, 'Overlay'))
           const params = prodColorParams(wireArgs, current().composition)
@@ -763,7 +746,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: id }
         }
         case 'add_text_layer': {
-          // add_text_layer_impl: same overlay-track logic.
+          // Same overlay-track logic as add_color_layer.
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
@@ -812,8 +795,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_media_layer': {
           // add_media_layer: track_id required, kind-matched
           // params. When auto-pair fires (Video + audio.is_some() + setting on):
-          // THREE separate commits (three op_ids), mirroring Rust's three handle
-          // calls — add video layer, add audio layer (role=dialogue), groups_create.
+          // THREE separate commits (three op_ids) — add video layer, add audio
+          // layer (role=dialogue) on the SAME track and span, then groups_create.
           const trackId = parseUuid(wireArgs.trackId, 'trackId')
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const { params, durationUs, autoPairAudio } = prodMediaLayer(wireArgs, current())
@@ -821,9 +804,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, trackId, params, t0, t1))
           if (autoPairAudio !== null) {
-            // Paired Audio layer (role dialogue) on the SAME track,
-            // same span, then groups_create([video, audio]). THREE separate commits ⇒ three
-            // op_ids, matching Rust's three handle calls (the id-allocation keystone).
             const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, autoPairAudio, t0, t1))
             commit('Created group', [], { kind: 'Coarse' }, (d) =>
@@ -850,7 +830,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: true, value: id }
           }
           // No tracks at all — create "Track" then add layer inside one commit.
-          // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one matches Rust's two-commit resolve_overlay_track.
+          // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one resolves the track in its own commit, so the track add gets its own op_id.
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, 'Track')
             const t0 = 0
@@ -883,7 +863,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, lastTrack.id, params, t0, t1))
             return { ok: true, value: id }
           }
-          // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one matches Rust's two-commit resolve_overlay_track.
+          // No tracks at all — same unreachable single-commit case as add_demo_color_layer.
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, 'Overlay')
             const params: LayerParams = {
@@ -1008,10 +988,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // (a track holds one visual and one audio lane, so the pair shares a
           // combined row exactly like production add_media_layer) + the pair
           // group. Any failure discards the whole draft: the call commits or
-          // rejects as a unit — the old three-commit version left the video on
-          // the timeline when the audio placement failed, and its "topmost
-          // track" audio routing piled every clip's audio onto one lane
-          // (.scratch/mcp-agent-hardening 03/04).
+          // rejects as a unit — splitting it into separate commits strands the
+          // video on the timeline when the audio placement fails.
           const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
           try {
             const ids = commit('Added A/V pair', [], { kind: 'Coarse' }, (d) => {
@@ -1066,9 +1044,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = p.layer as string
           const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_group: (p.escape_group as boolean) ?? false })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          // dispatch('split_layer') (applySplitLayer) already returns the
-          // SplitLayerResult `{left, right}` (left = original layer, right = new) —
-          // mirror Rust's `ToolResult::json(&SplitLayerResult)` by returning it verbatim.
+          // dispatch('split_layer') (applySplitLayer) already returns
+          // `{left, right}` (left = original layer, right = new) — return it verbatim.
           return { ok: true, result: toolJson(r.value) }
         }
         case 'lock_history': {
@@ -1175,7 +1152,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = p.layer as string
           const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
-          if (track.mode === 'Static') return { ok: true, result: toolEmpty() } // no-op, no commit (keyframes.rs:294)
+          if (track.mode === 'Static') return { ok: true, result: toolEmpty() } // no-op, no commit
           const value = (p.value as number | undefined) ?? track.value[0]?.value ?? 0
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
@@ -1209,7 +1186,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_motif': {
           // add_motif MCP arm: pure TS, dedicated mcpCall.
-          // Mirrors the Rust tool: catalog lookup → canonicalize → resolve → two-commit.
           const p = mcpDef('add_motif').parseDedicated!(a)
           const motifId = p.motif_id as string
           const manifest = motifCatalog.get(motifId)
@@ -1227,7 +1203,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
           if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
-          // Two-commit: if no track_id → mint Overlay track FIRST, THEN Motif layer.
           const trackId = (p.track_id as string | null | undefined) ?? null
           const track = trackId ?? commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
           const layerId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))

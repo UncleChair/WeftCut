@@ -218,11 +218,9 @@ export function directionVector(kind: TransitionSummary["kind"]): [number, numbe
 // EXACTLY — the tests also string-pin the shader expressions, so changing
 // either side without the other fails fast.
 
-/// Wipe twin: does the pixel at `uv` show the incoming side (B)?
-/// t = dot(uv - 0.5, dir) + 0.5 is the position along the motion axis,
-/// 0 at the boundary's starting edge, 1 where the sweep ends; the swept
-/// region t <= progress shows B (boundary pixel inclusive to B, matching
-/// step()'s x >= edge on both backends).
+/// Wipe twin: does the pixel at `uv` show the incoming side (B)? Mirrors
+/// `TRANSITION_SOURCES.Wipe` — see that block for the swept-coordinate and
+/// boundary convention.
 export function wipeShowsIncoming(
   uv: readonly [number, number],
   direction: readonly [number, number],

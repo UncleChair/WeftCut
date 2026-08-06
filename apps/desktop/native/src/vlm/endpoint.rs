@@ -3,12 +3,10 @@
 //! key / model; the request shape and the output style are identical, so one
 //! impl serves both.
 //!
-//! Same frame-sampling input adapter as the local sidecar: the frames are POSTed
-//! as base64 `image_url` data parts, interleaved with `Frame at <t>s:` text parts
-//! (the same injected timestamp signal), then the JSON-array instruction. The
-//! model's `choices[0].message.content` is the JSON array → tagged
-//! [`RawDescription::JsonArray`] and normalized by the shared parser, so the
-//! `SceneDescription` structure is byte-identical to the local path.
+//! Same frame-sampling input as the local sidecar, adapted to the wire by
+//! [`build_request_body`]; the reply is read by `extract_content` and tagged
+//! [`RawDescription::JsonArray`], so the shared parser yields the same
+//! `SceneDescription` shape as the local path.
 //!
 //! Reuses [`speech::http`](crate::speech)'s pooled `reqwest::Client` — one TLS
 //! stack, one connection pool across both cloud subsystems.

@@ -350,8 +350,6 @@ describe("QuickActionsPanel", () => {
     });
   });
 
-  // Chromium maps the wheel to horizontal scrolling only under Shift, so a
-  // horizontal strip must forward deltaY itself or it looks jammed.
   describe("wheel forwarding", () => {
     function overflowing(element: HTMLElement) {
       // jsdom reports every dimension as 0, so scrollLeft can't move on its

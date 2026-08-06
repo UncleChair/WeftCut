@@ -44,7 +44,7 @@ describe("exportFrameCount", () => {
     expect(exportFrameCount(0, 10_000_000, 60, 1)).toBe(600);
   });
 
-  // The advisor's tail edge case: a non-frame-aligned trim range. `endUs`
+  // Tail edge case: a non-frame-aligned trim range. `endUs`
   // strictly past frame 299's time (9_966_667) must INCLUDE frame 299; `endUs`
   // exactly at frame 299's time must EXCLUDE it (interval is half-open). A
   // round()-based count gets one of these wrong.

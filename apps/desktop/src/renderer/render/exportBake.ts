@@ -273,8 +273,7 @@ export async function exportBakeMotifs(
       // CDP capture of the hidden Motif host — the SAME producer the preview
       // prewarmer/baker use (manifest size + manifest settle_rafs), so the
       // exported bitmap is pixel-identical to preview AND carries the Motif's
-      // transparent backdrop. tSec is derived inside bakeMotifFrame as
-      // contentFrame*fpsDen/fpsNum (== the old frameTimeSec(contentFrame)).
+      // transparent backdrop.
       // eslint-disable-next-line no-await-in-loop
       const bitmap = await bakeMotifFrame(spec.motif, contentFrame, fpsNum, fpsDen, canonical);
       frames[frame] = bitmap;

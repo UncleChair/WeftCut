@@ -17,9 +17,9 @@ const THEMES: Record<
 };
 
 /**
- * Timeline chrome is semantic by media kind, rather than being derived from
- * a layer UUID. Color layers are the deliberate exception: their real fill
- * is the useful preview, so they keep the project-provided color hint.
+ * Timeline chrome is semantic by media kind. Color layers are the deliberate
+ * exception: their real fill is the useful preview, so they keep the
+ * project-provided color hint.
  */
 export function timelineLayerTheme(
   kind: LayerParamsView["kind"],

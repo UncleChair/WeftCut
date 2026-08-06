@@ -43,8 +43,9 @@ const compOnly = snapTargets(COMP_W, COMP_H, []);
 
 /// Where the handle ACTUALLY lands once a solve's scale and its pivot-pinning
 /// position fix are both applied — i.e. what the user sees, not what the solver
-/// returned. The two D22/D23 claims are about this point, so every exactness
-/// assertion below goes through it rather than through the scale pair.
+/// returned. The exactness claims in docs/features.md#on-canvas-transform-gizmo
+/// are about this point, so every exactness assertion below goes through it
+/// rather than through the scale pair.
 function handleAfterSolve(
   frame: LayerQuadInput,
   id: ScaleHandleId,

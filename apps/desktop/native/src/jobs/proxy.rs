@@ -11,8 +11,8 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::command::ffmpeg_is_installed;
-// Only the test suite spawns ffmpeg/ffprobe via tokio's `Command`; the
-// non-test proxy path drives the encoder through `ffmpeg-sidecar`.
+// Only the test suite spawns ffmpeg/ffprobe directly; the non-test proxy path
+// spawns through `hwaccel::output_with_hw_decode_fallback`.
 #[cfg(test)]
 use tokio::process::Command;
 
@@ -221,11 +221,6 @@ mod tests {
         }
     }
 
-    // The proxy re-encode preserves the source's colorimetry (verified: ffmpeg
-    // carries matrix/range through scale + libx264), so the recipe must ASSERT
-    // the source's ffprobe tags on the output — that plus `+write_colr` is what
-    // puts a colr atom in the mp4 for mediabunny (which never parses SPS VUI).
-
     #[test]
     fn source_color_args_full_range_source_asserts_all_tags() {
         let m = video_with_color(Some("bt709"), Some("pc"), Some("bt709"), Some("bt709"));
@@ -274,8 +269,8 @@ mod tests {
         //
         // 6 seconds at 30 fps (180 frames) so the keyframe-density
         // assertion below can confirm the short scrub GOP is applied
-        // (~180/PROXY_GOP_FRAMES keyframes) vs the old ~1 s GOP (~6) or
-        // libx264's default -g 250 (1 keyframe for the whole clip).
+        // (~180/PROXY_GOP_FRAMES keyframes) vs libx264's default -g 250
+        // (1 keyframe for the whole clip).
         let status = Command::new("ffmpeg")
             .args([
                 "-y",
@@ -354,12 +349,10 @@ mod tests {
             .expect("ffprobe");
         assert!(out.status.success(), "ffprobe rejected the proxy output");
 
-        // Verify the scrub-friendly GOP density (ADR 0008). With the
-        // short fixed GOP (`PROXY_GOP_FRAMES`) a 6 s / 30 fps (180-frame)
-        // source yields ~180/PROXY_GOP_FRAMES keyframes — far denser than
-        // the prior ~1 s GOP (~6) or libx264's default -g 250 (1). The
-        // lower bound is derived from the GOP so it tracks future tuning
-        // while still cleanly rejecting the old 1 s-GOP behavior.
+        // Assert the keyframe density implied by `PROXY_GOP_FRAMES` (ADR
+        // 0008): a 6 s / 30 fps (180-frame) source yields
+        // ~180/PROXY_GOP_FRAMES keyframes. The lower bound is derived from
+        // the GOP so it tracks future tuning.
         let kf = Command::new("ffprobe")
             .args([
                 "-v",
@@ -385,11 +378,8 @@ mod tests {
             "proxy should have >= {expected_min} keyframes for 6s @ 30fps with -g {PROXY_GOP_FRAMES} \
              (got {i_frames}); the short scrub GOP isn't being applied.\n{stdout}"
         );
-        // `-bf 0` must produce a B-frame-free stream. Without it,
-        // libx264's preset-fast default of 3 B-frames pushes the proxy's
-        // last frame's PTS past mvhd duration,
-        // and the renderer's auto-pause snap lands on the third-to-last
-        // frame.
+        // `-bf 0` must produce a B-frame-free stream — the landmine is
+        // spelled out on `PROXY_GOP_FRAMES`.
         let b_frames = stdout.lines().filter(|l| l.trim() == "B").count();
         assert_eq!(
             b_frames, 0,

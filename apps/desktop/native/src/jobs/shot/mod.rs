@@ -281,9 +281,8 @@ pub async fn cached_source_report(
     media: &MediaItem,
     opts: &ShotOpts,
 ) -> Result<ShotReport> {
-    // Resolve the physical input FIRST: its tier is part of the cache key, so a
-    // report computed on the original before the proxy landed does not alias the
-    // later proxy-based one (see `cache_key` / `pick_source`).
+    // Resolve the physical input first — its tier is part of the key (see
+    // `cache_key`).
     let (video, tier) = pick_source(cache, media);
     let path = cache.shot(&cache_key(&media.file_hash_blake3, tier, opts));
     crate::cache::touch_if_stale(&path);
@@ -852,7 +851,7 @@ mod tests {
     }
 
     /// The source-keyed cache path: a pre-seeded sidecar at
-    /// `shot(cache_key(hash, opts))` is a HIT that round-trips without ffmpeg,
+    /// `shot(cache_key(hash, tier, opts))` is a HIT that round-trips without ffmpeg,
     /// proving write-through storage and the per-source key.
     #[tokio::test]
     async fn cached_source_report_hits_source_keyed_sidecar() {

@@ -1,12 +1,9 @@
 // Generalized GPU byte-pack: f16/rgba8 composite → planar YUV bytes for the
 // native ffmpeg sink. Covers yuv420p / yuv422p (8-bit, 4 samples per RGBA8
-// texel) and yuv422p10le (two u16LE samples per texel). yuv420p10le stays on
-// the frozen PackYuv420p10 (its shaders are duplicated byte-identical by the
-// 10-bit GL-parity gate). Structure mirrors PackYuv420p10: three passes
-// (Y/Cb/Cr) sampled bilinearly at output resolution (encoder downscale folds
-// in), BT.709 limited-range quantization in-shader, async PBO readback per
-// plane (submit/retrieve, see PboFrameReader). Rows may be padded to the
-// texel boundary (yuvPlaneLayout.passW*4 > rowBytes); retrieve trims per row.
+// texel) and yuv422p10le (two u16LE samples per texel); does NOT own
+// yuv420p10le, which stays on the frozen PackYuv420p10. The passes sample the
+// composite bilinearly at OUTPUT resolution, so an encoder downscale folds in
+// here. Plane geometry + row padding: yuvPlaneLayout. Readback: PboFrameReader.
 
 import { Mesh, MeshGeometry, RenderTexture, Shader } from "pixi.js";
 import type { Texture, TextureSource, WebGLRenderer } from "pixi.js";

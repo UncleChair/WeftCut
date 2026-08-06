@@ -1,29 +1,12 @@
-// The app-level Workspace document — the persisted Dock arrangements, owned by
-// the Electron main process (src/main/workspace.ts) and consumed by the renderer
-// (the DockWorkspace adapter owns the layout schema). Persisted at
-// <userData>/workspaces.json.
+// The app-level Workspace document — a set of named Dock-arrangement PROFILES
+// plus the active selection, with the normalizer that keeps it canonical. Main
+// owns persistence (src/main/workspace.ts); the renderer owns the layout schema
+// inside the opaque `current` / `saved` slots
+// (renderer/workspace/workspaceLayout.ts).
 //
 // Strict app-level scope: one document across every project. It deliberately
 // does NOT reuse app settings, Project data, Project view state, or Project
 // history — a Workspace mutation must never dirty the Project or enter undo.
-//
-// The document is a set of named Workspace PROFILES plus the active selection.
-// Each profile carries its own auto-saved `current` layout and an explicit
-// `saved` reset baseline. The built-in "Editing" profile always exists, is
-// always first, is code-owned + immutable (its name is fixed and its `saved`
-// baseline is always null → the renderer falls back to the built-in code
-// baseline on Reset), and can never be renamed, deleted, or overwritten.
-//
-// The `current` / `saved` layout slots are OPAQUE here on purpose: the renderer
-// owns the WeftCut layout schema (see renderer/workspace/workspaceLayout.ts) and
-// validates/normalizes it, exactly like the per-workspace export.json store. Main
-// only frames them in an atomic, versioned envelope. Bad-config recovery: a
-// missing / empty / corrupt file degrades to the all-defaults document (just the
-// built-in Editing profile, active), which the renderer treats as "restore the
-// built-in Editing baseline".
-//
-// The on-disk file path + envelope field names are a COMPATIBILITY SURFACE:
-// once shipped, neither may change without a migration.
 
 /** Envelope schema version, distinct from the renderer-owned layout version.
  *  Unsupported documents degrade to defaults unless an explicit migration exists. */
@@ -131,8 +114,6 @@ export function normalizeWorkspaceDocument(raw: unknown): WorkspaceDocument {
     seen.add(id);
     const current = "current" in entry ? (entry.current ?? null) : null;
     if (id === EDITING_WORKSPACE_ID) {
-      // Built-in Editing: keep its persisted current layout, force its fixed
-      // name and its always-null (immutable, code-owned) reset baseline.
       editing = { ...editingProfile(), current };
       continue;
     }
@@ -144,7 +125,6 @@ export function normalizeWorkspaceDocument(raw: unknown): WorkspaceDocument {
     });
   }
 
-  // Editing is always present and always first.
   const profiles = [editing, ...custom];
   const activeId =
     typeof raw.activeId === "string" &&

@@ -1,12 +1,8 @@
 // apps/desktop/src/main/state/__tests__/prod.routing.test.ts
 // Focused production adapter routing tests: verifies that actor.command() routes
 // channel names → mutations (valid calls succeed + state changes as expected) and
-// rejects malformed args with a structured error envelope (no throw).
-// Replaces the oracle-prod differential (Task 13 deletes that). Coverage:
-// mechanical channels (update_layer, move_layer, trim_layer, delete_layer,
-// duplicate_layer, groups_create, set_role_gain, fit_composition_to_layers,
-// project_undo/redo) and rich channels (add_color_layer, add_text_layer,
-// add_demo_color_layer, add_demo_text_layer).
+// rejects malformed args with a structured error envelope (no throw). One
+// describe block per channel, tagged rich or mechanical.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 
@@ -205,7 +201,7 @@ describe('production adapter routing — add_demo_color_layer (rich)', () => {
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
     expect(track.layers[0].params.kind).toBe('Color')
-    // Duration is 2s (add_demo_color_layer_impl)
+    // Duration is 2s (actor.ts's add_demo_color_layer arm)
     expect(track.layers[0].t_end_us - track.layers[0].t_start_us).toBe(2_000_000)
   })
 
@@ -237,7 +233,7 @@ describe('production adapter routing — add_demo_text_layer (rich)', () => {
     const params = layer.params as Extract<typeof layer.params, { kind: 'Text' }>
     expect(params.content).toBe('TEXT')
     expect(params.font.size_px).toBe(96)
-    // Duration is 3s (add_demo_text_layer_impl)
+    // Duration is 3s (actor.ts's add_demo_text_layer arm)
     expect(layer.t_end_us - layer.t_start_us).toBe(3_000_000)
   })
 })

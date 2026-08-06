@@ -9,16 +9,8 @@
 //! - `false` → `-osrt` → a `<prefix>.srt` file → [`RawTranscript::Srt`] →
 //!   interpolated word times.
 //!
-//! ## whisper-cli file-output semantics (assumed; not runnable in CI)
-//!
-//! whisper.cpp writes its transcript to a **sidecar file**, not stdout. The
-//! output *base name* is set by `-of <prefix>` / `--output-file <prefix>`
-//! (documented as "output file path (without file extension)"), and the format
-//! flag appends the extension: `-of out -ojf` → `out.json`, `-of out -osrt` →
-//! `out.srt`. We therefore pin `-of <tmpdir>/out` and read `<tmpdir>/out.json`
-//! or `<tmpdir>/out.srt` back. The temp dir is RAII-cleaned on drop. This
-//! arg/path logic is unit-tested ([`build_args`], the extension) because the
-//! end-to-end run against a real binary is a manual check.
+//! The `whisper-cli` arg contract is owned and unit-tested at [`build_args`] —
+//! an end-to-end run against a real binary is a manual check, never CI.
 //!
 //! Model provisioning (bundle vs download vs user-path) is out of scope — v1 is
 //! a user-provided binary + model path from the Settings UI config.

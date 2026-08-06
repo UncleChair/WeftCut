@@ -13,7 +13,7 @@ export interface LayerPatch {
 
 /** Envelope-only patch. check_track_lock FIRST (rejects
  *  edits on a locked track / missing layer), then apply only the provided fields.
- *  Does NOT autofit (Rust doesn't — a t_end edit here never moves composition.duration_us). */
+ *  Does NOT autofit: a t_end edit here never moves composition.duration_us. */
 export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void {
   checkTrackLock(p, id) // throws LayerNotFound (missing) or TrackLocked (locked track)
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock

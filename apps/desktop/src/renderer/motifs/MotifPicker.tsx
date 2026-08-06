@@ -50,10 +50,9 @@ interface Props {
   compHeight: number;
 }
 
-/// `<select>` value when the user wants the picker to find-or-create the
-/// shared "Overlay" track. Sent over IPC as `trackId: undefined` so the
-/// backend's `resolve_overlay_track` path runs (it picks a free Overlay
-/// track via `pick_free_overlay_track`).
+/// `<select>` value for "auto track". Sent over IPC as `trackId: undefined`,
+/// which makes the `add_motif` handler mint a fresh "Overlay" track for the
+/// layer.
 const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 
 export function MotifPicker({
@@ -81,11 +80,10 @@ export function MotifPicker({
         if (!aliveRef.current) return;
         setMotifs(list);
         // Refresh the runtime frame-math catalog from the SAME fetch the picker
-        // shows. The boot-time sync (main.tsx) is one-shot; without this, a Motif
-        // the picker can add (it lists via this IPC) but the runtime catalog
-        // doesn't know (stale since boot / boot-sync failed) would resolve to
-        // null in the compositor/export and render blank until restart. Opening
-        // the picker is a prerequisite for adding, so this keeps the two in sync.
+        // shows, so every Motif the picker can add also resolves in the
+        // compositor/export. Startup seeds that catalog and a `motifs:changed`
+        // listener keeps it fresh (both in `startup/initializeRenderer.ts`);
+        // this covers a boot sync that failed or an event that was missed.
         setUserMotifs(list as MotifManifest[]);
         setSelectedId((prev) => prev ?? list[0]?.id ?? null);
       },
@@ -463,8 +461,8 @@ function posterTSec(motif: MotifSummary): number {
   return typeof cds === "number" && cds > 0 ? cds : 0;
 }
 
-/// Static still of a Motif's first frame, captured via a single CDP screenshot
-/// (`captureMotifFramePngBlob`).
+/// Static still of a Motif's poster frame (see `posterTSec`), captured via a
+/// single CDP screenshot (`captureMotifFramePngBlob`).
 /// CDP cost (~80ms) makes continuous animation impractical here, and the
 /// picker's job is "show what this Motif looks like", not animate it.
 function MotifPreview({
@@ -581,9 +579,8 @@ function MotifPreview({
   );
 }
 
-/// Card-grid thumbnail. Renders the live preview at default props — same
-/// component the form's large preview uses, so card and form stay visually
-/// consistent.
+/// Card-grid thumbnail. Renders the same still preview at default props that
+/// the form's large preview uses, so card and form stay visually consistent.
 function MotifCardThumbnail({ motif }: { motif: MotifSummary }) {
   const defaults = useMemo(() => defaultPropsFor(motif), [motif]);
   return <MotifPreview motif={motif} props={defaults} maxWidth={240} />;
@@ -670,7 +667,7 @@ function PropField({
       );
     default: {
       // Exhaustiveness: a new PropSpec variant makes this a compile error until
-      // PropField renders it (the switch silently dropped unknown types before).
+      // PropField renders it.
       const _exhaustive: never = spec;
       return _exhaustive;
     }
@@ -679,9 +676,8 @@ function PropField({
 
 /// Color input that preserves any trailing alpha bits in the original default
 /// even though `<input type="color">` only edits the RGB triplet. This keeps
-/// captions-strip's translucent default (#000000cc) intact unless the user
-/// changes the color — at which point alpha is lost. See the CSS comment in
-/// `captions_strip/style.css` for the long version.
+/// a motif's translucent default (e.g. `#000000cc`) intact unless the user
+/// changes the color — at which point alpha is lost.
 function ColorInput({
   value,
   ariaLabel,

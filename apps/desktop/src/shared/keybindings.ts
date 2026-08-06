@@ -4,10 +4,8 @@
 //
 // On-disk shape (keybindings.json):
 //   { "overrides": { "<action-id>": ["Mod+Z", "F3"], ... } }
-//
-// An empty keys array means "explicitly unbound" — distinct from "no entry for
-// this action" (which inherits the frontend default at dispatch time).
 
 /** Map of action id → list of binding strings. An empty array means the action
- *  is explicitly unbound (no shortcut fires until the user re-adds one or resets). */
+ *  is explicitly unbound — distinct from "no entry for this action", which
+ *  inherits the frontend default at dispatch time. */
 export type KeybindingsMap = Record<string, string[]>;

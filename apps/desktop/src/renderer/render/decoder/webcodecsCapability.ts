@@ -11,11 +11,8 @@
 /// "unsupported": no WebCodecs codec mapping for the track, or
 /// `isConfigSupported` declines BOTH the hardware and software config) — NEVER
 /// on a transient stall/deadline, so a genuinely decodable source is never
-/// wrongly condemned. Consumed by `PixiPreview.resolveSource`, which feeds the
-/// resolver's `webcodecsCanDecodeOriginal` input "fail" when set: a pinned-Lite
-/// (webcodecs) decode of a genuinely WebCodecs-blind original (e.g. ProRes)
-/// then resolves `status:"unsupported"` (surfacing UnsupportedClipCard) instead
-/// of hanging on "pending" forever. Mirrors ffmpegCapability's
+/// wrongly condemned. Consumed by `PixiPreview.resolveSource`, which owns what
+/// the mark means for source resolution. Mirrors ffmpegCapability's
 /// `markFfmpegUnusable`/`isFfmpegUnusable`.
 const webcodecsUnusable = new Set<string>();
 

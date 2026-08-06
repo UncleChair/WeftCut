@@ -49,8 +49,7 @@ export interface MediaDragAbsorptionTarget {
 export type MediaDropValidity = PlacementValidity;
 
 export interface MediaDropPlan {
-  /// Unsnapped value sent to add_media_layer. The actor snaps both edges from
-  /// this same value; tStartUs/tEndUs below mirror the resulting geometry.
+  /// Unsnapped value sent to add_media_layer.
   rawStartUs: number;
   tStartUs: number;
   tEndUs: number;
@@ -197,7 +196,9 @@ export function planMediaDrop({
     ),
   );
   // add_media_layer creates tEnd from the *raw* start plus source duration,
-  // then applyAddLayer snaps both edges independently. Mirror that exactly.
+  // then applyAddLayer snaps both edges independently. This mirrors the
+  // frame-grid case; Audio commits on the sample grid instead (ADR 0038), so
+  // an audio ghost can sit a sub-frame off its committed layer.
   const baseTStartUs = snapFrameRound(baseRawStartUs, fpsNum, fpsDen);
   const baseTEndUs = snapFrameRound(
     baseRawStartUs + media.durationUs,

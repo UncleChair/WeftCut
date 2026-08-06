@@ -6,19 +6,11 @@
 // existing users' recents.json files must keep loading, so neither may
 // change without a migration.
 //
-// On-disk shape:
-//   {
-//     "reopen_on_launch": bool,
-//     "entries": [ { "path": "…", "name": "…", "last_opened": "<ISO-8601>" }, … ],
-//     "last_new_project_parent": "…" | null
-//   }
+// On-disk shape: `RecentsFile` below.
 //
 // Bad-config recovery: a missing / empty / corrupt file degrades to
 // all-defaults (entries=[], reopen_on_launch=false,
 // last_new_project_parent=null) so a hand-edit mishap can't brick the editor.
-//
-// push() and setLastNewProjectParent() are BEST-EFFORT: they log and swallow
-// on any fs/parse error.
 //
 // No :changed event — the renderer re-fetches via channel calls as needed.
 
@@ -63,11 +55,10 @@ interface RecentsFile {
 
 const DEFAULTS: RecentsFile = { reopen_on_launch: false, entries: [], last_new_project_parent: null }
 
-/** Normalize path for dedup comparison, mirroring the old Rust `same_path`
- *  (#[cfg]-split): case-INSENSITIVE on Windows (lower-cased), case-SENSITIVE
- *  everywhere else (returned verbatim). This preserves exact parity with the
- *  Rust store across the 3-OS matrix — on macOS/Linux `/Proj/A` and `/proj/a`
- *  are DISTINCT recents, on Windows they collapse to one. */
+/** Normalize path for dedup comparison: case-INSENSITIVE on Windows
+ *  (lower-cased), case-SENSITIVE everywhere else (returned verbatim) — so on
+ *  macOS/Linux `/Proj/A` and `/proj/a` are DISTINCT recents, on Windows they
+ *  collapse to one. */
 function normPath(p: string): string {
   return process.platform === 'win32' ? p.toLowerCase() : p
 }

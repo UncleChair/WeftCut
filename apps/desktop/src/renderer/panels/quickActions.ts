@@ -108,8 +108,7 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         iconFor: (s) => (s.displayMode === "AbRoll" ? FoldVertical : UnfoldVertical),
         // Pressed = filtered down to the A/B-roll rows.
         active: (s) => s.displayMode === "AbRoll",
-        // Reuses the retired inline pill's wording, which already separated
-        // state from action ("Showing all tracks. Click to filter to A/B.").
+        // The hint separates state from action: "showing X, click for Y".
         hint: (s) =>
           s.displayMode === "AbRoll"
             ? "timeline.mode_ab_hint"

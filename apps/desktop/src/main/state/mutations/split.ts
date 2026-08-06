@@ -37,7 +37,8 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   right.id = idGen()
   right.t_start_us = atTUs
   right.t_end_us = original.t_end_us
-  // No Motif duration cap is implemented; capped===false for Motif layers.
+  // Split does not re-derive the Motif content cap (no MotifCatalog reaches here;
+  // `resolveMotifMaxDurUs` owns it), so a Motif's src_in_us is not rebased.
   const rightCapped = false
   if (right.params.kind === 'VideoClip' || right.params.kind === 'Audio') right.params.src_in_us += splitOffset
   else if (right.params.kind === 'Motif' && rightCapped) right.params.src_in_us += splitOffset
@@ -94,7 +95,7 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
   }
   // Add the target's right-half to its group, if any. UNCONDITIONAL:
   // even with escape_group, the target's left half keeps the original id and stays grouped,
-  // so its right half joins too (verified against the group-split-escape oracle: 3 members).
+  // so its right half joins too (split.test.ts: an escape_group split leaves 3 members).
   const tgid = groupByMember.get(targetHalves.left)
   if (tgid !== undefined) { const g = groupById.get(tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
 

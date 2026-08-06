@@ -44,11 +44,12 @@ export interface ExportProjectSnapshot {
   /// normalized to content time; export decoders add this offset when seeking
   /// packets and subtract it when storing decoded frames.
   mediaStartPtsUs: Record<string, number | null>;
-  /// `media_id → source color tags`, present (defined) ONLY for media the
-  /// export decodes from the ORIGINAL file (DirectExport); undefined for proxy
-  /// decodes and untagged sources. A plain serializable object (postMessage-
-  /// safe). The Worker passes it into each `SourceHandle` so the original
-  /// decodes with its real matrix/range — see `withDefaultColorSpace`.
+  /// `media_id → source color tags`, one entry per media whose ffprobe tags
+  /// mapped (undefined only for untagged / unmapped sources). Applies to the
+  /// ORIGINAL and proxy decodes alike — a proxy preserves the source
+  /// colorimetry. A plain serializable object (postMessage-safe). The Worker
+  /// passes it into each `SourceHandle` so the decode carries its real
+  /// matrix/range — see `withDefaultColorSpace`.
   mediaColor: Record<string, VideoColorSpaceInit | undefined>;
   /// `media_id → absolute ORIGINAL file path`, resolved on the main thread for
   /// media the export routes through the native decode session. The napi
@@ -102,8 +103,9 @@ export type ExportRequest =
       startUs: number;
       endUs: number;
       /// VideoEncoder config (codec / bitrate / hardware
-      /// preference / etc). Main thread builds this from
-      /// `defaultEncoderConfig(width, height)` in `runExport.ts`.
+      /// preference / etc). Main thread builds this from the export settings
+      /// in `useExportFlow.ts`; `defaultEncoderConfig` in `runExport.ts` is
+      /// the fallback when the caller supplies none.
       encoderConfig: VideoEncoderConfig;
       /// Output frame rate as a rational (overrides composition fps for the
       /// export frame grid + capture cadence). Absent ⇒ use the project's
@@ -118,7 +120,7 @@ export type ExportRequest =
       canvas: OffscreenCanvas;
       /// `layerId → ImageBitmap[]` — pre-rasterized Motif-layer frames,
       /// indexed by COMPOSITION-frame. The Worker has no DOM so it can't run
-      /// the SVG capture harness; the main thread bakes these (`exportBake.ts`)
+      /// the CDP motif capture; the main thread bakes these (`exportBake.ts`)
       /// and TRANSFERS them (the flattened bitmaps are added to the
       /// `postMessage` transfer list). The Worker's `Compositor`/`MotifSprite`
       /// binds `motifFrames[layerId][frameIndex]` synchronously. Absent /
@@ -215,11 +217,11 @@ export interface ExportPerf {
 export type ExportEvent =
   | { type: "ready" }
   | { type: "progress"; framesEncoded: number; totalFrames: number }
-  /// One sequential slice of the output file (fMP4, append-only) in the 8-bit
-  /// WebCodecs path, or one raw yuv420p10le frame in the 10-bit native-encode
-  /// path. The main thread appends fMP4 slices to the temp file and forwards
-  /// 10-bit frames to export_video_sink_write. Replies with chunk-ack in both
-  /// cases.
+  /// Keyed on `nativeSink`, not bit depth: absent ⇒ one sequential slice of the
+  /// output file (fMP4, append-only) from the WebCodecs path; present ⇒ one raw
+  /// packed frame in the sink's `pixFmt` (any bit depth). The main thread
+  /// appends fMP4 slices to the temp file and forwards raw frames to
+  /// export_video_sink_write. Replies with chunk-ack in both cases.
   | { type: "chunk"; data: ArrayBuffer }
   /// Encode + mux complete; the temp file is fully written on the main side.
   /// `perf` carries aggregate decode/timing counters for the E2E harness.

@@ -1,8 +1,7 @@
 // Renderer boundary for the app-level Workspace document and named-profile
 // commands. Main owns profile CRUD and disk I/O, the adapter owns live Dockview
-// state, and workspaceLayout owns snapshot validation. Programmatic restores
-// must not reach autosave, async results belong only to the controller that
-// started them, and an invalid active profile is repaired from a valid fallback.
+// state, and workspaceLayout owns snapshot validation. Async results belong
+// only to the controller that started them.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -107,7 +106,6 @@ export function useWorkspacePersistence(
   // Restore a profile under the `applying` guard (so the restore's own layout
   // events aren't autosaved back), then repair the stored current when the
   // restore came from a baseline/built-in rather than the profile's own current.
-  // The repair is a direct write: the autosave listener no-ops while `applying`.
   const applyAndRepairProfile = useCallback(
     (profile: WorkspaceProfile, opts: { rebuildOnEmpty: boolean }): void => {
       const active = controllerRef.current;

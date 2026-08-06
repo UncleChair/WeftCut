@@ -16,8 +16,9 @@ const COLOR = ["-color_primaries", "bt709", "-color_trc", "bt709",
   "-colorspace", "bt709", "-color_range", "tv"];
 const X265_GOP = "keyint=240:min-keyint=240:scenecut=0";
 
-/// One row per spec §2 matrix line. `encoder` is checked against
-/// `ffmpeg -encoders` so a lean ffmpeg build degrades to a skip, not a crash.
+/// One row per matrix line in docs/decode-bench.md §What it measures.
+/// `encoder` is checked against `ffmpeg -encoders` so a lean ffmpeg build
+/// degrades to a skip, not a crash.
 export const BENCH_MATRIX = [
   { name: "h264-1080", ext: "mp4", codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", durationUs: DUR_S * 1_000_000, encoder: "libx264",
     args: ["-c:v", "libx264", "-preset", "medium", "-profile:v", "high", "-b:v", "12M",
@@ -37,19 +38,18 @@ export const BENCH_MATRIX = [
   { name: "av1-1080", ext: "mp4", codec: "av1", width: 1920, height: 1080, pixFmt: "yuv420p", durationUs: DUR_S * 1_000_000, encoder: "libsvtav1",
     args: ["-c:v", "libsvtav1", "-preset", "8", "-b:v", "8M",
       "-svtav1-params", "keyint=240", "-pix_fmt", "yuv420p"] },
-  // WebCodecs-only reference row (native N/A: Result-7 P010 import block).
+  // WebCodecs-only reference row (native N/A: P010 import is blocked).
   { name: "hi10p-1080", ext: "mp4", codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", durationUs: DUR_S * 1_000_000, encoder: "libx265",
     args: ["-c:v", "libx265", "-preset", "fast", "-profile:v", "main10", "-b:v", "8M",
       "-x265-params", X265_GOP, "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1"] },
-  // preview-sw fixtures (ffmpeg-sw-decode-blindspot Task 9): all-intra
-  // 10-bit 4:2:2, WebCodecs-blind — decoded only via the ffmpeg engine's
-  // software lane (FfmpegSource).
+  // preview-sw fixtures: all-intra 10-bit 4:2:2, WebCodecs-blind — decoded
+  // only via the ffmpeg engine's software lane (FfmpegSource).
   { name: "prores-1080", ext: "mov", codec: "prores", width: 1920, height: 1080, pixFmt: "yuv422p10le", durationUs: DUR_S * 1_000_000, encoder: "prores_ks",
     args: ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"] },
   { name: "prores-2160", ext: "mov", codec: "prores", width: 3840, height: 2160, pixFmt: "yuv422p10le", durationUs: DUR_S * 1_000_000, encoder: "prores_ks",
     args: ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"] },
-  // preview-sw Phase 2 families (Plan A). DNxHR = intra 8-bit 4:2:2; MPEG-2 =
-  // long-GOP 8-bit 4:2:0 (exercises decode-forward-to-target seek). VC-1/WMV3
+  // preview-sw families. DNxHR = intra 8-bit 4:2:2; MPEG-2 = long-GOP 8-bit
+  // 4:2:0 (exercises decode-forward-to-target seek). VC-1/WMV3
   // are omitted: ffmpeg has no VC-1/WMV3 encoder, so no synthetic fixture is
   // possible — they are covered by the routing test + codec-agnostic decoder.
   { name: "dnxhr-1080", ext: "mov", codec: "dnxhd", width: 1920, height: 1080, pixFmt: "yuv422p", durationUs: DUR_S * 1_000_000, encoder: "dnxhd",

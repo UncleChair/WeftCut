@@ -90,8 +90,8 @@ describe('Backups gc + snapshot interval', () => {
     let t = Date.parse('2026-06-23T12:00:00.000Z')
     const { fs, actor, ctl } = setup({ now: () => new Date(t) })
     ctl.start()
-    // one debounced write at t0 → snapshots (first commit, last_snapshot_at starts now → 0 elapsed,
-    // commits_since=1 < 50, so NO snapshot on the first debounced write per Rust). Assert no backup yet.
+    // one debounced write at t0 → no snapshot (last_snapshot_at starts now → 0 elapsed and
+    // commits_since=1 < 50, so neither the 50-commit nor the 5-minute trigger fires). Assert no backup yet.
     actor.dispatch('add_track', {}); await vi.advanceTimersByTimeAsync(500)
     expect([...fs.files.keys()].some((k) => k.startsWith(`/ws/${BACKUPS_DIR}/`))).toBe(false)
     // advance wall clock past 5 min, one more debounced write → snapshot fires.

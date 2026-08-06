@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import "../i18n"; // initialize i18next so useTranslation() resolves (keys land in Task 10)
+import "../i18n"; // initialize i18next so useTranslation() resolves
 
 vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
@@ -280,9 +280,8 @@ describe("MediaPool card metadata", () => {
   });
 });
 
-// The right-corner notice these badges replaced could describe a clip as
-// "usable now, optimizing in background". The pool has to carry that state
-// itself, and crucially without implying the clip is unusable.
+// The badges must say "usable now, optimizing in background" without ever
+// implying the clip is unusable.
 describe("MediaPool optimize badges", () => {
   const optimize = (
     id: string,

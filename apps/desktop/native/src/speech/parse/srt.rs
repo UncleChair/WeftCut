@@ -2,10 +2,8 @@
 //! ([`subtitles::parse_subtitle_cues`]) — there is exactly ONE SRT parser in
 //! the tree; a second one would be a twin-drift hazard (ADR 0036). From those
 //! cues we derive word timing by distributing each cue's `[t_start, t_end]`
-//! span across its words, weighting by word length. Words are
-//! whitespace-delimited, EXCEPT space-less CJK text (Han, kana), where each
-//! character is its own word — matching FunASR's per-character granularity and
-//! keeping a Chinese cue from collapsing into one sentence-sized "word".
+//! span across its words, weighting by word length; `split_word_tokens` owns
+//! what counts as a word.
 //!
 //! That distribution is approximate by construction, so
 //! [`WordTiming::InterpolatedFromCue`]. The one exception: an SRT that is

@@ -53,7 +53,8 @@ export interface DragSeed {
   kind: DragKind;
   layerId: string;
   trackId: string;
-  /// Carried so cross-track drops only land on tracks of the same kind.
+  /// Originating track's kind. Not consulted when picking a drop target —
+  /// tracks are kind-agnostic (`trackAcceptsForLayer` accepts any track).
   trackKind: string;
   startX: number;
   startY: number;
@@ -96,8 +97,8 @@ const LAYER_ICON_PROPS = {
   "aria-hidden": true,
 } as const;
 
-/// Small status dot on a Motif layer block. Phase-only (no count) so it
-/// re-renders only on phase change. Hidden when idle (selector returns null).
+/// Small status dot on a Motif layer block. Hidden when idle (selector
+/// returns null).
 function MotifBakeDot({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const phase = useLayerBakePhase(layerId);
@@ -467,13 +468,9 @@ export function LayerBlock({
   const visibleLabel = showFullAffordances ? label : shortLayerLabel(label);
   const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
-  // Vertical slot. Each row has a 4px outer breathing room so the
-  // chip doesn't touch the row edges. Within that interior:
-  //   - "full"   → one block spans top:4 to bottom-4
-  //   - "top"    → top half (4 → midline-1)
-  //   - "bottom" → bottom half (midline+1 → height-4)
-  // The 1px gap at the midline visually separates V from A in the
-  // combined-row case so the user sees they're hit-test independent.
+  // The outer padding keeps the chip off the row edges; the 1px gap at the
+  // midline visually separates V from A in the combined-row case so the user
+  // sees they're hit-test independent.
   const ROW_PADDING = 4;
   const interiorTop = ROW_PADDING;
   const interiorHeight = Math.max(8, laneHeight - 2 * ROW_PADDING);
@@ -545,8 +542,7 @@ export function LayerBlock({
           : "",
         // Outline conditionals are mutually exclusive so Tailwind's emit
         // order never decides the conflict: the locked chrome trumps the
-        // selected chrome (matching the legacy cascade, where
-        // `.is-locked` was declared after `.is-selected`).
+        // selected chrome.
         (layer.locked || trackLocked)
           ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50"
           : dragIsInvalid
@@ -590,12 +586,9 @@ export function LayerBlock({
         ...groupStyle,
       }}
       onClick={(e) => {
-        // Selection happens on pointerdown (onLayerPointerDown, which also
-        // arms the drag). This handler exists only to stop the click from
-        // bubbling to the timeline-root background-deselect — without it,
-        // selecting a clip would immediately clear the selection. Ruler-only
-        // seek decoupling: selecting a clip must not bubble to the
-        // timeline-root background-deselect.
+        // Selection happens on pointerdown (onLayerPointerDown, which also arms
+        // the drag). This handler exists only to stop the click bubbling to the
+        // timeline-root background-deselect, which would clear that selection.
         e.stopPropagation();
       }}
       onDoubleClick={(e) => {
@@ -609,7 +602,7 @@ export function LayerBlock({
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        // Spec §3: locked layers are unselectable; suppress context menu too.
+        // Locked layers are unselectable; suppress the context menu too.
         if (layer.locked || trackLocked) return;
         onContextMenu(e, layer.id, layer.kind, layer.enabled);
       }}

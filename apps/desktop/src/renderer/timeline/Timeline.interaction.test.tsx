@@ -46,8 +46,9 @@ const ipcMocks = vi.hoisted(() => ({
   viewStateSet: vi.fn().mockResolvedValue(undefined),
 }));
 
-// jsdom 25 does not implement PointerEvent; alias it to MouseEvent so
-// fireEvent.pointerDown carries a usable .button / .clientX (same shim the
+// Inert where the DOM environment provides PointerEvent (current jsdom does);
+// kept as a fallback alias to MouseEvent so fireEvent.pointerDown still carries
+// a usable .button / .clientX where it doesn't (same shim the
 // KeyframeCurveGraph test uses).
 if (typeof window !== "undefined" && !window.PointerEvent) {
   (window as unknown as Record<string, unknown>).PointerEvent = window.MouseEvent;
@@ -517,8 +518,7 @@ describe("Timeline seek/selection coupling", () => {
     stubLaneLayout(container);
     const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
 
-    // The reported symptom: a bare click used to commit a cross-track move
-    // because a disagreeing hit-test alone counted as edit intent.
+    // A disagreeing hit-test alone is not edit intent.
     fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
     fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
 

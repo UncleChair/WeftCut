@@ -19,7 +19,7 @@ pub struct MediaItem {
     pub kind: MediaKind,
     pub metadata: MediaMetadata,
     /// Where preview and export each decode this source from, plus the
-    /// readiness of any proxy. Replaces the former flat proxy flags. v10.
+    /// readiness of any proxy.
     pub decode_route: DecodeRoute,
     pub waveform_path: Option<PathBuf>,
     /// Canonical conformed PCM (VCONF; see `jobs::conform`). `None` until

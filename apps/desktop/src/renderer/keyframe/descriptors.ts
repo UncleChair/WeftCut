@@ -1,12 +1,12 @@
-// The frontend mirror of the Rust `resolve_animated_f64_mut`: which params
-// each layer kind can keyframe, in inspector order. The IPC view flattens
-// transform, so `params[paramKey]` is the `AnimTrack<number>`.
+// The frontend mirror of main's `f64Lens` (src/main/state/mutations/params.ts):
+// which params each layer kind can keyframe, in inspector order. The IPC view
+// flattens transform, so `params[paramKey]` is the `AnimTrack<number>`.
 import type { AnimTrack, LayerSummary } from "../ipc";
 
 export type KfWidget = "slider" | "number" | "readout";
 
 export interface ParamDescriptor {
-  /// Wire key understood by `updateLayerParamTrack` and the Rust resolver.
+  /// Wire key understood by `updateLayerParamTrack` and main's `f64Lens`.
   paramKey: string;
   /// Existing i18n key (reuse the property-panel labels).
   labelKey: string;

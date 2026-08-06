@@ -274,7 +274,8 @@ function overlapUs(p: Project, tr: Transition): number {
   const to = layerOf(p, tr.to_layer)
   return Math.max(Math.min(from.t_end_us, to.t_end_us) - Math.max(from.t_start_us, to.t_start_us), 0)
 }
-/** The three properties ticket 04 buys, asserted together. */
+/** Duration spans whole frames from the cut, both endpoints stay canonical,
+ *  overlap === duration_us — asserted together. */
 function expectOnGrid(p: Project, tid: string, num: number, den: number, cutFrame: number, requestedUs: number): void {
   const tr = p.transitions.find((t) => t.id === tid)!
   const frames = frameIndexRound(requestedUs, num, den)

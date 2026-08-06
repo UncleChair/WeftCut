@@ -155,9 +155,10 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   }
 }
 
-/** native/src/state/layer.rs:358 — parse "effects[<uuid>].params[<key>]" →
- *  [effectId, paramKey]; null otherwise. (A non-UUID id still parses here but the
- *  subsequent effect lookup fails → resolves to null, matching the Rust outcome.) */
+/** native/src/state/layer.rs `parse_effect_param_key` — parse
+ *  "effects[<uuid>].params[<key>]" → [effectId, paramKey]; null otherwise. (A
+ *  non-UUID id still parses here but the subsequent effect lookup fails → resolves
+ *  to null, matching the Rust outcome.) */
 export function parseEffectParamKey(key: string): [Uuid, string] | null {
   const m = /^effects\[([^\]]+)\]\.params\[(.+)\]$/.exec(key)
   return m ? [m[1], m[2]] : null
@@ -165,9 +166,10 @@ export function parseEffectParamKey(key: string): [Uuid, string] | null {
 
 export const TRANSFORM_F64_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y']
 
-/** layer.rs:322/377 — resolve a param-key to a setter for its Animated<f64> slot,
- *  or null if the key is unknown / invalid on this kind. Effect-param paths look
- *  in layer.effects (and require the param slot to already exist). */
+/** layer.rs `resolve_animated_f64_mut` / `resolve_animated_f64_mut_on_layer` —
+ *  resolve a param-key to a setter for its Animated<f64> slot, or null if the key
+ *  is unknown / invalid on this kind. Effect-param paths look in layer.effects
+ *  (and require the param slot to already exist). */
 function f64Lens(layer: Layer, key: string): { set(v: Animated<number>): void } | null {
   const eff = parseEffectParamKey(key)
   if (eff) {
@@ -211,10 +213,10 @@ export function resolveAnimatedF64(layer: Layer, key: string): Animated<number> 
   return null
 }
 
-/** native/src/mcp/keyframes.rs:126 read_track — locate the layer (LayerNotFound),
- *  resolve the param key (UnknownKeyframeParam), return its t_start_us + current
- *  track. Used by the MCP keyframe tools for timeline-absolute↔layer-local
- *  conversion. Read-only (no commit, no id mint). */
+/** Locate the layer (LayerNotFound), resolve the param key
+ *  (UnknownKeyframeParam), return its t_start_us + current track. Used by the MCP
+ *  keyframe tools for timeline-absolute↔layer-local conversion. Read-only (no
+ *  commit, no id mint). */
 export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<number> } {
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
@@ -233,11 +235,11 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   checkTrackLock(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
   const layer = p.tracks[loc[0]].layers[loc[1]]
-  // Located BEFORE normalize (not after, as it used to be) because the write-time
-  // grid depends on the layer's kind: an audio envelope — gain_db, pan, and the
-  // audio-role automation — quantizes on the 48 kHz lattice, so audio automation is
-  // no longer coarser than the mixer that renders it (spec R2-D6). Error ordering is
-  // unchanged: EmptyKeyframeTrack still precedes UnknownKeyframeParam.
+  // Located BEFORE normalize because the write-time grid depends on the layer's
+  // kind: an audio envelope — gain_db, pan, and the audio-role automation —
+  // quantizes on the 48 kHz lattice, so audio automation is never coarser than the
+  // mixer that renders it (spec R2-D6). Error ordering: EmptyKeyframeTrack precedes
+  // UnknownKeyframeParam.
   //
   // This changes the WRITE grid only. Keyframe times remain deliberately unenforced
   // by validate (see validate.ts's validateLayerParams note): trim/split rebase keys

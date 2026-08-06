@@ -20,10 +20,7 @@ export interface PlaybackEngineInit {
   compositor: Compositor;
   /// PixiJS ticker driving the tick callback. Pass `app.ticker` in
   /// production; tests pass a standalone `new Ticker()` and drive it
-  /// manually with `update()`. Registered at UPDATE_PRIORITY.HIGH so
-  /// our scene-graph mutation runs before TickerPlugin's render (LOW)
-  /// in the same frame — kills the 1-frame lag two independent rAF
-  /// loops would otherwise introduce.
+  /// manually with `update()`.
   ticker: Ticker;
 }
 
@@ -57,9 +54,8 @@ const WARMUP_MIN_LOOKAHEAD_US = 150_000;
 
 /// Safety cap on how long `play()` waits for warm-up before starting
 /// the clock anyway. Without a cap, a wedged or never-ready source
-/// would block playback indefinitely; with the cap, the worst case
-/// degrades to the prior behavior (brief stutter) rather than a
-/// frozen play button.
+/// would block playback indefinitely; with the cap, the worst case is
+/// a brief initial-frame stutter rather than a frozen play button.
 const WARMUP_MAX_WAIT_MS = 250;
 
 export class PlaybackEngine {
@@ -191,13 +187,9 @@ export class PlaybackEngine {
     this.emitPlayState(false);
   }
 
-  /// Hard seek to a composition time. Routes through the
-  /// ScrubCoalescer: clock + visual feedback are immediate; the
-  /// decoder is asked to actually fetch the target frame only after
-  /// 50 ms of no further seeks (a "stable target"). Rapid scrubs
-  /// during a timeline drag thus paint the nearest-cached frame
-  /// each rAF without thrashing the decoder, and the precise frame
-  /// snaps in within 50 ms of the user releasing the drag.
+  /// Hard seek to a composition time. Clock + visual feedback are
+  /// immediate; the precise decoder fetch is deferred through
+  /// `scrubCoalescer` (see its field doc for the debounce contract).
   seek(tUs: number): void {
     this.clock.setPosition(tUs);
     // `setPosition` while playing RE-ANCHORS the clock; the compositor must
@@ -293,10 +285,9 @@ export class PlaybackEngine {
   /// "restart from 0" gesture on play(). Prefers the end of playable
   /// material (max enabled-layer `t_end_us`) over the authored
   /// composition duration, falling back to composition duration only
-  /// when the project has no enabled layers at all. The fallback
-  /// preserves the legacy guard so a brand-new empty project still
-  /// auto-pauses at composition end if the user manages to start
-  /// playback.
+  /// when the project has no enabled layers at all — so a brand-new
+  /// empty project still auto-pauses at composition end if the user
+  /// manages to start playback.
   private autoPauseEndUs(): number {
     const playable = this.compositor.playableEndUs();
     if (playable > 0) return playable;

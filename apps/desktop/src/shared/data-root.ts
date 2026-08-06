@@ -1,4 +1,4 @@
-// Shared types for the user-managed data-root migration IPC surface (ticket 03).
+// Shared types for the user-managed data-root migration IPC surface.
 // Imported by BOTH the Electron main process (the dataRoot:* IPC handlers +
 // dataRootMigration.ts) and the renderer (bridge wrappers / the Settings UI), so
 // the two sides can't drift — mirrors how app-settings types are single-sourced
@@ -15,9 +15,8 @@ export interface DataRootCurrent {
   /**
    * True when running on the default `<userData>/data` because a configured
    * `data_root` could not be honored — derived by comparing the resolved root to
-   * the configured setting. The current resolver never falls back silently (it
-   * shows a blocking dialog and persists a Re-set), so this is effectively always
-   * false today; surfaced so the UI can annotate the rare/forward-looking case.
+   * the configured setting (the `dataRoot:current` handler in src/main/index.ts,
+   * which owns the why). Surfaced so the UI can annotate the rare case.
    */
   isFallback: boolean
 }

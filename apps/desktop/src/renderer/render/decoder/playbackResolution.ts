@@ -3,9 +3,7 @@
 // (`full` | `half` | `quarter`); the two halves of the setting each want a
 // different shape of the same number — the native ship stage takes a divisor
 // (`FfmpegSourceInit.playbackScaleDiv` → `SwTransport` → `preview_sw_open`'s
-// `scale_div` → Rust `OutScale`), Pixi's renderer takes its reciprocal. Both
-// derive from ONE switch below; that is what stops a second, drifting copy
-// appearing at the next call site.
+// `scale_div` → Rust `OutScale`), Pixi's renderer takes its reciprocal.
 import type { PlaybackResolution } from "../../../shared/app-settings";
 
 /// Divisor applied to BOTH axes of the shipped frame. Native owns the rest of

@@ -7,13 +7,11 @@ import type { DecoderPool } from "./decoder/session";
 
 // Decode sessions are pool-owned and keyed by LAYER id, so the only thing that
 // frees one — and, on the ffmpeg hardware lane, the GPU session inside it — is
-// an explicit `pool.release`. The Compositor tears clips down in two places and
-// for a long time neither released: the pool held the handle until its idle
-// sweep noticed seconds later, and a clip resolving inside that window raced
-// admission against layers the user had already deleted. Losing that race is
-// permanent, because the lane is picked once per source. These tests
-// pin the release rather than the teardown, since the teardown was never the
-// part that broke.
+// an explicit `pool.release`. Both of the Compositor's clip-teardown sites must
+// call it: otherwise the pool holds the handle until its idle sweep notices
+// seconds later, and a clip resolving inside that window races admission
+// against layers the user already deleted — a permanent loss, since the lane is
+// picked once per source. These tests pin the release, not the teardown.
 
 const colorLayer: LayerSummary = {
   id: "layer-keep",

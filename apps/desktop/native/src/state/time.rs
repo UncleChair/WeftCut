@@ -6,9 +6,9 @@
 //! renderer consumes the same crate compiled to wasm). `Rational` stays here: it
 //! carries the serde + schemars derives the project schema needs, which the leaf
 //! deliberately forbids — so the snap wrappers below pass its `(num, den)` to the
-//! leaf. The storage invariant (every timeline mutation snaps to the grid,
-//! `state/actor/mutations.rs`) and the renderer's drag/seek/playhead snap now run
-//! the exact same i128 math.
+//! leaf. The storage invariant (every timeline mutation snaps to the grid — the
+//! TS actor snaps through `apps/desktop/src/main/state/snap.ts`) and the
+//! renderer's drag/seek/playhead snap run the exact same i128 math.
 
 // `US_PER_SEC`/`US_PER_MS` and the `FPS_*` presets are public API surface not
 // all consumed internally yet.

@@ -1,13 +1,7 @@
 //! The speech-backend catalog: the enum of engines we know how to drive, their
 //! locality (cloud vs local sidecar), capability surfaces, and the default
-//! order the resolver falls back through.
-//!
-//! HARD CONSTRAINT — `SpeechBackend::OpenAi.as_str()` is `"openai"` and that
-//! string is a wire + on-disk contract: it is the `Backend.speech_config` map
-//! key, the `set_cloud_key("openai", …)` argument pushed in from TS, the
-//! Settings status command's `provider` field, and the key format persisted in
-//! `cloud_keys.json`. Do NOT change it. New backends use `"whisper_cpp"` /
-//! `"funasr"`.
+//! order the resolver falls back through. The string tags are a wire + on-disk
+//! HARD CONSTRAINT — see [`SpeechBackend::as_str`].
 //!
 //! Config material (the API key, or a local engine's binary/model paths) lives
 //! in [`super::config`]; this module is only the backend identity + its static
@@ -16,21 +10,17 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Speech engines WeftCut can drive. `OpenAi` is a cloud HTTP API (one key
-/// activates Whisper transcription + tts-1 synthesis); `WhisperCpp` and
-/// `FunAsr` are local one-shot CLI sidecars (transcription only, needing a
+/// Speech engines WeftCut can drive. `OpenAi` is a cloud HTTP API; `WhisperCpp`
+/// and `FunAsr` are local one-shot CLI sidecars (transcription only, needing a
 /// binary + model on disk).
 ///
-/// The serde `rename_all = "kebab-case"` derive is carried over unchanged from
-/// the pre-rename `Provider` enum to keep any serialized form identical — note
-/// that the serde tag (`"open-ai"`) is deliberately distinct from the stable
-/// map/wire tag [`SpeechBackend::as_str`] (`"openai"`); callers key the config
-/// map and IPC by `as_str`, never by the serde form.
+/// The serde tag (`"open-ai"`, from `rename_all = "kebab-case"`) is deliberately
+/// distinct from the stable map/wire tag [`SpeechBackend::as_str`] (`"openai"`);
+/// callers key the config map and IPC by `as_str`, never by the serde form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SpeechBackend {
-    /// OpenAI API. One key activates both Whisper transcription and tts-1
-    /// synthesis, so the user configures a single credential.
+    /// OpenAI cloud API.
     OpenAi,
     /// whisper.cpp — local offline transcription CLI (STT only).
     WhisperCpp,
@@ -59,8 +49,13 @@ pub const DEFAULT_ORDER: &[SpeechBackend] = &[
 ];
 
 impl SpeechBackend {
-    /// Stable string tag — the `speech_config` map key AND the TS/napi wire
-    /// contract. `OpenAi` MUST stay `"openai"` (see the module HARD CONSTRAINT).
+    /// Stable string tag — the `Backend.speech_config` map key AND the TS/napi
+    /// wire contract.
+    ///
+    /// HARD CONSTRAINT: `OpenAi` MUST stay `"openai"`. That exact string is the
+    /// `set_cloud_key("openai", …)` argument pushed in from TS, the Settings
+    /// status command's `provider` field, and the key format persisted in
+    /// `cloud_keys.json`. New backends use `"whisper_cpp"` / `"funasr"`.
     pub fn as_str(self) -> &'static str {
         match self {
             SpeechBackend::OpenAi => "openai",

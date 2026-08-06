@@ -15,8 +15,8 @@
 //   • setCurrent (autosave) is DEBOUNCED — it buffers the latest document in memory
 //     and schedules one disk write; get() reads the buffered value ahead of disk so
 //     the renderer sees its own writes. flush() forces the pending write and MUST be
-//     called before a Workspace switch or application shutdown (index.ts before-quit),
-//     or an edit made inside the debounce window would be lost.
+//     called on application shutdown (index.ts before-quit), or an edit made inside
+//     the debounce window would be lost.
 //   • the explicit profile ops (setActive / saveBaseline / createProfile /
 //     renameProfile / deleteProfile) COMMIT immediately — they fold any buffered
 //     current edit into the document first (so a debounced autosave is never lost to

@@ -1,11 +1,8 @@
 /// Two time domains, ONE grid implementation.
 ///
 /// Video geometry lives on the composition frame grid; audio geometry lives on the
-/// fixed 48 kHz mix lattice (ADR 0038). Everything here exists so those two are
-/// selected by a single function instead of being re-decided at every snap site —
-/// the mistake ADR 0037 left behind, where `move`'s group fan-out and
-/// `serialize.ts`'s load repair would silently drag sample-aligned audio back onto
-/// the video frame grid.
+/// fixed 48 kHz mix lattice (ADR 0037, 0038). Which lattice a layer uses is decided
+/// in exactly one place — `gridForLayerKind` below, which owns that rationale.
 ///
 /// THE KEY FACT, and the reason this is not a second grid: a 48 kHz sample boundary
 /// IS a frame boundary at rate 48000/1.
@@ -50,8 +47,7 @@ export interface Grid extends RateLike {
 }
 
 /** The 48 kHz sample lattice. A module constant because it never varies: the mix
- *  rate is fixed, so audio precision does NOT change when the video fps does —
- *  which was the defect (raising fps silently changed available audio precision). */
+ *  rate is fixed, so audio precision does NOT change when the video fps does. */
 export const AUDIO_GRID: Grid = { domain: 'sample', num: AUDIO_SAMPLE_RATE_HZ, den: 1 }
 
 /** The composition frame lattice for `fps`. */

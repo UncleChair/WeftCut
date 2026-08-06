@@ -1,27 +1,24 @@
-//! Per-session decode thread + shared NV12 texture pool + registry.
+//! Per-session decode thread + shared RGBA8 texture pool + registry.
 //!
 //! Each preview session owns a dedicated OS thread pinned to its `!Send`
 //! D3D11 + ffmpeg objects: the thread opens the `VideoStream`, builds a pool of
-//! shared NV12 textures on ffmpeg's own D3D11 device, and runs an anchor-driven
-//! decode loop. napi commands (`request_frame_at` / `consume_ack` / `close`)
-//! post messages to the thread over an mpsc channel; decoded frames are
-//! announced back out through a poke sink (`FrameReady` / `Eof` / `Error`).
+//! shared RGBA8 textures on ffmpeg's own D3D11 device (the NV12→RGBA convert
+//! target), and runs an anchor-driven decode loop. napi commands
+//! (`request_frame_at` / `consume_ack` / `close`) post messages to the thread
+//! over an mpsc channel; decoded frames are announced back out through a poke
+//! sink (`FrameReady` / `Eof` / `Error`).
 //!
-//! Why a thread per session: decode must not block the Node main thread, and
-//! the D3D11/ffmpeg COM objects are `!Send`. Rather than fight that with unsound
-//! `unsafe`, we simply never move them across threads — they are created,
-//! used, and dropped entirely on the session's own thread. Only plain `Send`
-//! data crosses the boundary: into the thread go the command `Receiver`, the
-//! poke `Arc`, and the path/id strings; out of the thread come the slot NT
-//! handle *values* (`i64`, not COM pointers) + dimensions, and the pokes. No COM
-//! pointer is ever sent, so no `unsafe impl Send` is required here.
+//! Why a thread per session: the D3D11/ffmpeg COM objects are `!Send`, so each
+//! session owns its thread and only plain `Send` data crosses the boundary (see
+//! `OpenInfo`).
 //!
 //! Slot coherence: a slot is overwritten only after its `consume_ack` marked it
-//! free. That ack — fired by Electron's `allReferencesReleased` in the renderer,
-//! *not* the keyed mutex across the async `createImageBitmap` boundary — is the
-//! coherence guarantee. With `pool_size >= 2` the producer fills slot B while the
-//! renderer still snapshots slot A. The keyed mutex only serialises our GPU write
-//! against Chromium's GPU read of the same texture.
+//! free. That ack — invoked explicitly by the preload once the snapshot's
+//! cross-device read has GPU-completed, *not* the keyed mutex across the async
+//! `createImageBitmap` boundary — is the coherence guarantee. With
+//! `pool_size >= 2` the producer fills slot B while the renderer still snapshots
+//! slot A. The keyed mutex only serialises our GPU write against Chromium's GPU
+//! read of the same texture.
 
 use std::collections::HashMap;
 use std::ops::ControlFlow;
@@ -51,7 +48,7 @@ use crate::recover::{panic_message, LockExt};
 pub const TIMING_SAMPLE_CAP: usize = 20_000;
 
 /// Per-metric millisecond summary handed across the napi boundary (mapped to a
-/// `#[napi(object)]` in `napi_backend.rs`). Percentiles use linear interpolation
+/// `#[napi(object)]` in `backend.rs`). Percentiles use linear interpolation
 /// over ascending samples, matching the TS-side `percentile` convention.
 #[derive(Clone, Copy)]
 pub struct TimingSummary {
@@ -62,7 +59,7 @@ pub struct TimingSummary {
     pub max_ms: f64,
 }
 
-/// Both metrics drained together.
+/// Everything `TimingAccum::drain` produces for one bench window.
 pub struct TimingReport {
     /// Whole JS coordination round-trip: `FrameReady` emit -> main relay -> preload
     /// getVideoFrame/createImageBitmap -> `consume_ack` relay back to this thread.
@@ -73,8 +70,7 @@ pub struct TimingReport {
     /// GPU-side cost of the NV12→RGBA conversion pass (staging copy + draw),
     /// measured with timestamp-disjoint queries on the decode device. A
     /// SUBSAMPLE: one bracket in flight at a time, polled non-blocking, so
-    /// `count` legitimately trails the delivered-frame count. This is the
-    /// number ticket 05's A/B reads for the conversion's own price.
+    /// `count` legitimately trails the delivered-frame count.
     pub convert_gpu: TimingSummary,
     /// Bottleneck probe: gap from a slot's `ConsumeAck` (slot freed on this thread)
     /// to the *next* `FrameReady` emitted into that same slot. This is the one
@@ -83,22 +79,21 @@ pub struct TimingReport {
     /// period (`pool_size * frame_interval`), so whichever is larger localises the
     /// throughput ceiling. A large `ack_to_emit` = the pump idles between freeing a
     /// slot and refilling it (Rust-side); a small one = the ceiling is the ack
-    /// arrival rate (renderer-side). See the throughput-bottleneck handoff doc.
+    /// arrival rate (renderer-side).
     pub ack_to_emit: TimingSummary,
     /// Corroborates `ack_to_emit`'s mechanism: count of `pump` early-returns caused
     /// by the lookahead gate *while a free slot was available*. If large, the pump
     /// idle is the lookahead/anchor gate (anchor not advancing); if ~0, the idle is
     /// pool-full (waiting on the renderer's ack cadence), not the gate. The only
-    /// other early-return with a free slot is `eof`, excluded mid-stream.
+    /// other early-returns with a free slot are `eof` (excluded mid-stream) and
+    /// the acquire-failed return (counted apart as `acquire_failed`).
     pub lookahead_gated_skips: u64,
     /// Frames `pump` discarded as already-late (see `LATE_FRAME_DROP_US`) rather
     /// than copying + delivering. This is the drop policy's own meter: 0 means the
     /// pipeline kept up, sustained non-zero means decode fell behind and the drop
     /// is what kept the delivery chain (and the displayed lag) bounded.
     pub late_frame_drops: u64,
-    /// Round-2 thread time-budget probe (the per-slot probes above found the ~22ms
-    /// is NOT per-slot — it is whole-pipeline dead time). These characterise the
-    /// session thread's cadence directly, in its own clock:
+    /// Session-thread cadence, measured in the thread's own clock:
     /// gap between consecutive `FrameReady` emits (ANY slot) — the true production interval.
     pub inter_emit: TimingSummary,
     /// gap between consecutive `ConsumeAck` arrivals (ANY slot) — the ack cadence.
@@ -114,10 +109,9 @@ pub struct TimingReport {
     pub recv_timeout_ticks: u64,
     pub recv_ack_msgs: u64,
     pub recv_req_msgs: u64,
-    /// Round-3 stall attribution (the round-2 probe found production is a ~4s burst
-    /// then a ~26s halt while the driver keeps nudging). Every `pump` early-return
-    /// increments exactly one of these; the dominant one over the run names the
-    /// halt: `eof_returns` = decoder ended, `pool_full_returns` = no free slot
+    /// Stall attribution. Every `pump` early-return increments exactly one of
+    /// these; the dominant one over the run names the halt:
+    /// `eof_returns` = decoder ended, `pool_full_returns` = no free slot
     /// (slots stuck busy — renderer stopped acking), `acquire_failed` = keyed-mutex
     /// AcquireSync timed out (slot held by Chromium), `lookahead_gated_skips`
     /// (above) = anchor not advancing.
@@ -139,8 +133,7 @@ pub struct TimingReport {
     pub stale_gen_acks: u64,
     /// This session's shared-pool VRAM: `width × height × 4 (RGBA8) × slots`.
     /// Static per session — stamped by `take_timings` from the registry's
-    /// session record, NOT accumulated (drain leaves it 0). The pool-VRAM
-    /// instrument the A′ ×2.67-bytes verdict reads.
+    /// session record, NOT accumulated (drain leaves it 0).
     pub pool_slot_bytes: u64,
 }
 
@@ -224,7 +217,7 @@ impl TimingAccum {
     pub fn note_recv_req(&mut self) {
         self.recv_req_msgs = self.recv_req_msgs.saturating_add(1);
     }
-    /// Round-3 pump-stop attribution. Each records the terminal free-slot count +
+    /// Pump-stop attribution. Each records the terminal free-slot count +
     /// eof flag (last-write-wins) alongside its reason tally.
     pub fn note_eof_return(&mut self, free_slots: u32, eof: bool) {
         self.eof_returns = self.eof_returns.saturating_add(1);
@@ -272,7 +265,7 @@ impl TimingAccum {
             final_eof: self.final_eof,
             lease_timeouts: self.lease_timeouts,
             stale_gen_acks: self.stale_gen_acks,
-            pool_slot_bytes: 0, // stamped by take_timings (session-static, not accumulated)
+            pool_slot_bytes: 0,
         };
         self.coord_rtt_ns.clear();
         self.decode_copy_ns.clear();
@@ -335,7 +328,7 @@ fn percentile_ms(sorted: &[u64], p: f64) -> f64 {
     v / 1_000_000.0
 }
 
-/// Ceiling on the keyed-mutex wait in [`copy_frame_into_slot`]. We only ever
+/// Ceiling on the keyed-mutex wait in [`convert_frame_into_slot`]. We only ever
 /// write a slot the renderer already released (via `consume_ack`), so
 /// Chromium isn't holding its read lock when we `AcquireSync` — a free slot
 /// acquires in microseconds. This value is generous on purpose: it never
@@ -359,7 +352,7 @@ const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
 /// windows-rs's generated safe wrapper (`HRESULT::ok`, `windows-result` crate,
 /// which treats any non-negative code as success) collapses a timeout to
 /// `Ok(())` — indistinguishable from actually holding the mutex. We therefore
-/// call the vtable function directly in `copy_frame_into_slot` and compare
+/// call the vtable function directly in `convert_frame_into_slot` and compare
 /// the raw `HRESULT` against this sentinel ourselves instead of trusting the
 /// safe wrapper's `Result`.
 const DXGI_KEYED_MUTEX_WAIT_TIMEOUT: i32 = 0x0000_0102;
@@ -381,8 +374,7 @@ const LOOKAHEAD_US: i64 = 500_000;
 /// decode naturally. Any backward move always seeks.
 ///
 /// Also the SEED for the measured keyframe interval (`key_interval_us`) until two
-/// keyframes have been seen — so behaviour before any measurement is exactly what
-/// it was when this was the only threshold.
+/// keyframes have been seen.
 const SEEK_FORWARD_THRESHOLD_US: i64 = 1_000_000;
 
 /// Floor/ceiling on the measured-keyframe-interval resync threshold
@@ -503,10 +495,7 @@ pub enum PreviewGpuPoke {
         stream_id: String,
         slot: u32,
         /// The slot's fill generation — the fencing token. Bumped on every
-        /// fill; the matching ack must echo it or it is dropped whole
-        /// (ABA immunity on top of the busy check: a stale ack from a
-        /// PREVIOUS occupancy of the same slot can no longer free the
-        /// current one).
+        /// fill; the matching ack must echo it — see `ack_frees_slot`.
         gen: u32,
         pts_us: i64,
         dur_us: i64,
@@ -558,7 +547,7 @@ struct Session {
     timing: Arc<Mutex<TimingAccum>>,
 }
 
-/// One reusable shared NV12 texture in the pool. Created on ffmpeg's device and
+/// One reusable shared RGBA8 texture in the pool. Created on ffmpeg's device and
 /// overwritten in place each time its slot is (re)filled.
 struct PoolSlot {
     texture: ID3D11Texture2D,
@@ -603,11 +592,9 @@ struct SessionState {
     /// pts of the last keyframe the pump decoded; `i64::MIN` until one is seen.
     /// Paired with `key_interval_us` to price a resync seek.
     last_key_pts: i64,
-    /// Measured interval between consecutive keyframes (µs) — the worst-case
-    /// decode cost of re-approaching a seek target from its key packet. Seeded to
-    /// `SEEK_FORWARD_THRESHOLD_US`, then an EWMA over observed gaps so a long-GOP
-    /// 4K source (3 s GOP measured on the Samsung UHD demo) stops paying ~90 4K
-    /// decodes to recover 1 s of drift, while a short-GOP proxy resyncs promptly.
+    /// Measured interval between consecutive keyframes (µs), seeded to
+    /// `SEEK_FORWARD_THRESHOLD_US`, then an EWMA over observed gaps — see
+    /// `resync_threshold_us`.
     key_interval_us: i64,
     /// Decoder is drained; the pump idles until a backward seek resets this.
     eof: bool,
@@ -622,7 +609,7 @@ struct SessionState {
     /// before a slot has ever been acked (its first fill has no prior ack, so it
     /// yields no sample). Sized to the pool. See `TimingReport::ack_to_emit`.
     slot_ack_at: Vec<Option<Instant>>,
-    /// Session-level (not per-slot) last-emit / last-ack instants for the round-2
+    /// Session-level (not per-slot) last-emit / last-ack instants for the
     /// cadence probes (`inter_emit` / `inter_ack`). NOT consumed by `take` — each
     /// event overwrites the prior, and the delta is the inter-event gap.
     last_emit_at: Option<Instant>,
@@ -632,7 +619,7 @@ struct SessionState {
 impl Drop for SessionState {
     fn drop(&mut self) {
         // Close each slot's NT handle before the textures (and device/decoder)
-        // release, mirroring the poc teardown order.
+        // release.
         unsafe {
             for slot in &self.pool {
                 let _ = CloseHandle(slot.handle);
@@ -779,9 +766,7 @@ impl SessionState {
                 }
                 Err(e) => {
                     // Halt the pump so we don't spin on a persistent error; a
-                    // later seek reopens decoding. The halt IS the eof state,
-                    // so stamp the terminal snapshot the same way (every pump
-                    // exit must — see `note_lookahead_gated_skip`'s landmine).
+                    // later seek reopens decoding. The halt IS the eof state.
                     self.eof = true;
                     let free = self.free.iter().filter(|&&f| f).count() as u32;
                     if let Ok(mut t) = self.timing.lock() {
@@ -817,20 +802,9 @@ impl SessionState {
                 self.post_seek = false;
             }
 
-            // Late-frame drop (ffplay `framedrop` / mpv `--framedrop=vo`).
-            //
-            // Discarding HERE is the whole point. Delivering an already-late frame
-            // would pay the keyed-mutex acquire, a full-frame
-            // `CopySubresourceRegion` (12.4 MB at 4K NV12), the napi/IPC hop,
-            // `importSharedTexture` + `createImageBitmap`, and a ring push +
-            // eviction — all for a frame nobody sees, while the playhead runs
-            // further ahead. That is what made a decode shortfall self-sustaining
-            // instead of self-correcting: decode itself has headroom (measured
-            // 193 fps on the 4K H.264 case, 6.5× realtime) and the delivery chain
-            // was spending it on stale frames. Skipping costs one decode, which a
-            // long GOP makes unavoidable anyway, and leaves the slot FREE —
-            // exactly like the post-seek discard above. Mirrors the software lane's
-            // `serve_request`, which has always discarded pre-target frames.
+            // Already-late frame: discard so the delivery chain isn't spent on a
+            // frame nobody sees; the slot stays free. Why the margin isn't zero:
+            // see `LATE_FRAME_DROP_US`.
             if is_late_frame(decoded.pts_us, decoded.dur_us, self.anchor) {
                 self.frontier_pts = decoded.pts_us;
                 if let Ok(mut t) = self.timing.lock() {
@@ -852,13 +826,10 @@ impl SessionState {
             };
             match copy {
                 Ok(CopyOutcome::AcquireFailed(message)) => {
-                    // The slot's keyed mutex is stuck (or a transient acquire
-                    // error occurred): no GPU work happened, the slot was
-                    // never touched so it stays free, and this decoded frame
-                    // is dropped. Report it but don't halt the pump — return
-                    // to the session loop so it re-services its mailbox
-                    // (including a pending `Close`) instead of retrying in a
-                    // tight loop against a slot that may stay stuck.
+                    // Report it but don't halt the pump — return to the session
+                    // loop so it re-services its mailbox (including a pending
+                    // `Close`) instead of retrying in a tight loop against a
+                    // slot that may stay stuck.
                     //
                     // The frame WAS consumed from the stream whether or not
                     // the copy landed: the frontier is the decoder's position,
@@ -880,11 +851,6 @@ impl SessionState {
                 }
                 Err(e) => {
                     self.eof = true;
-                    // The frame was consumed from the stream even though the
-                    // copy failed — the frontier is the decoder's position,
-                    // not the delivery's. And every pump exit must stamp the
-                    // terminal snapshot (see `note_lookahead_gated_skip`'s
-                    // landmine); this error-halt is the eof state.
                     self.frontier_pts = decoded.pts_us;
                     let free = self.free.iter().filter(|&&f| f).count() as u32;
                     if let Ok(mut t) = self.timing.lock() {
@@ -1002,7 +968,7 @@ enum CopyOutcome {
 /// Releases a slot's keyed mutex (key 0) on scope exit. One is constructed only
 /// after `AcquireSync` has succeeded, so `ReleaseSync` MUST run on every path out
 /// of the copy region — normal return, an early `?`, or a panic unwinding through
-/// it. Without this, the session loop's `catch_unwind` (issue #6) would catch a
+/// it. Without this, the session loop's `catch_unwind` would catch a
 /// mid-copy panic and drop the pool with a slot's mutex still held, wedging
 /// Chromium's next read of that shared surface. [`release`](Self::release) runs it
 /// explicitly so the happy path can still surface a `ReleaseSync` error; `Drop` is
@@ -1036,18 +1002,13 @@ impl Drop for KeyedMutexRelease<'_> {
     }
 }
 
-/// Convert the decoded NV12 surface into a pool slot's RGBA8 texture (the A′
-/// own-shader pass), bracketed by the slot's keyed mutex (our GPU write vs.
-/// Chromium's read) and ffmpeg's device-context lock (decode thread vs. ALL of
-/// our context use — staging copy, draw, flush and the timing-query poll).
+/// Convert the decoded NV12 surface into a pool slot's RGBA8 texture, bracketed
+/// by the slot's keyed mutex (our GPU write vs. Chromium's read) and ffmpeg's
+/// device-context lock (decode thread vs. ALL of our context use — staging copy,
+/// draw, flush and the timing-query poll).
 ///
-/// The initial `AcquireSync` uses a finite timeout (`ACQUIRE_TIMEOUT_MS`)
-/// rather than `INFINITE`: on the happy path a free slot acquires in
-/// microseconds, so the timeout never trips — it exists only so a genuinely
-/// stuck slot can never wedge the session thread (and therefore `close`/join)
-/// forever. See `ACQUIRE_TIMEOUT_MS` / `DXGI_KEYED_MUTEX_WAIT_TIMEOUT` for why
-/// this must call the vtable function directly instead of the safe
-/// `IDXGIKeyedMutex::AcquireSync` wrapper.
+/// Acquire uses the finite `ACQUIRE_TIMEOUT_MS` via the raw vtable — see that
+/// constant and `DXGI_KEYED_MUTEX_WAIT_TIMEOUT`.
 ///
 /// # Safety
 /// `decoded.src_texture` must still be valid (no `next_frame` since it was
@@ -1065,10 +1026,7 @@ unsafe fn convert_frame_into_slot(
     let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
         .ok_or_else(|| "decoded D3D11 texture is null".to_string())?;
 
-    // Call the vtable function directly (bypassing `IDXGIKeyedMutex::AcquireSync`'s
-    // safe wrapper) so we see the raw HRESULT: the safe wrapper's `.ok()` treats
-    // any non-negative code — including `WAIT_TIMEOUT` — as `Ok(())`, which would
-    // make a timeout indistinguishable from actually holding the mutex.
+    // Raw vtable call — see `DXGI_KEYED_MUTEX_WAIT_TIMEOUT`.
     let acquire_hr: HRESULT = (Interface::vtable(&slot.keyed_mutex).AcquireSync)(
         Interface::as_raw(&slot.keyed_mutex),
         0,
@@ -1085,9 +1043,7 @@ unsafe fn convert_frame_into_slot(
         )));
     }
 
-    // The slot's mutex is now held. Guard its release so it runs on EVERY exit
-    // from here on — including a panic unwinding through the copy — so a slot is
-    // never dropped with its mutex still held (see issue #6 / `KeyedMutexRelease`).
+    // Mutex held from here — see `KeyedMutexRelease`.
     let mut release = KeyedMutexRelease {
         keyed_mutex: &slot.keyed_mutex,
         released: false,
@@ -1130,8 +1086,7 @@ fn emit(poke: &PokeSink, poke_val: PreviewGpuPoke) {
 
 /// Open the decoder + build the shared RGBA8 pool on ffmpeg's device, plus the
 /// session's NV12→RGBA conversion pass. Runs on the session thread (all
-/// COM/ffmpeg objects stay here). Adapted from the poc's
-/// `poc_open_video_stream` pool-creation block.
+/// COM/ffmpeg objects stay here).
 ///
 /// `matrix`/`full_range` are the stream's renderer-derived color tags: they
 /// select the conversion constants baked into this session's shader, so the
@@ -1159,8 +1114,7 @@ fn init_session(
 
         // Raw D3D11 only shares an NT-handle texture when NTHANDLE + KEYEDMUTEX
         // are set together. Shared textures reject initial data; fill via the
-        // conversion pass. RENDER_TARGET: each slot is the conversion's RTV
-        // (same flag pair the RGBA probe validated end-to-end).
+        // conversion pass. RENDER_TARGET: each slot is the conversion's RTV.
         let nt_km = (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
             | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -1271,7 +1225,7 @@ fn session_thread(
     }
 
     loop {
-        // Round-2 thread time-budget probe: time the recv itself (0 when a message
+        // Thread time-budget probe: time the recv itself (0 when a message
         // was already queued; ~RECV_TIMEOUT when the thread blocked idle) and tally
         // the wake reason, before dispatching. One uncontended lock/iteration.
         let t_recv = Instant::now();
@@ -1293,7 +1247,7 @@ fn session_thread(
         // stop: after an unwind the stream's libav state (and any half-done GPU
         // copy) is suspect, so we never touch `state` again — which is what makes
         // the `AssertUnwindSafe` capture of `&mut state` sound here. Any slot caught
-        // mid-copy already had its keyed mutex released by `copy_frame_into_slot`'s
+        // mid-copy already had its keyed mutex released by `convert_frame_into_slot`'s
         // `KeyedMutexRelease` guard, so the pool isn't left wedged.
         let flow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
             Ok(SessionMsg::RequestFrameAt(t)) => {
@@ -1421,8 +1375,7 @@ impl PreviewGpuRegistry {
             })
             .map_err(|e| format!("spawn preview-gpu session thread failed: {e}"))?;
 
-        // Block until the thread reports open success/failure. COM pointers never
-        // cross the channel — only the handle values + dimensions do.
+        // Block until the thread reports open success/failure.
         match init_rx.recv() {
             Ok(Ok(info)) => {
                 let (width, height) = (info.width, info.height);
@@ -1488,10 +1441,8 @@ impl PreviewGpuRegistry {
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-gpu session '{stream_id}'"))?;
-        // Bind before returning: the `MutexGuard` from `timing.lock()` borrows
-        // through `session` (and so `sessions`); dropping it here (end of this
-        // statement) rather than in the tail expression keeps it from outliving
-        // the `sessions` guard it's borrowed from.
+        // Bind first: the timing guard borrows through `sessions`, so it must
+        // drop before the return.
         let mut report = session.timing.lock_recover().drain();
         report.pool_slot_bytes =
             session.width as u64 * session.height as u64 * 4 * session.pool_size as u64;
@@ -1779,10 +1730,7 @@ mod tests {
 
     #[test]
     fn needs_seek_backstops_an_anchor_stranded_behind_the_frontier() {
-        // THE WEDGE. If the anchor ends up far behind the decoded frontier without
-        // a successful seek in between, `pump`'s lookahead gate (`frontier >=
-        // anchor + LOOKAHEAD_US`) is satisfied forever and the session never
-        // decodes again. Live-observed as 178 requests / 0 emits / 329 gate exits.
+        // THE WEDGE — see `needs_seek`'s frontier arm.
         // Re-requesting the SAME anchor must still be recognised as divergence.
         assert!(needs_seek(0, 0, 12_500_000, 3_000_000));
         // ...and must not depend on the anchor having moved backward this call.

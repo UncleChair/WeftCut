@@ -34,8 +34,7 @@ describe('serialize round-trip', () => {
 const RED = { r: 255, g: 0, b: 0, a: 255 }
 type Wire = { tracks: Array<{ layers: Array<Record<string, unknown>> }>; transitions: Array<Record<string, unknown>>; markers: Array<Record<string, unknown>>; composition: Record<string, unknown> }
 
-/** A saved project whose second clip starts 1 µs below frame 90 at 30/1 — the
- *  exact value the trim source-duration clamp used to persist. */
+/** A saved project whose second clip starts 1 µs below frame 90 at 30/1. */
 function offGridWire(): Wire {
   const g = seededGen()
   const p = blankProject(g, 'legacy')
@@ -213,10 +212,8 @@ describe('parseProject grid repair', () => {
 })
 
 // ── The anchor pair's tuple → tracks conversion ───────────────────────────────
-// `Transform.anchor` was a plain `[x, y]`; it is now two Animated tracks so the
-// pivot can be keyframed. Converted on LOAD instead of behind a schema bump,
-// because `schemaGate` rejects every version but the current one — a bump would
-// refuse to open every project that already exists.
+// Why it converts on load rather than behind a schema bump: see
+// `backfillAnchorTracks` in serialize.ts.
 describe('parseProject anchor backfill', () => {
   /** The wire transform of the project's only layer — wire-shaped (all fields
    *  `unknown`), because this suite writes legacy values validate would reject. */

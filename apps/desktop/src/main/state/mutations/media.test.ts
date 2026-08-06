@@ -38,7 +38,7 @@ describe('mediaItemTemplate', () => {
 })
 
 describe('applySeparateAudio', () => {
-  /** A-roll holds one Audio layer L1 (id #6 — #1-3 blank, #4 Initial NOT consumed here, see note). */
+  /** A-roll holds one Audio layer (id #4 — #1-3 blank). */
   function withAudio(): { p: Project; gen: IdGen; a1: string } {
     const gen = seededGen()
     const p = blankProject(gen, 's') // #1 A #2 B #3 project

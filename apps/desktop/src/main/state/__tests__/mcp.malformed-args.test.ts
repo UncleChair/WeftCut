@@ -1,12 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createTsActorHost } from '../ts-actor-host'
 
-// Regression for the 2026-06-25 soak finding: the actor.mcpCall dedicated arms
-// (add_marker / add_color_layer / add_video_layer) cast non-uuid wire args with a
-// raw `as` (color/numbers/label) and committed garbage to the actor instead of
-// rejecting invalid_params before the commit. A struct-shaped bad arg (a string
-// `color`) then wedged the actor. These assert the malformed input is rejected at
-// the arg boundary with NO state mutation.
+// The actor.mcpCall dedicated arms must reject malformed wire args at the arg
+// boundary, before any commit — invalid_params out, NO state mutation.
 function makeDeps() {
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
   return {

@@ -3,7 +3,7 @@
 // derivation, and per-frame coalescing. The GPU lane delivers ImageBitmaps
 // (decoder-produced conversion — trustworthy); the SW lane delivers CPU-plane
 // frames — NativeNv12Frames, or TenBitFrames for a 10-bit VideoToolbox-lane
-// session (issue #10 ticket 03) — which convert in OUR shaders, never the
+// session — which convert in OUR shaders, never the
 // browser's (see nv12Frame.ts / tenBitFrame.ts / ADR 0032).
 import type { NativeNv12Frame } from "../nv12Frame";
 import type { TenBitFrame } from "../tenBitFrame";
@@ -36,8 +36,8 @@ export interface DecodeTransport {
   onEof(cb: () => void): void;
   /// Begins teardown. GPU transports resolve only after main has closed the
   /// native session and released its admission lease; callers that intend to
-  /// open a replacement session must await it. Other call sites may keep the
-  /// historical fire-and-forget posture.
+  /// open a replacement session must await it. Other call sites may ignore the
+  /// returned promise.
   dispose(): void | Promise<void>;
   /// Diagnostics: per-frame preload handoff timings. Hardware lane only — the
   /// SW transport has no preload stage to stamp, so it does not implement this.

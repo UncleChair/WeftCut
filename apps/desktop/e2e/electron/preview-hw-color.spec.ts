@@ -10,9 +10,8 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from '.
 // same kr/kb source as Nv12Ingest / yuv10.ts), and shares sRGB-passthrough
 // RGBA that the preload's createImageBitmap copies byte-for-byte (proven by
 // the poc rgba probe). This spec is the lane's RESIDENT pixel-fidelity gate —
-// historically the shared-texture channel had none: preview-hw-conformance's
-// parameterization covered the copy-back lanes (nvdec/vaapi), which ride the
-// SW NV12 transport, never this one.
+// the sibling SSIM gate (preview-hw-conformance) is structurally blind to
+// matrix/range; this spec owns that.
 //
 // Four legs — the full matrix the native shader must honor per-session:
 //   709ltd / 601ltd / 709full / 601full  (H.264 charts, npm run fixtures)

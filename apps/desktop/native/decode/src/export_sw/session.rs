@@ -9,8 +9,8 @@
 //! is [`serve_range`]; the flow-control contract is [`CreditWindow`].
 //!
 //! Does NOT own the decode surface (`preview_sw::decoder`) or any VideoFrame
-//! pool. See the export-decode engine spec, decisions 3/6, for why this contract
-//! differs from the preview path.
+//! pool. See ADR 0030 and ADR 0033 for why this contract differs from the
+//! preview path.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -21,10 +21,10 @@ use std::thread::{self, JoinHandle};
 use crate::preview_sw::decoder::{SwColorTags, SwFrame, SwOutFormat, SwVideoStream};
 use crate::recover::{panic_message, LockExt};
 
-/// Default credits (frames in flight) when a caller does not specify one. The
-/// spec's ~4–8 window: bounds a 4K 10-bit export's main-process frame memory to
-/// ~100–200 MB while keeping the decoder far enough ahead of the encoder that it
-/// never idles between chunks.
+/// Default credits (frames in flight) when a caller does not specify one: bounds
+/// a 4K 10-bit export's main-process frame memory to ~100–200 MB while keeping
+/// the decoder far enough ahead of the encoder that it never idles between
+/// chunks. See ADR 0033.
 pub const DEFAULT_CREDIT_WINDOW: u32 = 6;
 
 /// Largest number of backward re-seek attempts when a container's seek overshoots
@@ -125,10 +125,7 @@ struct CreditInner {
     closed: bool,
 }
 
-/// A counting semaphore bounding frames in flight. The producer thread
-/// `acquire`s one credit per emitted frame (parking when none remain); the
-/// consumer `release`s credits as it takes frames. `close` unblocks a parked
-/// producer for teardown.
+/// A counting semaphore bounding frames in flight.
 struct CreditWindow {
     lock: Mutex<CreditInner>,
     cv: Condvar,
@@ -223,9 +220,9 @@ impl RangeState {
 }
 
 /// Robust seek: land on a keyframe AT/BEFORE `target_us` and return the first
-/// decoded frame there (the initial candidate for the forward scan), re-seeking
-/// earlier with a growing margin if an index-less container overshoots. Returns
-/// `Ok(None)` if the seek landed at EOF. Mirrors `preview_sw`'s inline retry.
+/// decoded frame there — the initial candidate for the forward scan. `Ok(None)`
+/// means the seek landed at EOF. See [`MAX_SEEK_RETRIES`] for why an overshoot
+/// is retried. Mirrors `preview_sw`'s inline retry.
 fn robust_seek_and_probe(
     stream: &mut SwVideoStream,
     target_us: i64,
@@ -259,10 +256,8 @@ fn robust_seek_and_probe(
 /// window.
 ///
 /// Coverage is a plain forward scan because `next_frame` already yields
-/// presentation order (monotonic `pts_us`): seek to the GOP key at/before `a`,
-/// skip frames ending at/before `a` (decoded only as references), emit through
-/// `b`, then STOP at the first frame past `b` — no stop-key packet bookkeeping,
-/// no mid-flush. A range is a *forward* continuation when `a >= last_range_a`,
+/// presentation order (monotonic `pts_us`) — no stop-key packet bookkeeping, no
+/// mid-flush. A range is a *forward* continuation when `a >= last_range_a`,
 /// resuming on the previous range's stopped-on frame ([`RangeState::pending`])
 /// with no prefix re-feed; otherwise (backward clip-reuse jump) it re-seeks.
 fn serve_range(

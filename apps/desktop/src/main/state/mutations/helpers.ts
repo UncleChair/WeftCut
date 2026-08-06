@@ -75,8 +75,7 @@ export function checkTrackLock(p: Project, id: Uuid): void {
 }
 
 /** Shift every animated track's keyframes by deltaUs (trim IN glues keyframes to
- *  content). All-Static in the Phase-2a corpus, so this is a no-op there; written
- *  for fidelity with the Rust mutation logic. */
+ *  content). */
 export function shiftLayerKeyframes(params: LayerParams, deltaUs: number): void {
   forEachAnimatedF64(params, (a) => shiftKeyframes(a, deltaUs))
   forEachAnimatedRgba(params, (a) => shiftKeyframes(a, deltaUs))

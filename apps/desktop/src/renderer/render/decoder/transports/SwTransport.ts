@@ -14,20 +14,12 @@
 // (`Nv12Ingest` / `TenBitIngest`).
 //
 // preview_sw sends no eof/error to the renderer mid-stream (log-only in
-// main) — `onError` fires ONLY on `open()` failure, and `onEof` is a
-// no-op subscription kept solely to satisfy the `DecodeTransport` interface.
+// main) — `onError` fires ONLY on `open()` failure.
 //
 // This is the transport half only — no FrameRing, no first-frame/fatal-error
 // hooks, no idle bookkeeping. Those stay with `FfmpegSource` (the caller),
 // which owns exactly one `DecodeTransport` at a time and sets the ring's
 // eviction anchor itself (see `requestFrameAt` below).
-//
-// It can also carry a hardware COPY-BACK accel (Linux NVDEC/VAAPI, macOS
-// VideoToolbox): the caller passes a `{ lane, device }` accel into the
-// constructor and it rides through on `open()`, telling main to decode on the
-// GPU/OS media engine and copy frames back to CPU. The frame path is IDENTICAL
-// NV12 either way — copy-back is not a distinct frame format, just a different
-// decode source — so nothing below changes.
 import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
 import { nv12FrameFromBytes } from "../nv12Frame";
 import { tenBitFrameFromBytes } from "../tenBitFrame";
@@ -57,7 +49,9 @@ export class SwTransport implements DecodeTransport {
   /// `accel`: optional hardware copy-back accel (Linux NVDEC/VAAPI, macOS
   /// VideoToolbox), forwarded to main on `open()` so the GPU/OS media engine
   /// decodes and copies NV12 back to CPU. Absent (software) means no accel rides
-  /// through and the native path stays plain CPU decode.
+  /// through and the native path stays plain CPU decode. The frame path is
+  /// IDENTICAL NV12 either way — copy-back is not a distinct frame format, just
+  /// a different decode source.
   ///
   /// `scaleDiv`: optional playback-resolution divisor (1 | 2 | 4). Native
   /// downscales each frame before it crosses IPC — 4K NV12 is 12.44 MB/frame at
@@ -109,7 +103,7 @@ export class SwTransport implements DecodeTransport {
       // this is the ONLY SW error signal (see file header).
       const reason = err instanceof Error ? err.message : String(err);
       // A late open-rejection after dispose must not fire a stale fatal into a
-      // consumer that has already moved on (mirrors the old handle's fireFatal
+      // consumer that has already moved on (mirrors `FfmpegSource.fireFatal`'s
       // _disposed guard). Still rethrow so the caller's await settles.
       if (!this._disposed) this.errorCb?.(reason);
       throw err;
@@ -200,8 +194,8 @@ export class SwTransport implements DecodeTransport {
   /// Drop the same-target dedup latch. Without this, a ring flush followed by a
   /// request for the EXACT last-sent target (frame-grid snapping makes exact
   /// repeats routine) is swallowed here while the ring it should refill sits
-  /// empty — the two latches were introduced by different commits and share no
-  /// reset point unless the caller provides one.
+  /// empty — the ring flush and this latch share no reset point unless the
+  /// caller provides one.
   resetRequestDedup(): void {
     this.lastSentTargetUs = null;
   }
