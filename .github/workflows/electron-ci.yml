@@ -38,9 +38,15 @@ jobs:
         working-directory: apps/desktop
 
     steps:
-      - uses: actions/checkout@v6
+      # persist-credentials: false — no job here pushes, fetches, or otherwise
+      # talks to the remote after checkout (the one `git` call is a local
+      # `git diff` in the catalog gate), so the token has no reason to sit in
+      # .git/config where any later step or dependency script could read it.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.23.0'
           cache: 'npm'
@@ -48,18 +54,18 @@ jobs:
 
       # Third-party actions pinned to immutable commit SHAs (supply-chain
       # hardening); version in the trailing comment. Bump deliberately at a
-      # checkpoint, not automatically.
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable channel
+      # checkpoint, not automatically. GitHub-owned actions/* stay on their
+      # major tag — same policy as before.
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
         with:
           # Once pinned to a SHA the @<ref> name no longer signals the channel
           # (that was the magic of @stable), so name the toolchain explicitly.
           toolchain: stable
           # The renderer's shared "WYSIWYG math" compiles to wasm (weftcut-eval);
-          # build:wasm — run by predev/prebuild/pretest — needs this target. Every
-          # OS leg runs `npm run build` (prebuild → build:wasm), so all need it.
+          # the build:wasm step below needs this target, and every OS leg runs it.
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/native
 
@@ -74,9 +80,31 @@ jobs:
       # npm ci at the workspace root: root package-lock.json covers all
       # workspaces including apps/desktop. Running at apps/desktop would fail
       # because there is no apps/desktop/package-lock.json.
+      #
+      # The repo's .npmrc sets ignore-scripts=true, so this install runs no
+      # lifecycle scripts at all. Anything an install would otherwise do
+      # implicitly is an explicit step below.
       - name: Install dependencies
         working-directory: .
         run: npm ci
+
+      # Case in point: electron's own postinstall is what downloads
+      # node_modules/electron/dist, and it never fires. The e2e suite launches
+      # Electron through Playwright's `_electron` with no executablePath — it
+      # resolves `require('electron')` — so skipping this fails the whole suite
+      # at launch, long after everything else has gone green.
+      - name: Install Electron binary
+        run: npm run electron:install
+
+      # The renderer imports src/renderer/eval/evalWasm.generated.ts, a
+      # gitignored build artifact produced by build:wasm. typecheck/build/test
+      # each chain build:wasm themselves, so this step is not what makes them
+      # work — it is here to fail FAST. As the job's first cargo invocation it
+      # turns a missing wasm32 target or a broken eval crate into a 30-second
+      # red instead of one surfacing twelve minutes in, behind the addon builds.
+      # Warm, the repeats cost a cargo no-op.
+      - name: Build eval wasm leaf
+        run: npm run build:wasm
 
       - name: Build napi addon
         run: npm run napi:build
@@ -87,7 +115,7 @@ jobs:
       # busts the cache. (path is repo-root-relative; cache ignores the job's
       # working-directory default.)
       - name: Cache ffmpeg
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: apps/desktop/resources/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
@@ -114,14 +142,29 @@ jobs:
       # ── @weftcut/native-decode (Windows + Linux + macOS) ───────────────────
       # All three OSes fetch their LGPL-shared ffmpeg asset and build the addon;
       # per-OS runtime resolution differs (see napi-build-decode.mjs).
-      - name: Cache ffmpeg-lgpl
-        uses: actions/cache@v5
+      #
+      # Split restore/save (not the combined actions/cache) because the combined
+      # action's post-step does NOT save when the job later fails. macOS has no
+      # prebuilt LGPL-shared asset and compiles ffmpeg from source (~10 min), so
+      # under the combined action every red run threw that work away and the next
+      # run paid for it again. Saving immediately after the fetch persists it
+      # regardless of what a later step does.
+      - name: Restore ffmpeg-lgpl cache
+        id: cache-ffmpeg-lgpl
+        uses: actions/cache/restore@v6
         with:
           path: apps/desktop/resources/ffmpeg-lgpl
           key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
 
       - name: Fetch LGPL ffmpeg (native-decode)
         run: npm run ffmpeg:fetch-lgpl
+
+      - name: Save ffmpeg-lgpl cache
+        if: steps.cache-ffmpeg-lgpl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ${{ steps.cache-ffmpeg-lgpl.outputs.cache-primary-key }}
 
       - name: Build native-decode addon
         run: npm run napi:build:decode
@@ -175,11 +218,12 @@ jobs:
         shell: bash
         run: npm run mcp:catalog:check
 
-      # Build the renderer + main bundles with the E2E hook env var set.
-      # Must use bash shell so the inline env-var prefix works on Windows.
+      # Build the renderer + main bundles with the E2E hook compiled in.
+      # build:e2e sets VITE_WEFTCUT_E2E itself, so this needs no bash shell for
+      # an inline env-var prefix and cannot drift from what a developer runs —
+      # run-e2e.mjs's preflight names this exact command when out/ is stale.
       - name: Build app (E2E mode)
-        shell: bash
-        run: VITE_WEFTCUT_E2E=1 npm run build
+        run: npm run build:e2e
 
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
@@ -269,10 +313,12 @@ jobs:
           retention-days: 14
           path: apps/desktop/test-results/**
 
-      # Sign-free packaging. napi:build already ran above (its .node artefact
-      # persists in node_modules/@weftcut/core); skip re-compiling Rust by
-      # running electron:build (clean non-E2E renderer bundle, no
-      # VITE_WEFTCUT_E2E) then electron-builder directly.
+      # Sign-free packaging. Deliberately NOT `npm run package`: that script
+      # re-runs napi:build + napi:build:decode for a one-shot local package,
+      # and both addons already built above (their .node artefacts persist in
+      # node_modules/@weftcut/{core,native-decode}). Run the two remaining
+      # halves directly — `build` for a clean non-E2E renderer bundle (no
+      # VITE_WEFTCUT_E2E), then electron-builder.
       - name: Package (unsigned)
         run: npm run build && npx electron-builder --publish never
 
@@ -303,14 +349,18 @@ jobs:
         working-directory: apps/desktop
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.23.0'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
+      # This job only runs the pure-JS SSIM comparator, so the install exists
+      # solely for pngjs — no addon, no wasm, no electron binary needed.
       - name: Install dependencies
         working-directory: .
         run: npm ci
