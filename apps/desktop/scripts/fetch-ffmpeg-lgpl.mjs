@@ -239,6 +239,34 @@ function sha256Of(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
+/** Fetch `url` to `dest`, retrying like the BtbN path below. The mac leg has a
+ *  single upstream (ffmpeg.org publishes the only LGPL-clean source tarball) so
+ *  there is no mirror to fall through to, and one unlucky connect sinks the
+ *  build — CI has already lost a run to `curl: (28) Failed to connect to
+ *  ffmpeg.org port 443 after 75022 ms`. --connect-timeout caps that stall at 20 s
+ *  so the attempts are cheap; --retry-connrefused makes curl's own --retry cover
+ *  connect failures (it only retries transient HTTP/transfer errors otherwise),
+ *  and the outer loop covers whatever curl gives up on. sha256 stays the
+ *  integrity gate on whatever lands. */
+function curlWithRetries(url, dest) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      console.log(`Retry ${attempt}/${MAX_ATTEMPTS}...`)
+      rmSync(dest, { force: true })
+    }
+    try {
+      execSync(
+        'curl -fL --progress-bar --connect-timeout 20 --retry 3 --retry-connrefused ' +
+          `--retry-delay 5 -o "${dest}" "${url}"`,
+        { stdio: 'inherit' },
+      )
+      return
+    } catch (err) {
+      if (attempt === MAX_ATTEMPTS) throw err
+    }
+  }
+}
+
 /** Rewrite every real dylib in `libDir`: LC_ID_DYLIB and every libav*
  * cross-reference go from the absolute --prefix install paths to
  * `@loader_path/<name>`, so the staged tree is relocatable and a .node linked
@@ -286,7 +314,7 @@ function buildMacFromSource(cfg, dest, manifestPath) {
   mkdirSync(work, { recursive: true })
   try {
     rmSync(archivePath, { force: true })
-    execSync(`curl -fL --progress-bar -o "${archivePath}" "${url}"`, { stdio: 'inherit' })
+    curlWithRetries(url, archivePath)
     const got = sha256Of(archivePath)
     if (got !== sha256) {
       throw new Error(`ffmpeg-lgpl(mac): sha256 mismatch for ${asset}\n  expected ${sha256}\n  got      ${got}`)
