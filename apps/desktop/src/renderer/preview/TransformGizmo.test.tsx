@@ -1119,8 +1119,18 @@ describe("a second gesture inside the commit round trip", () => {
     });
     await waitFor(() => expect(transformOverrideFor("l1")).toBeUndefined());
     // And the box is unmoved across the hand-off — the whole point of holding
-    // the override past the commit.
-    expect(el.getAttribute("points")).toBe("20,10 340,10 340,190 20,190");
+    // the override past the commit. Waited, like every other box assertion in
+    // this file: the override lifts SYNCHRONOUSLY (a store write in the summary
+    // effect) while `points` is written by the rAF placement loop, so the wait
+    // above returns before any frame has necessarily redrawn the box. Read
+    // synchronously it saw whatever was last drawn, and on a loaded CI runner
+    // that was the pristine "0,0 320,0 320,180 0,180" — the INITIAL box, not a
+    // snap-back. What this pins is that the box SETTLES unmoved; the sync form
+    // pinned no more than that, it just raced the redraw instead of ordering
+    // against it.
+    await waitFor(() =>
+      expect(el.getAttribute("points")).toBe("20,10 340,10 340,190 20,190"),
+    );
   });
 
   it("hands authority back to an external writer once nothing is outstanding", async () => {
