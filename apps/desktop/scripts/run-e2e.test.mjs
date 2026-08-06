@@ -3,7 +3,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
-import { planE2ERuns, prepareE2EEnv, splitGateFlags } from './run-e2e.mjs'
+import { planE2ERuns, prepareE2EEnv, splitFullFlag, splitGateFlags } from './run-e2e.mjs'
+
+test('--full is consumed as a tier selector and never reaches Playwright', () => {
+  const { full, args } = splitFullFlag(['--full', '--project=parallel', 'audio.spec.ts'])
+  assert.equal(full, true)
+  assert.deepEqual(args, ['--project=parallel', 'audio.spec.ts'])
+  const without = splitFullFlag(['--project=parallel'])
+  assert.equal(without.full, false)
+  assert.deepEqual(without.args, ['--project=parallel'])
+})
 
 test('unscoped E2E runs machine-exclusive tests before the parallel project', () => {
   assert.deepEqual(planE2ERuns(['dock-workspace.spec.ts']), [
@@ -117,7 +126,17 @@ test('preflight wires bundled ffmpeg, PATH, and the local decode gates', () => {
     `${path.join(root, 'resources', 'ffmpeg', 'linux')}${path.delimiter}/usr/bin`,
   )
   assert.equal(env.WEFTCUT_DECODE_E2E, '1')
-  assert.equal(notes.length, 2)
+  assert.equal(notes.length, 3)
+})
+
+test('the preflight always names which e2e tier is about to run', () => {
+  // A silently shrunken run is indistinguishable from tests having vanished, so
+  // BOTH tiers announce themselves — not just the non-default one.
+  const root = makeRoot()
+  const lean = prepareE2EEnv({ DISPLAY: ':0' }, LINUX(root))
+  assert.match(lean.notes.join('\n'), /@matrix cells excluded/)
+  const full = prepareE2EEnv({ DISPLAY: ':0', WEFTCUT_E2E_FULL: '1' }, LINUX(root))
+  assert.match(full.notes.join('\n'), /@matrix cells included/)
 })
 
 test('an explicit FFMPEG wins and leaves PATH untouched', () => {

@@ -164,6 +164,13 @@ function probeVideoStream(file: string, entries: string): Record<string, string>
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+// Unlike the audio sweeps, these seven are NOT redundant combinations — each
+// drives its own encoder/muxer path. The split below is therefore a deliberate
+// coverage tradeoff, not a free cut: the DELIVERY codecs a routine change can
+// plausibly break (AV1, both H.264 lanes, HEVC) keep their per-PR slot, while
+// the INTERMEDIATE/specialty targets (10-bit HEVC, ProRes, DNxHR) — shipped,
+// low-churn, and untouched by the ordinary export path — carry @matrix and run
+// on the scheduled sweep instead. Move one back the moment it starts changing.
 test.describe('multi-codec export smoke (Electron)', () => {
 
   // -------------------------------------------------------------------------
@@ -322,7 +329,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // precision gates via analyzeGradientRow. The smoke here proves pipeline
   // completion + codec-shape (hevc / yuv420p10le or p010le / Main 10 profile).
   // -------------------------------------------------------------------------
-  test('10-bit HEVC export completes with correct codec shape (Electron)', async () => {
+  test('10-bit HEVC export completes with correct codec shape (Electron) @matrix', async () => {
     test.skip(
       !existsSync(SOURCE_10BIT),
       `10-bit source not found at ${SOURCE_10BIT} (set WEFTCUT_TEST_MEDIA or run generate-fixtures.mjs)`,
@@ -441,7 +448,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // 10-bit (same f16/PackYuvPlanar pipeline cost) even though the source here
   // is 8-bit test_1080p_30fps.mp4.
   // -------------------------------------------------------------------------
-  test('ProRes 422 export lands in MOV with 10-bit 4:2:2 (Electron)', async () => {
+  test('ProRes 422 export lands in MOV with 10-bit 4:2:2 (Electron) @matrix', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(600000)
     const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'prores.mov')
@@ -501,7 +508,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // codec FAMILY name `dnxhd`, with the specific profile string carrying the
   // "DNXHR SQ" flavor), and frame-aligned (SSIM ≥ 0.6).
   // -------------------------------------------------------------------------
-  test('DNxHR SQ export lands in MOV as 8-bit 4:2:2 (Electron)', async () => {
+  test('DNxHR SQ export lands in MOV as 8-bit 4:2:2 (Electron) @matrix', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(300000)
     const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'dnxhr.mov')

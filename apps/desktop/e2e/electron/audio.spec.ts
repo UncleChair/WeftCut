@@ -32,9 +32,16 @@ const SOURCE = fixture('test_1080p_30fps_audio.mp4')
 // source (per-second tone markers F_k = 400 + 120k Hz), exports to the target
 // container, and verifies per-second alignment + A/V drift + tone SNR via
 // `media_conformance --audio`.
+// The two axes are independent — fps exercises the video-grid-vs-audio sync
+// math, container exercises the mux path — so the full 3x3 re-runs each axis
+// three times over. The diagonal (30/mp4, 60/mkv, 120/mov) covers every fps AND
+// every container once, which catches any single-factor regression; the other
+// six cells only add joint coverage and ride the @matrix sweep.
 const FPS = [30, 60, 120]
 const CONTAINERS = ['mp4', 'mkv', 'mov']
-const CASES = FPS.flatMap((fps) => CONTAINERS.map((container) => ({ fps, container })))
+const CASES = FPS.flatMap((fps, i) =>
+  CONTAINERS.map((container, j) => ({ fps, container, diagonal: i === j })),
+)
 
 test.describe('audio conformance matrix (Electron)', () => {
   let app: ElectronApplication | undefined
@@ -52,7 +59,8 @@ test.describe('audio conformance matrix (Electron)', () => {
 
   for (const c of CASES) {
     const source = fixture(`test_1080p_${c.fps}fps_audio.mp4`)
-    test(`${c.fps}fps source -> ${c.container} export stays aligned + synced + faithful`, async () => {
+    const tag = c.diagonal ? '' : ' @matrix'
+    test(`${c.fps}fps source -> ${c.container} export stays aligned + synced + faithful${tag}`, async () => {
       test.skip(!existsSync(source), `audio source not found at ${source}`)
       test.setTimeout(240000)
       const output = path.join(
@@ -99,7 +107,12 @@ test.describe('audio conformance matrix (Electron)', () => {
 // per-second tone markers baked into the fixtures. The mp3 fixture carries
 // attached_pic cover art — the real-world mp3 shape that detect_kind must
 // classify as Audio, not Video (the regression guard).
+// Every format runs the identical import -> conform -> Audio layer -> export
+// pipeline; only the demuxer underneath differs. wav (uncompressed baseline) and
+// mp3 (the attached_pic detect_kind guard described above) are the two that earn
+// a per-PR slot — the rest ride the @matrix sweep.
 const FORMATS = ['wav', 'mp3', 'flac', 'm4a', 'ogg']
+const CORE_FORMATS = new Set(['wav', 'mp3'])
 
 test.describe('audio-only format matrix (Electron)', () => {
   let app: ElectronApplication | undefined
@@ -117,7 +130,8 @@ test.describe('audio-only format matrix (Electron)', () => {
 
   for (const fmt of FORMATS) {
     const source = fixture(`test_tones_10s.${fmt}`)
-    test(`${fmt} source -> audio export stays aligned + faithful`, async () => {
+    const tag = CORE_FORMATS.has(fmt) ? '' : ' @matrix'
+    test(`${fmt} source -> audio export stays aligned + faithful${tag}`, async () => {
       test.skip(!existsSync(source), `audio source not found at ${source}`)
       test.setTimeout(220000)
       const output = path.join(tmpDir('weftcut-e2e-audiofmt-out-'), `${fmt}.m4a`)

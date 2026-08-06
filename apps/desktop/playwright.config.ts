@@ -1,4 +1,18 @@
 import { defineConfig } from '@playwright/test'
+
+/// `@matrix` marks a combinatorial cell whose axes are already covered
+/// individually by the cells that stay (see audio.spec.ts), or a low-churn
+/// specialty target (see export_codecs.spec.ts). They are the expensive part of
+/// the suite — every one drives a real encode — and they are excluded by
+/// default so the per-PR run stays inside the job budget. `WEFTCUT_E2E_FULL=1`
+/// puts them back; electron-ci sets it on its scheduled sweep, and
+/// `npm run e2e -- --full` is the local equivalent.
+///
+/// This is a project-level grepInvert rather than a CLI `--grep-invert` so the
+/// command line stays free for a developer to filter with, and so it composes
+/// with the serial/parallel split below instead of overwriting it.
+const MATRIX_EXCLUDED = process.env.WEFTCUT_E2E_FULL ? [] : [/@matrix/]
+
 export default defineConfig({
   testDir: 'e2e/electron',
   timeout: 60_000,
@@ -14,7 +28,11 @@ export default defineConfig({
   /// Fresh throwaway userData per launchApp() (auto-removed on app.close()) is
   /// what makes the parallel project safe.
   projects: [
-    { name: 'serial', grep: /@serial/, workers: 1 },
-    { name: 'parallel', grepInvert: /@serial/, workers: process.env.CI ? 2 : '50%' },
+    { name: 'serial', grep: /@serial/, grepInvert: MATRIX_EXCLUDED, workers: 1 },
+    {
+      name: 'parallel',
+      grepInvert: [/@serial/, ...MATRIX_EXCLUDED],
+      workers: process.env.CI ? 2 : '50%',
+    },
   ],
 })

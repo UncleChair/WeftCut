@@ -58,11 +58,15 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
 ### Run
 
 ```
-npm run e2e        # full suite: @serial project, then parallel project
-npm run e2e -- color-conformance.spec.ts        # one file
+npm run e2e        # default tier: @serial project, then parallel project
+npm run e2e -- --full                            # + the @matrix cells
+npm run e2e -- color-conformance.spec.ts         # one file
 npm run e2e -- -g "role"                         # by title grep
 npm run e2e -- --project=serial                  # only the @serial gates
 ```
+
+The preflight always prints which tier it is running, so a smaller-than-expected
+test count is never a mystery.
 
 The Rust analyzer (`media_conformance`) used by the export/conformance specs,
 fixture generation, and per-gate details are documented in
@@ -100,6 +104,31 @@ an explicit `--project=...` remains a single targeted invocation.
 Tag a new spec `@serial` in its test title whenever it measures time, drives
 the GPU/HW lane, or captures determinism reference output; untagged specs must
 tolerate running alongside other app instances.
+
+## Tiers: the `@matrix` sweep
+
+Both projects also drop titles tagged `@matrix` unless `WEFTCUT_E2E_FULL=1` is
+set (`--full` does that for you). electron-ci runs the default tier per push/PR
+and the full tier on its nightly schedule and on manual dispatch.
+
+The tier exists because the suite is dominated by a small number of tests that
+drive a **real encode**, and the windows leg outgrew its job timeout once CI
+started reaching e2e at all. Two kinds of test carry the tag:
+
+- **Combinatorial cells** whose axes are already covered individually. The audio
+  conformance matrix is 3 fps × 3 containers, but fps and container are
+  independent factors, so the diagonal (30/mp4, 60/mkv, 120/mov) hits every
+  level of both; the other six only add joint coverage. Likewise the audio-only
+  format sweep keeps wav and mp3 and tags flac/m4a/ogg.
+- **Low-churn specialty targets** — 10-bit HEVC, ProRes, DNxHR in
+  `export_codecs.spec.ts`. These are *not* redundant (each drives its own
+  encoder path), so tagging them is a deliberate coverage tradeoff rather than a
+  free cut. Move one back to the default tier as soon as it starts changing.
+
+Do not tag a test `@matrix` just because it is slow. The tag says "another test
+in the default tier already covers this code path on this axis", or "this path
+is shipped and does not move". A unique regression guard belongs in the default
+tier however long it takes.
 
 ## Layout
 

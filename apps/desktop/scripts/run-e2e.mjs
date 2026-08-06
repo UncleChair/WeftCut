@@ -30,6 +30,15 @@ export function splitGateFlags(args) {
   return { gates: requested, args: args.filter((arg) => !(arg in EXTRA_GATES)) }
 }
 
+/** `--full` restores the `@matrix` cells that playwright.config.ts excludes by
+ * default (the combinatorial audio sweeps and the specialty codec targets — the
+ * expensive part of the suite, since each one drives a real encode). It selects
+ * a tier rather than naming a Playwright option, so like the gate flags it has
+ * to leave the argv before Playwright sees it. */
+export function splitFullFlag(args) {
+  return { full: args.includes('--full'), args: args.filter((arg) => arg !== '--full') }
+}
+
 /** Full runs execute the machine-exclusive project first, then the parallel
  * project. An explicitly selected project remains a single targeted run. */
 export function planE2ERuns(args) {
@@ -130,6 +139,16 @@ function checkE2EBuild({ root }, errors) {
     )
 }
 
+/** Name the tier that is about to run. Without this the test count moves for no
+ * visible reason and a shrunken run reads as tests having gone missing. */
+function noteMatrixTier(env, notes) {
+  notes.push(
+    env.WEFTCUT_E2E_FULL
+      ? 'WEFTCUT_E2E_FULL=1 — @matrix cells included (full combinatorial sweep)'
+      : '@matrix cells excluded (combinatorial + specialty-codec sweep) — pass --full to run them',
+  )
+}
+
 /** Wire the per-platform real-run config into a copy of the environment and
  * collect fatal preflight errors. Pure apart from fs reads — exported for the
  * node:test suite, which points `root` at a fixture tree. */
@@ -141,6 +160,7 @@ export function prepareE2EEnv(
   const notes = []
   wireFfmpeg(env, { platform, root, hasPathFfmpeg }, notes)
   wireDecodeGates(env, { platform, root }, notes)
+  noteMatrixTier(env, notes)
   checkE2EBuild({ root }, errors)
   // CI wraps the run in xvfb-run (which sets DISPLAY for the child); locally a
   // missing DISPLAY only surfaces as Electron launch failures deep in a spec.
@@ -152,8 +172,12 @@ export function prepareE2EEnv(
 }
 
 export function runE2E(argv = process.argv.slice(2)) {
-  const { gates, args } = splitGateFlags(argv)
-  const { env, errors, notes } = prepareE2EEnv({ ...process.env })
+  const { gates, args: afterGates } = splitGateFlags(argv)
+  const { full, args } = splitFullFlag(afterGates)
+  const { env, errors, notes } = prepareE2EEnv({
+    ...process.env,
+    ...(full ? { WEFTCUT_E2E_FULL: '1' } : {}),
+  })
   for (const note of notes) console.log(`[e2e preflight] ${note}`)
   for (const [flag, gate] of Object.entries(EXTRA_GATES))
     if (!gates.includes(flag))

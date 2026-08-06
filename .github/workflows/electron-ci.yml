@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Nightly full sweep. The per-PR e2e run drops the `@matrix` cells — the
+  # combinatorial audio sweeps and the specialty codec targets, every one of
+  # which drives a real encode — because the suite otherwise overruns the job
+  # budget. This trigger is where they still get covered. Same job, no duplicated
+  # setup: only WEFTCUT_E2E_FULL differs (see the e2e step).
+  schedule:
+    - cron: '0 4 * * *' # 04:00 UTC daily
   workflow_dispatch:
 
 # Least-privilege token: this workflow only reads the repo, builds, tests, and
@@ -285,6 +292,12 @@ jobs:
         shell: bash
         env:
           WEFTCUT_E2E_NO_EXPORT: '1'
+          # The @matrix tier (see playwright.config.ts) runs only on the nightly
+          # sweep and on a manual dispatch — never per-PR, where it is what
+          # pushed the windows leg past the job timeout.
+          WEFTCUT_E2E_FULL: >-
+            ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+            && '1' || '' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             xvfb-run -a npm run e2e
