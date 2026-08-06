@@ -144,9 +144,9 @@ describe("FrameRing.frameAt", () => {
 
 describe("FrameRing.push", () => {
   it("keeps order with monotonic PTS (no B-frames)", () => {
-    // Fast path: every push has PTS strictly greater than the tail.
-    // The implementation skips the sort entirely; the assertion is
-    // that order is still correct, which proves no behavior change.
+    // Fast path: every push has PTS strictly greater than the tail, so the
+    // implementation skips the sort entirely. `frameAt` must still return
+    // the correct frame.
     const r = new FrameRing();
     pushFrames(r, 60, 16667);
     expect(ptsOf(r.frameAt(0))).toBe(0);
