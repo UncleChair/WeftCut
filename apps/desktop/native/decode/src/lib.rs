@@ -12,3 +12,5 @@ mod media_time;
 mod preview_gpu;
 mod preview_sw;
 mod recover;
+#[cfg(test)]
+mod test_wait;

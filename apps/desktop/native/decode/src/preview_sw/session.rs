@@ -801,6 +801,7 @@ impl PreviewSwRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_wait::wait_for;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -1013,10 +1014,14 @@ mod tests {
         );
         reg.open("s1".into(), p.into()).expect("open");
         let _ = reg.request_frame_at("s1".into(), 0);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // Polled, not a fixed 300 ms — see test_wait. The export-lane twin of
+        // this test failed on a loaded windows CI runner with an empty vec, and
+        // this one carried the identical sleep-then-assert shape.
+        let saw_panic_poke =
+            wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
         let errs = errors.lock().unwrap();
         assert!(
-            errs.iter().any(|m| m.contains("panicked")),
+            saw_panic_poke,
             "expected a decode-panic Error poke, got: {errs:?}"
         );
         drop(errs);

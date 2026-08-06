@@ -607,6 +607,7 @@ impl ExportSwRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_wait::wait_for;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -677,6 +678,7 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
     }
+
 
     #[test]
     fn open_returns_dimensions_color_and_start_pts() {
@@ -1123,10 +1125,18 @@ mod tests {
         reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
             .expect("open");
         reg.decode_range("s", 0, 875_000).unwrap();
-        thread::sleep(Duration::from_millis(300));
+        // Polled, not a fixed 300 ms: the poke has to cross a session-thread
+        // spin-up, a real ProRes decode, the sink panic, `catch_unwind` and the
+        // recovery `emit` through the poisoned lock. 300 ms covered that on a dev
+        // box but not on a loaded windows CI runner, where the assertion read an
+        // empty vec (run 31110481180). The wait also SEPARATES the two diagnoses
+        // it used to conflate: too slow now passes, whereas a recovery emit that
+        // genuinely never happens still fails — after 5 s rather than 0.3.
+        let saw_panic_poke =
+            wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
         let errs = errors.lock().unwrap();
         assert!(
-            errs.iter().any(|m| m.contains("panicked")),
+            saw_panic_poke,
             "expected a decode-panic Error poke, got: {errs:?}"
         );
         drop(errs);

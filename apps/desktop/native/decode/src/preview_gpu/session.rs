@@ -1608,6 +1608,7 @@ mod timing_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_wait::wait_for;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // --- Playback-load policy: the pure decisions `pump`/`on_request` delegate to.
@@ -1791,10 +1792,14 @@ mod tests {
             return;
         };
         reg.request_frame_at("s1", 0).expect("request_frame_at");
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Polled, not a fixed 500 ms — see test_wait. The export-lane twin of
+        // this test failed on a loaded windows CI runner with an empty vec, and
+        // this one carried the identical sleep-then-assert shape.
+        let saw_panic_poke =
+            wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
         let errs = errors.lock().unwrap();
         assert!(
-            errs.iter().any(|m| m.contains("panicked")),
+            saw_panic_poke,
             "expected a decode-panic Error poke, got: {errs:?}"
         );
         drop(errs);
