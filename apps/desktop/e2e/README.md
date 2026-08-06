@@ -115,15 +115,14 @@ The tier exists because the suite is dominated by a small number of tests that
 drive a **real encode**, and the windows leg outgrew its job timeout once CI
 started reaching e2e at all. Two kinds of test carry the tag:
 
-- **Combinatorial cells** whose axes are already covered individually. The audio
-  conformance matrix is 3 fps × 3 containers, but fps and container are
-  independent factors, so the diagonal (30/mp4, 60/mkv, 120/mov) hits every
-  level of both; the other six only add joint coverage. Likewise the audio-only
-  format sweep keeps wav and mp3 and tags flac/m4a/ogg.
-- **Low-churn specialty targets** — 10-bit HEVC, ProRes, DNxHR in
+- **Combinatorial cells** whose axes are already covered individually — the
+  audio sweeps keep a diagonal / baseline subset per-PR and tag the rest. Which
+  cells stay, and why, is documented next to each matrix in `audio.spec.ts`.
+- **Low-churn specialty targets** — the intermediate codecs in
   `export_codecs.spec.ts`. These are *not* redundant (each drives its own
   encoder path), so tagging them is a deliberate coverage tradeoff rather than a
-  free cut. Move one back to the default tier as soon as it starts changing.
+  free cut; the tradeoff — and when to move one back — is documented at the
+  tests.
 
 Do not tag a test `@matrix` just because it is slow. The tag says "another test
 in the default tier already covers this code path on this axis", or "this path

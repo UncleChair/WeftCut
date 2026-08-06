@@ -1,12 +1,10 @@
 import { defineConfig } from '@playwright/test'
 
-/// `@matrix` marks a combinatorial cell whose axes are already covered
-/// individually by the cells that stay (see audio.spec.ts), or a low-churn
-/// specialty target (see export_codecs.spec.ts). They are the expensive part of
-/// the suite — every one drives a real encode — and they are excluded by
-/// default so the per-PR run stays inside the job budget. `WEFTCUT_E2E_FULL=1`
-/// puts them back; electron-ci sets it on its scheduled sweep, and
-/// `npm run e2e -- --full` is the local equivalent.
+/// `@matrix` marks the nightly-only tier — combinatorial cells and low-churn
+/// specialty targets excluded from the per-PR run (what earns the tag, and what
+/// must not: e2e/README.md §Tiers). `WEFTCUT_E2E_FULL=1` puts them back;
+/// electron-ci sets it on its scheduled sweep, and `npm run e2e -- --full` is
+/// the local equivalent.
 ///
 /// This is a project-level grepInvert rather than a CLI `--grep-invert` so the
 /// command line stays free for a developer to filter with, and so it composes

@@ -17,10 +17,8 @@ export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 /// Linux gets `--enable-unsafe-swiftshader` because the CI runner has no GPU —
 /// it is xvfb over llvmpipe, and since Chromium 121 a software WebGL fallback is
 /// REFUSED unless this switch is passed explicitly. Without it every WebGL2
-/// context creation fails, and that is not a preview-only inconvenience: the
-/// export worker's native-sink path packs YUV planes through GL
-/// (PackYuvPlanar → PboFrameReader), so a missing context left `renderer.gl`
-/// undefined and turned every export spec red with a `createBuffer` TypeError.
+/// context creation fails, preview and the export worker's GL packing alike
+/// (see the renderer assertion in exportWorker.ts).
 ///
 /// Windows and macOS deliberately get NOTHING: both have a real GPU stack on
 /// the runners, and forcing software GL on Windows 11 HANGS the offscreen CDP

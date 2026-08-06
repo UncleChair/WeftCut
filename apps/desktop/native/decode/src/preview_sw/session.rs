@@ -1014,9 +1014,6 @@ mod tests {
         );
         reg.open("s1".into(), p.into()).expect("open");
         let _ = reg.request_frame_at("s1".into(), 0);
-        // Polled, not a fixed 300 ms — see test_wait. The export-lane twin of
-        // this test failed on a loaded windows CI runner with an empty vec, and
-        // this one carried the identical sleep-then-assert shape.
         let saw_panic_poke =
             wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
         let errs = errors.lock().unwrap();

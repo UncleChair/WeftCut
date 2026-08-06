@@ -5,9 +5,7 @@
 //! result has to wait for another thread. `thread::sleep(fixed)` before the
 //! assertion turns that wait into an assertion about MACHINE SPEED: a budget
 //! that is comfortable on a dev box fails on a loaded CI runner, and the failure
-//! is indistinguishable from the behaviour under test being broken. The
-//! export-lane decode-panic test failed exactly that way on the windows leg (run
-//! 31110481180) with a 300 ms sleep, reporting an empty vec of pokes.
+//! is indistinguishable from the behaviour under test being broken.
 //!
 //! Polling instead is both faster on a fast machine and honest on a slow one:
 //! the deadline is long enough that reaching it means the condition really is

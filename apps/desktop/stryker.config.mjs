@@ -23,8 +23,7 @@ export default {
   //   2. Hoisting one would not help. TypeScript 7's package exports only
   //      `./lib/version.cjs` as its main entry, so `ts.parseConfigFileTextToJson`
   //      is gone and the preprocessor would fail one line later instead.
-  // Stryker 9.6.1 is the latest release and has no TypeScript 7 support yet;
-  // drop this line once it does.
+  // Stryker has no TypeScript 7 support yet; drop this line once it does.
   tsconfigFile: 'tsconfig.stryker-disabled.json',
 
   mutate: [

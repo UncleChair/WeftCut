@@ -147,12 +147,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
   // `preference` is a PREFERENCE, not a requirement: PixiJS silently falls back
   // to another renderer when the worker context cannot create a WebGL2 context,
-  // and every GL-dependent pass then reads `renderer.gl` as undefined. Without
-  // this assertion that surfaced as `Cannot read properties of undefined
-  // (reading 'createBuffer')` thrown from PboFrameReader — deep inside plane
-  // readback, naming neither the renderer nor the missing context. Assert once,
-  // here, for EVERY path that asked for WebGL; only the 10-bit branch used to
-  // check, so the 8-bit native-sink path (the common one) failed cryptically.
+  // and every GL-dependent pass then reads `renderer.gl` as undefined — which
+  // surfaces as a `createBuffer` TypeError deep inside plane readback, naming
+  // neither the renderer nor the missing context. Assert once, here, for EVERY
+  // path that asked for WebGL.
   if (needsGl && !("gl" in app.renderer)) {
     throw new Error(
       `export needs the WebGL2 renderer (native sink, native decode, or 10-bit); ` +

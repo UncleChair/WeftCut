@@ -588,16 +588,13 @@ trait CapabilityProbe: Send + Sync {
 
 /// How long one encoder probe may take before it is called unavailable.
 ///
-/// The probe only encodes a single 640x360 black frame, so a warm machine
-/// answers in well under a second — but the wall clock also covers spawning
-/// ffmpeg and, for the hardware adapters, driver/runtime enumeration. The
-/// previous 4s budget was too tight for a loaded CI runner: a Windows leg
-/// running two Electron workers reported `h264_nvenc`, `h264_qsv`, `h264_amf`
-/// AND `libx264` as "probe timed out after 4s" and then failed the export with
-/// "no usable FFmpeg encoder for h264 8-bit" — on a bundled ffmpeg that does
-/// ship libx264. A timeout must mean "this encoder is unusable", never "this
-/// machine was busy", so the budget is generous; probes that resolve at all
-/// resolve fast, and each result is cached per capability key.
+/// The probe only encodes a single 640x360 black frame, so probes that resolve
+/// at all resolve fast — but the wall clock also covers spawning ffmpeg and,
+/// for the hardware adapters, driver/runtime enumeration, which a loaded
+/// machine can stretch past any tight budget. A timeout must mean "this
+/// encoder is unusable", never "this machine was busy", so the budget is
+/// generous; each result is cached per capability key, so a slow probe is
+/// paid once.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Default)]

@@ -31,10 +31,9 @@ export function splitGateFlags(args) {
 }
 
 /** `--full` restores the `@matrix` cells that playwright.config.ts excludes by
- * default (the combinatorial audio sweeps and the specialty codec targets — the
- * expensive part of the suite, since each one drives a real encode). It selects
- * a tier rather than naming a Playwright option, so like the gate flags it has
- * to leave the argv before Playwright sees it. */
+ * default (what earns the tag: e2e/README.md §Tiers). It selects a tier rather
+ * than naming a Playwright option, so like the gate flags it has to leave the
+ * argv before Playwright sees it. */
 export function splitFullFlag(args) {
   return { full: args.includes('--full'), args: args.filter((arg) => arg !== '--full') }
 }
@@ -200,10 +199,9 @@ export function runE2E(argv = process.argv.slice(2)) {
   const cli = require.resolve('@playwright/test/cli')
   // Run EVERY planned project, even after one of them fails. Returning on the
   // first non-zero status meant a red `serial` project SILENTLY SKIPPED the
-  // `parallel` project — on CI's macOS leg that left the 143-test parallel run
-  // unmeasured on every failing push, so one known-red serial spec hid an
-  // unknown number of real failures behind it. A project that fails now costs
-  // the rest of the suite's time; being able to see the rest is the point.
+  // `parallel` project, hiding an unknown number of real failures behind one
+  // known-red spec. A project that fails now costs the rest of the suite's
+  // time; being able to see the rest is the point.
   const statuses = []
   for (const runArgs of planE2ERuns(args)) {
     const result = spawnSync(
