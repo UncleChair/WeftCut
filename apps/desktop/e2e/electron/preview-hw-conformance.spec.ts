@@ -51,16 +51,17 @@ const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
 // 10-bit fixtures for the videotoolbox p10 variants (VT lane ticket 03). Both
 // 1080p30, ≥ 1 s, already in the generator matrix. The SSIM leg normalizes
 // BOTH sides through `format=yuv420p`, so a 10-bit source works unmodified as
-// a structural gate unmodified.
-// (both smooth-gradient content, hence SSIM_FLOOR_SMOOTH.)
-// - ProRes 422 HQ (yuv422p10le): the codec the lane exists for. ffmpeg's VT
-//   hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
+// a structural gate.
+// - ProRes 422 HQ (yuv422p10le): the codec the lane exists for. testsrc2
+//   content like the H.264 fixture, so it shares SSIM_FLOOR_HIGH_FREQ. ffmpeg's
+//   VT hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
 //   ProRes-engine chips carry (M1 Pro/Max, M2+) — on a base M1 the probe
 //   declines and this variant SKIPS cleanly (software fallback proven by the
 //   skip path itself).
-// - HEVC Main10 (yuv420p10le): hardware-decoded by every Apple Silicon media
-//   block, so the I420P10 transport → ten-bit ingest path gates GREEN on any
-//   Mac host, ProRes engine or not.
+// - HEVC Main10 (yuv420p10le): the smooth-gradient fixture (SSIM_FLOOR_SMOOTH).
+//   Hardware-decoded by every Apple Silicon media block, so the I420P10
+//   transport → ten-bit ingest path gates GREEN on any Mac host, ProRes engine
+//   or not.
 const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
 const HEVC10 = path.resolve(MEDIA_DIR, 'test_1080p_gradient10.mp4')
 
@@ -72,28 +73,18 @@ const SEEK_US = 500_000
 const FRAME_IDX = Math.round((SEEK_US * CANVAS.fpsNum) / (1_000_000 * CANVAS.fpsDen))
 // SSIM floors, per FIXTURE rather than per lane: how high the score can reach
 // is a property of the content being compared, not of the decoder under test.
-//
-// What this gate measures is NOT whether the hardware decoded correctly — H.264
-// and HEVC decoding are bit-exact by specification, so every conformant decoder
-// yields identical YUV. The score is spent entirely downstream of the decode:
-// our own ingest shader upsamples the half-resolution chroma plane through the
-// GPU's texture sampler, while the ffmpeg reference upsamples it through
-// swscale. Two different algorithms, so a correct frame never scores 1.0 — and
-// the GPU sampler's sub-texel precision is implementation-defined, so the exact
-// value carries a machine fingerprint.
-//
-// A single 0.98 floor for both fixtures was therefore set INSIDE the
-// machine-to-machine spread. Measured on the testsrc2 H.264 fixture: 0.97939 on
-// a macos-26-arm64 runner and 0.982 on a physical Apple Silicon Mac — a 0.0026
-// spread straddling the floor, so the same correct decode passed on one box and
-// failed on the other, deterministically (the runner returned the bit-identical
-// triple across consecutive runs). That is a coin flip, not a fidelity gate.
-//
-// The floors below are set from what a CORRECT decode actually scores, with
-// headroom for the next GPU. They keep the property the gate exists for, stated
-// in the neighbor-frame comment below: a garbage decode matches NONE of the
-// three candidate frames. Raise one only with measurements from more than one
-// machine — a floor tuned to a single box is what produced this note.
+// H.264/HEVC decode is bit-exact by specification, so the gate does not measure
+// decode correctness — the score is spent entirely downstream, where our ingest
+// shader upsamples the chroma plane through the GPU's texture sampler while the
+// ffmpeg reference upsamples it through swscale. Two different algorithms, so a
+// correct frame never scores 1.0; and sampler sub-texel precision is
+// implementation-defined, so the exact value carries a machine fingerprint.
+// The floors are set from what a CORRECT decode actually scores, with headroom
+// for the next GPU; a garbage decode still matches NONE of the three candidate
+// frames (see the neighbor-frame note at the comparison). Raise one only with
+// measurements from MORE THAN ONE machine — a floor tuned to a single box
+// lands inside the machine-to-machine spread and flips the same correct decode
+// between pass and fail.
 /// testsrc2: dense high-frequency synthetic detail, which maximizes the
 /// chroma-upsampling disagreement. Correct decodes measured 0.9794–0.982.
 const SSIM_FLOOR_HIGH_FREQ = 0.96
@@ -125,10 +116,8 @@ interface HwVariant {
   /// 10-bit ships I420P10 → TenBitIngest ('p10', VT lane ticket 03); the
   /// Windows shared-texture lane binds an ImageBitmap snapshot ('browser').
   frameKind: 'nv12' | 'p10' | 'browser'
-  /// Floor the best-of-three SSIM must clear. Tracks `fixture`, never the lane —
-  /// see the SSIM_FLOOR_* notes. Every lane sharing a fixture shares its floor:
-  /// they all compare the same content through the same shader-vs-swscale
-  /// mismatch, so a lane-specific number would just be per-GPU noise.
+  /// Floor the best-of-three SSIM must clear. Tracks `fixture`, never the
+  /// lane — see the SSIM_FLOOR_* notes.
   ssimFloor: number
 }
 const VARIANTS: readonly HwVariant[] = [
@@ -138,7 +127,7 @@ const VARIANTS: readonly HwVariant[] = [
   { lane: 'videotoolbox', id: 'videotoolbox-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
   // VT lane ticket 03 — the I420P10 preview transport variants (see the
   // fixture notes above for which hosts each engages on).
-  { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', fixture: PRORES, frameKind: 'p10', ssimFloor: SSIM_FLOOR_SMOOTH },
+  { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', fixture: PRORES, frameKind: 'p10', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
   { lane: 'videotoolbox', id: 'videotoolbox-hevc10', codec: 'HEVC Main10', fixture: HEVC10, frameKind: 'p10', ssimFloor: SSIM_FLOOR_SMOOTH },
 ]
 
@@ -310,7 +299,7 @@ for (const { lane, id, codec, fixture, frameKind, ssimFloor } of VARIANTS) {
       console.log(`[preview-hw:${id}] SSIM scores: ${JSON.stringify(scores)} → best=${JSON.stringify(best)} (floor ${ssimFloor})`)
       // The floor is in the message: a bare "below floor" reads as a decode bug,
       // when the first thing to check is whether the floor was ever measured on
-      // more than one machine (it was not, before this fixture-keyed split).
+      // more than one machine.
       expect(
         best.ssim,
         `SSIM below floor ${ssimFloor}; scores=${JSON.stringify(scores)}`,

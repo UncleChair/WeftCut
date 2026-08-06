@@ -42,6 +42,10 @@ const CONTAINERS = ['mp4', 'mkv', 'mov']
 const CASES = FPS.flatMap((fps, i) =>
   CONTAINERS.map((container, j) => ({ fps, container, diagonal: i === j })),
 )
+// Unequal axes would leave the extra levels without a diagonal cell — dropped
+// from the per-PR tier with no failure to say so. Fail collection instead.
+if (FPS.length !== CONTAINERS.length)
+  throw new Error('the per-PR diagonal assumes FPS and CONTAINERS have equal length — retile which cells stay')
 
 test.describe('audio conformance matrix (Electron)', () => {
   let app: ElectronApplication | undefined
