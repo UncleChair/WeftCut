@@ -143,7 +143,7 @@ describe("FrameRing.frameAt", () => {
 });
 
 describe("FrameRing.push", () => {
-  it("keeps order with monotonic PTS (proxy v4 / no B-frames)", () => {
+  it("keeps order with monotonic PTS (no B-frames)", () => {
     // Fast path: every push has PTS strictly greater than the tail.
     // The implementation skips the sort entirely; the assertion is
     // that order is still correct, which proves no behavior change.

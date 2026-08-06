@@ -349,7 +349,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
   });
 });
 
-describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => {
+describe("FfmpegSource — hardware transport routing by HW lane", () => {
   it("routes a resolved NVDEC copy-back lane through the SW transport (not the GPU one)", async () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();

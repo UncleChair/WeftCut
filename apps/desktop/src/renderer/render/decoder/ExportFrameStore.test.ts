@@ -469,7 +469,7 @@ describe("ExportFrameStore.waitBelowTenBitHighWater", () => {
 // Pins the clamp endpoints and the byte-target quotient between them — see
 // TENBIT_RING_TARGET_BYTES in ExportDecoderPool.ts for why they are what they are.
 describe("tenBitHighWaterFor", () => {
-  it("clamps 1080p to the 48-entry ceiling (today's behavior unchanged)", () => {
+  it("clamps 1080p to the 48-entry ceiling", () => {
     expect(tenBitHighWaterFor(BYTES_1080P)).toBe(48);
   });
   it("clamps 4K to the 20-entry deadlock floor", () => {
