@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { tmpDir } from './helpers/driver'
+import { GL_SWITCHES, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -27,7 +27,7 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
   const userDataDir = tmpDir('wc-mcp-flip-userdata-')
   let connect: { url: string; token: string } | null = null
   const app = await electron.launch({
-    args: [`--user-data-dir=${userDataDir}`, MAIN],
+    args: [...GL_SWITCHES, `--user-data-dir=${userDataDir}`, MAIN],
     env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })

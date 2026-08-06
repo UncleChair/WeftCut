@@ -39,6 +39,17 @@ export function splitFullFlag(args) {
   return { full: args.includes('--full'), args: args.filter((arg) => arg !== '--full') }
 }
 
+/** Fold the planned runs' exit statuses into one process status: 0 only when
+ * every run passed, otherwise the EARLIEST non-zero — the first project to fail
+ * is the most diagnostic, and a later project's red is often downstream of it.
+ *
+ * This exists because every planned project must run even after one of them
+ * fails (see the loop in runE2E), so there is no longer a single status to
+ * return. */
+export function foldRunStatuses(statuses) {
+  return statuses.find((status) => status !== 0) ?? 0
+}
+
 /** Full runs execute the machine-exclusive project first, then the parallel
  * project. An explicitly selected project remains a single targeted run. */
 export function planE2ERuns(args) {
@@ -187,15 +198,28 @@ export function runE2E(argv = process.argv.slice(2)) {
     return 1
   }
   const cli = require.resolve('@playwright/test/cli')
+  // Run EVERY planned project, even after one of them fails. Returning on the
+  // first non-zero status meant a red `serial` project SILENTLY SKIPPED the
+  // `parallel` project — on CI's macOS leg that left the 143-test parallel run
+  // unmeasured on every failing push, so one known-red serial spec hid an
+  // unknown number of real failures behind it. A project that fails now costs
+  // the rest of the suite's time; being able to see the rest is the point.
+  const statuses = []
   for (const runArgs of planE2ERuns(args)) {
     const result = spawnSync(
       process.execPath,
       [cli, 'test', '-c', 'playwright.config.ts', ...runArgs],
       { cwd: ROOT, env, stdio: 'inherit' },
     )
+    // A spawn error (no binary, EAGAIN) is not a test result — fail loudly
+    // rather than folding it into a status the caller reads as "tests ran".
     if (result.error) throw result.error
-    if (result.status !== 0) return result.status ?? 1
+    statuses.push(result.status ?? 1)
   }
+  // The extra gates measure a working app, so a red suite still short-circuits
+  // them — only the projects above are run-to-completion.
+  const suiteStatus = foldRunStatuses(statuses)
+  if (suiteStatus !== 0) return suiteStatus
   for (const flag of gates) {
     const gate = EXTRA_GATES[flag]
     const result = spawnSync(process.execPath, [path.join(ROOT, gate.script)], {

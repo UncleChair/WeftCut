@@ -586,6 +586,20 @@ trait CapabilityProbe: Send + Sync {
     async fn probe(&self, adapter: AdapterId, capability: CapabilityKey) -> Result<(), String>;
 }
 
+/// How long one encoder probe may take before it is called unavailable.
+///
+/// The probe only encodes a single 640x360 black frame, so a warm machine
+/// answers in well under a second — but the wall clock also covers spawning
+/// ffmpeg and, for the hardware adapters, driver/runtime enumeration. The
+/// previous 4s budget was too tight for a loaded CI runner: a Windows leg
+/// running two Electron workers reported `h264_nvenc`, `h264_qsv`, `h264_amf`
+/// AND `libx264` as "probe timed out after 4s" and then failed the export with
+/// "no usable FFmpeg encoder for h264 8-bit" — on a bundled ffmpeg that does
+/// ship libx264. A timeout must mean "this encoder is unusable", never "this
+/// machine was busy", so the budget is generous; probes that resolve at all
+/// resolve fast, and each result is cached per capability key.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+
 #[derive(Default)]
 struct FfmpegCapabilityProbe;
 
@@ -623,9 +637,9 @@ impl CapabilityProbe for FfmpegCapabilityProbe {
         let child = cmd
             .spawn()
             .map_err(|error| format!("spawn failed: {error}"))?;
-        let output = timeout(Duration::from_secs(4), child.wait_with_output())
+        let output = timeout(PROBE_TIMEOUT, child.wait_with_output())
             .await
-            .map_err(|_| "probe timed out after 4s".to_string())?
+            .map_err(|_| format!("probe timed out after {}s", PROBE_TIMEOUT.as_secs()))?
             .map_err(|error| format!("wait failed: {error}"))?;
         if output.status.success() {
             return Ok(());

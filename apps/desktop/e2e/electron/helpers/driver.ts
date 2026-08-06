@@ -9,6 +9,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// output is apps/desktop/out/main/index.js → three levels up.
 export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 
+/// Chromium GL switches every launch needs, per platform. Spread these into
+/// `args` BEFORE the app entry (see the switch-ordering note in launchApp);
+/// raw `electron.launch` call sites must include them too, which is why this is
+/// a shared export rather than inlined.
+///
+/// Linux gets `--enable-unsafe-swiftshader` because the CI runner has no GPU —
+/// it is xvfb over llvmpipe, and since Chromium 121 a software WebGL fallback is
+/// REFUSED unless this switch is passed explicitly. Without it every WebGL2
+/// context creation fails, and that is not a preview-only inconvenience: the
+/// export worker's native-sink path packs YUV planes through GL
+/// (PackYuvPlanar → PboFrameReader), so a missing context left `renderer.gl`
+/// undefined and turned every export spec red with a `createBuffer` TypeError.
+///
+/// Windows and macOS deliberately get NOTHING: both have a real GPU stack on
+/// the runners, and forcing software GL on Windows 11 HANGS the offscreen CDP
+/// capture — see the RENDERER CHOICE note in .github/workflows/electron-ci.yml.
+export const GL_SWITCHES: readonly string[] =
+  process.platform === 'linux' ? ['--enable-unsafe-swiftshader'] : []
+
 /// Temp-dir lifecycle & default userData isolation.
 ///
 /// Bare `launchApp()` mints a fresh, empty userData dir (mkdtemp under
@@ -195,7 +214,7 @@ export async function launchApp(
   // them as application arguments and userData isolation is ignored. Linux
   // Chromium derives navigator.language from the process locale despite
   // --lang, so set both inputs for deterministic accessible names.
-  const args = [`--lang=${locale}`]
+  const args = [`--lang=${locale}`, ...GL_SWITCHES]
   let mintedUserDataDir: string | null = null
   if (opts.userDataDir) {
     args.push(`--user-data-dir=${opts.userDataDir}`)

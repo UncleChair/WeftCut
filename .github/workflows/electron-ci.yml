@@ -30,7 +30,17 @@ jobs:
   build:
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default.
-    timeout-minutes: 60
+    #
+    # 90, not 60: the windows leg does not fit 60. It skips the FEWEST specs of
+    # the three (its media stack is the most capable, so more cells run a real
+    # encode) and was cancelled mid-e2e on consecutive pushes — which reports
+    # only "exceeded the maximum execution time" and hides which specs actually
+    # failed. Raise the cap so the leg can finish and name its own failures;
+    # the honest way back under an hour is fixing them, since `retries: 1`
+    # makes every red test cost twice, not cutting more coverage (see the
+    # @matrix tier in apps/desktop/e2e/README.md, already cut about as far as
+    # it honestly goes).
+    timeout-minutes: 90
     # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
     env:
       CARGO_TERM_COLOR: always

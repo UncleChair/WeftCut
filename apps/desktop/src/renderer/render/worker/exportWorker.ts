@@ -126,14 +126,15 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   );
 
   // 1. PixiJS Application against the transferred OffscreenCanvas.
-  // Any native-sink export (8-bit or 10-bit) forces WebGL2 — the pack shaders
+  // Any native-sink export (8-bit or 10-bit) needs WebGL2 — the pack shaders
   // (PackYuv420p10 / PackYuvPlanar) need a GL renderer, and 10-bit additionally
   // needs EXT_color_buffer_float for rgba16float targets. Native-DECODE
-  // routing forces WebGL2 too: relay frames convert through the GL ingest
+  // routing needs WebGL2 too: relay frames convert through the GL ingest
   // passes (Nv12Ingest / TenBitIngest). The WebCodecs path prefers WebGPU to
   // match the preview surface; PixiJS auto-falls back to WebGL when the
   // worker context doesn't expose `navigator.gpu`.
   const nativeDecodeRouted = (req.nativeDecode?.mediaIds.length ?? 0) > 0;
+  const needsGl = nativeSink || tenBit || nativeDecodeRouted;
   const app = new Application();
   await app.init({
     canvas: req.canvas as unknown as HTMLCanvasElement,
@@ -141,13 +142,25 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     height: req.project.height,
     background: 0x000000,
     autoStart: false,
-    preference: nativeSink || tenBit || nativeDecodeRouted ? "webgl" : "webgpu",
+    preference: needsGl ? "webgl" : "webgpu",
   });
 
+  // `preference` is a PREFERENCE, not a requirement: PixiJS silently falls back
+  // to another renderer when the worker context cannot create a WebGL2 context,
+  // and every GL-dependent pass then reads `renderer.gl` as undefined. Without
+  // this assertion that surfaced as `Cannot read properties of undefined
+  // (reading 'createBuffer')` thrown from PboFrameReader — deep inside plane
+  // readback, naming neither the renderer nor the missing context. Assert once,
+  // here, for EVERY path that asked for WebGL; only the 10-bit branch used to
+  // check, so the 8-bit native-sink path (the common one) failed cryptically.
+  if (needsGl && !("gl" in app.renderer)) {
+    throw new Error(
+      `export needs the WebGL2 renderer (native sink, native decode, or 10-bit); ` +
+        `got ${app.renderer.name} — no WebGL2 context is available in this worker`,
+    );
+  }
+
   if (tenBit) {
-    if (!("gl" in app.renderer)) {
-      throw new Error("10-bit export needs the WebGL2 renderer; got " + app.renderer.name);
-    }
     // Capability check: render 1 px into an f16 target and read it back —
     // fails loudly here rather than producing a silent black export on a
     // context without renderable float16 (EXT_color_buffer_float).

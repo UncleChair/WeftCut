@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
-import { planE2ERuns, prepareE2EEnv, splitFullFlag, splitGateFlags } from './run-e2e.mjs'
+import {
+  foldRunStatuses,
+  planE2ERuns,
+  prepareE2EEnv,
+  splitFullFlag,
+  splitGateFlags,
+} from './run-e2e.mjs'
 
 test('--full is consumed as a tier selector and never reaches Playwright', () => {
   const { full, args } = splitFullFlag(['--full', '--project=parallel', 'audio.spec.ts'])
@@ -30,6 +36,28 @@ test('an explicit E2E project remains one targeted run', () => {
     planE2ERuns(['--project', 'parallel', '-g', 'edge drop']),
     [['--project', 'parallel', '-g', 'edge drop']],
   )
+})
+
+// ── foldRunStatuses ────────────────────────────────────────────────────────
+// The load-bearing property is that EVERY planned project runs: the fold is
+// what lets the loop keep going past a failure instead of returning inside it.
+// A regression here reads as "the second project's tests disappeared".
+
+test('every planned project contributes a status, and any red loses', () => {
+  assert.equal(foldRunStatuses([0, 0]), 0)
+  // The earliest failure wins — a serial-project red is more diagnostic than
+  // the parallel-project reds that usually follow from it.
+  assert.equal(foldRunStatuses([1, 2]), 1)
+  // A red FIRST project must not mask a green second one into an overall pass,
+  // nor a green first project mask a red second one.
+  assert.equal(foldRunStatuses([1, 0]), 1)
+  assert.equal(foldRunStatuses([0, 1]), 1)
+})
+
+test('no runs at all is a pass, not a spurious failure', () => {
+  // Defensive: planE2ERuns never returns empty today, but folding [] to 0
+  // keeps a future single-project plan from inventing an exit code.
+  assert.equal(foldRunStatuses([]), 0)
 })
 
 // ── splitGateFlags ─────────────────────────────────────────────────────────

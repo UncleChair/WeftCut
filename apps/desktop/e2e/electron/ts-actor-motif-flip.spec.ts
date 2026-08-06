@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type Page } from '@playwright/test'
-import { launchApp, MAIN, tmpDir } from './helpers/driver'
+import { GL_SWITCHES, launchApp, MAIN, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -65,7 +65,7 @@ test('TS actor: MCP add_motif returns the layer id + the summary reflects a Moti
   const userDataDir = tmpDir('wc-motif-mcp-userdata-')
   let connect: { url: string; token: string } | null = null
   const app = await electron.launch({
-    args: [`--user-data-dir=${userDataDir}`, MAIN],
+    args: [...GL_SWITCHES, `--user-data-dir=${userDataDir}`, MAIN],
     env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })
