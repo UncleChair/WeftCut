@@ -9,6 +9,9 @@
       "entry": [
         "src/main/index.ts",
         "src/preload/index.ts",
+        // weftcut-mcp stdio shim: bundled by scripts/build-cli.mjs, entered
+        // by Node directly — no import edge from the app graph.
+        "src/cli/main.ts",
         "src/renderer/main.tsx",
         "src/renderer/index.html",
         "src/renderer/public/render-play.html",

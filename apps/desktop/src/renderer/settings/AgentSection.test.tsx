@@ -2,8 +2,11 @@
 //
 // Covers the Settings "Agent" tab (AgentSection): a generic setup prompt for
 // agent self-configuration plus one copyable config snippet per agent client
-// (Codex / Claude / Cursor / generic), token masked until revealed, copy
-// always carries the real token.
+// (Codex / Claude / Cursor / generic). With the stdio shim installed
+// (shim_path set) the stdio config is the primary snippet — no token in it —
+// and HTTP-direct moves behind an "advanced" disclosure; without it (dev
+// before build:cli) the HTTP snippet renders as primary, token masked until
+// revealed, copy always carrying the real token.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -21,9 +24,18 @@ vi.mock("../ipc", async (importActual) => {
 import i18n from "../i18n";
 import { AgentSection } from "./AgentSection";
 
+/// shim_path absent → the pre-shim, HTTP-primary layout (dev fallback).
 const INFO = {
   url: "http://127.0.0.1:4711/mcp",
   bearer_token: "secret-token",
+};
+
+const INFO_SHIM = {
+  ...INFO,
+  exe_path: "C:\\Program Files\\WeftCut\\WeftCut.exe",
+  appimage: null,
+  user_data: "C:\\ud",
+  shim_path: "C:\\ud\\cli\\weftcut-mcp.cjs",
 };
 
 const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
@@ -116,5 +128,60 @@ describe("AgentSection", () => {
     const reveal = await screen.findByRole("button", { name: "Reveal token" });
     await userEvent.click(reveal);
     expect(await snippetText()).toContain(INFO.bearer_token);
+  });
+});
+
+describe("AgentSection with the stdio shim installed", () => {
+  beforeEach(() => {
+    ipc.getMcpInfo.mockReset().mockResolvedValue(INFO_SHIM);
+  });
+
+  it("renders the stdio config as the primary snippet, with no token in it", async () => {
+    render(<AgentSection />);
+    const text = await snippetText();
+    expect(text).toContain("[mcp_servers.weftcut]");
+    expect(text).toContain("ELECTRON_RUN_AS_NODE");
+    expect(text).toContain("weftcut-mcp.cjs");
+    expect(text).not.toContain(INFO.url);
+    expect(text).not.toContain(INFO.bearer_token);
+  });
+
+  it("stdio JSON snippet carries command/args/env and the discovery override", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "Cursor" }));
+    const cursor = JSON.parse((await snippetText()).trim());
+    expect(cursor.mcpServers.weftcut).toEqual({
+      command: INFO_SHIM.exe_path,
+      args: [INFO_SHIM.shim_path],
+      env: { ELECTRON_RUN_AS_NODE: "1", WEFTCUT_USERDATA: INFO_SHIM.user_data },
+    });
+  });
+
+  it("the setup prompt describes the stdio transport and leaks no token", async () => {
+    render(<AgentSection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy setup prompt" }),
+    );
+    const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain("Transport: stdio");
+    expect(prompt).toContain(INFO_SHIM.exe_path);
+    expect(prompt).toContain(`WEFTCUT_USERDATA=${INFO_SHIM.user_data}`);
+    expect(prompt).not.toContain(INFO.bearer_token);
+  });
+
+  it("HTTP direct moves behind the advanced disclosure, token still masked", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    expect(screen.queryByRole("button", { name: "Reveal token" })).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: /HTTP direct/ }),
+    );
+    const panels = screen.getAllByRole("tabpanel");
+    const http = panels[panels.length - 1]?.querySelector("pre")?.textContent ?? "";
+    expect(http).toContain(`url = "${INFO.url}"`);
+    expect(http).toContain("Bearer •••");
+    expect(http).not.toContain(INFO.bearer_token);
+    expect(screen.getByRole("button", { name: "Reveal token" })).toBeTruthy();
   });
 });

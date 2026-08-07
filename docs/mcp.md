@@ -1,16 +1,40 @@
 # MCP Server & Agent UX
 
-WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost server and edit the project through a structured tool surface.
+WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost server and edit the project through a structured tool surface. Clients connect one of two ways: through the **`weftcut-mcp` stdio shim** (recommended — the config survives app restarts, port changes, and token rotations, and keeps working while the app is closed) or **HTTP-direct** to the in-app endpoint (for clients that cannot spawn stdio servers).
 
 ## Transport & deployment
 
 - **Streamable-HTTP on `127.0.0.1:<auto-port>/mcp`**, hosted in the Electron
   main process: an `express` app fronts the `@modelcontextprotocol/sdk`
-  `StreamableHTTPServerTransport`. Not stdio — the app isn't a child process of
+  `StreamableHTTPServerTransport`. The app isn't a child process of
   the agent. Each `initialize` request mints a session (UUID in the
   `Mcp-Session-Id` header); subsequent requests on that session route back to
   the same transport. In-protocol notifications (the change feed below) ride the
   same connection, so there is no separate event endpoint.
+- **The stdio shim (`weftcut-mcp`)** wraps that endpoint for clients: a single
+  self-contained bundle (`src/cli/`, built by `scripts/build-cli.mjs`) that
+  runs under `ELECTRON_RUN_AS_NODE` — the WeftCut binary doubles as its Node
+  runtime, so user machines need no Node install. It ships as an extraResource
+  and the app copies it to `<userData>/cli/weftcut-mcp.cjs` at every startup;
+  client configs reference THAT copy, the only path stable across upgrades on
+  all three OSes (an AppImage mounts at a random point per run). The shim
+  re-reads `mcp_auth.json` on every bridge (re)connect, so port re-picks and
+  token rotations self-heal, and the config fragment carries no URL and no
+  token.
+- **Shim catalog = synthetic ∪ (app reachable ? real catalog : ∅).** Two
+  synthetic tools are always present: `weftcut_status` (endpoint state + next
+  steps) and `launch_weftcut` (detached GUI spawn, then waits for the endpoint,
+  bounded). `tools/list_changed` fires on every bridge transition, so one agent
+  session upgrades to the full catalog the moment the app comes up — including
+  when `launch_weftcut` itself brought it up — and degrades back to the
+  synthetic surface when the app closes. Down-state calls fail with the remedy
+  in the error **message** (see the error model below). While bridged, the
+  change feed is forwarded verbatim, so a shim-connected agent sees exactly
+  what an HTTP-direct one does.
+- **Shim subcommands** (the terminal-facing connection helpers): `info`
+  (endpoint, token, reachability; exit 3 when the app is down), `print-config`
+  (the machine-specific `mcpServers` fragment), `list-tools` (dump the running
+  app's advertised catalog), `help`.
 - The Rust core is **transport-free**: it provides the tool catalog, resource
   readers, prompts, and wire types, and the main process bridges to it over
   dedicated napi methods (`mcpCatalog`, `mcpCallTool`, `mcpReadResource`,
@@ -48,17 +72,35 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
 
 ## Connection UX
 
-The app's **Connect agent** panel:
-- Shows the server URL (`http://127.0.0.1:<port>/mcp`) and bearer token
-  (revealable by click).
-- One-click copy of:
-  - Just the URL (for clients with their own auth UI).
-  - A complete Claude Desktop `claude_desktop_config.json` snippet.
-  - A complete Cursor `mcp.json` snippet.
+The app's **Connect agent** panel (Settings → Agent):
+- **Primary: the stdio shim config**, one copyable snippet per client
+  (Codex TOML / Claude / Cursor / generic JSON) plus a self-configuration
+  prompt the user can paste into any MCP-capable agent. No token rides in
+  these — the shim resolves it at connect time.
+- **Advanced (collapsed): HTTP-direct** — the server URL
+  (`http://127.0.0.1:<port>/mcp`), the bearer token (masked until revealed,
+  rotatable in place), and the same per-client snippets in URL + header form.
+  For clients that cannot spawn stdio servers; breaks whenever the app is
+  closed and goes stale when the port or token changes.
 - Renders "starting…" while the server is still binding its port; polls
-  `get_mcp_info` until the bind completes.
+  `get_mcp_info` until the bind completes. Until the shim bundle exists (dev
+  before `build:cli`), the HTTP path renders as primary.
 
-Snippet example for Claude Desktop:
+Shim snippet example (paths are machine-specific, generated at runtime from
+`process.execPath` and `app.getPath("userData")`):
+```json
+{
+  "mcpServers": {
+    "weftcut": {
+      "command": "C:\\Users\\u\\AppData\\Local\\Programs\\WeftCut\\WeftCut.exe",
+      "args": ["C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut-mcp.cjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1", "WEFTCUT_USERDATA": "C:\\Users\\u\\AppData\\Roaming\\WeftCut" }
+    }
+  }
+}
+```
+
+HTTP-direct snippet example (the advanced path; Cursor has the same shape):
 ```json
 {
   "mcpServers": {
@@ -69,8 +111,6 @@ Snippet example for Claude Desktop:
   }
 }
 ```
-
-The Cursor snippet has the same shape.
 
 ## Multi-agent semantics
 
@@ -370,5 +410,6 @@ filters by category (`Mcp`) and source (`Agent { client }`).
 ## Security
 
 - Localhost-only binding, bearer-enforced on every request, with DNS-rebinding protection on. Flipping the bind to `0.0.0.0` is gated behind a confirmation dialog.
-- Token surfaced in the connect panel; the connect snippet (which embeds the token) is printed to stdout only in unpackaged dev / e2e runs, never in a packaged build.
+- Shim configs carry no token — the shim reads it from `mcp_auth.json` at connect time, so the bearer never spreads into client config files.
+- Token surfaced in the connect panel's advanced section; the HTTP connect snippet (which embeds the token) is printed to stdout only in unpackaged dev / e2e runs, never in a packaged build.
 - Cloud-API keys live in the OS keyring, not in project files.

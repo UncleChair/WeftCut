@@ -30,6 +30,6 @@
     // not the renderer source — avoids pulling web-platform types into main.
     "disableSourceOfProjectReferenceRedirect": true
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*.ts"],
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/cli/**/*.ts"],
   "references": [{ "path": "./tsconfig.web.json" }, { "path": "./tsconfig.shared.json" }]
 }

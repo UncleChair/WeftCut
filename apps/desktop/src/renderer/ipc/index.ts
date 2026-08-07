@@ -1237,6 +1237,18 @@ export interface McpInfoView {
   bind: string;
   url: string;
   bearer_token: string;
+  /// The app binary — doubles as the Node runtime for the stdio shim
+  /// (ELECTRON_RUN_AS_NODE). In dev this is the electron binary, which works
+  /// the same way.
+  exe_path: string;
+  /// Set when running from a Linux AppImage: the stable relaunchable file
+  /// (exe_path is the transient mount).
+  appimage: string | null;
+  user_data: string;
+  /// <userData>/cli/weftcut-mcp.cjs once installed; null in dev before
+  /// build:cli has produced the bundle (the panel then falls back to
+  /// HTTP-direct as the primary path).
+  shim_path: string | null;
 }
 
 /// Returns the live MCP server connection details, or `null` if the server is

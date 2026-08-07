@@ -708,7 +708,40 @@ app.whenReady().then(async () => {
   })
   mcpHostRef = mcpHost
 
-  ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
+  // Install the stdio shim copy under <userData>/cli/ (the stable path client
+  // configs reference) and extend the connect info with the stdio fields the
+  // Settings panel needs. HTTP-direct fields stay — both connection paths are
+  // supported; the shim is just the recommended one (survives the app being
+  // closed). See docs/mcp.md.
+  const { installShim, stdioConnectConfig } = await import('./mcp/shimInstall.js')
+  const shimPath = installShim({
+    resourcesShim: path.join(process.resourcesPath, 'cli', 'weftcut-mcp.cjs'),
+    devShim: path.join(import.meta.dirname, '../cli/weftcut-mcp.cjs'),
+    isPackaged: app.isPackaged,
+    userDataDir: app.getPath('userData'),
+  })
+  const stdioInfo = () => ({
+    exe_path: process.execPath,
+    appimage: process.env.APPIMAGE ?? null,
+    user_data: app.getPath('userData'),
+    shim_path: shimPath,
+  })
+  if (!app.isPackaged && shimPath) {
+    console.log(
+      `[mcp] stdio connect: ${JSON.stringify({
+        mcpServers: {
+          weftcut: stdioConnectConfig({
+            execPath: process.execPath,
+            appImage: process.env.APPIMAGE,
+            shimPath,
+            userDataDir: app.getPath('userData'),
+          }),
+        },
+      })}`,
+    )
+  }
+
+  ipcMain.handle('get_mcp_info', () => ({ ...mcpHost.getInfo(), ...stdioInfo() }))
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
   ipcMain.handle('app:notices', () => startupNotices)
   // macOS application menu: the renderer resolves labels (i18next) and

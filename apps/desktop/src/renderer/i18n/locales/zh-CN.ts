@@ -609,6 +609,24 @@ const zhCN: Resources = {
       "- 修改后验证配置语法；如果需要重启客户端，请告诉我。",
       "- 完成后说明修改了哪个文件，以及配置是否有效。",
     ].join("\n"),
+    agent_prompt_stdio: [
+      "请为我配置 WeftCut MCP 服务，直接完成配置修改，不要只告诉我操作步骤。",
+      "",
+      "连接信息：",
+      "- 服务名：weftcut",
+      "- 传输方式：stdio（本地命令）",
+      "- Command：{{command}}",
+      "- Args：{{args}}",
+      "- Env：ELECTRON_RUN_AS_NODE=1, WEFTCUT_USERDATA={{userData}}",
+      "",
+      "要求：",
+      "- 使用你所在客户端官方的 MCP 配置格式与位置。",
+      "- 修改前先检查现有配置，保留所有其他设置和 MCP 服务。",
+      '- 只添加或更新名为 "weftcut" 的 MCP 服务，不要覆盖整个配置文件。',
+      "- command、args、env 的值必须原样保留 — 它们是本机专属路径。",
+      "- 修改后验证配置语法；如果需要重启客户端，请告诉我。",
+      "- 完成后说明修改了哪个文件，以及配置是否有效。",
+    ].join("\n"),
     reveal: "显示令牌",
     hide: "隐藏令牌",
     refresh: "刷新令牌",
@@ -618,6 +636,11 @@ const zhCN: Resources = {
     token_note:
       "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
     snippets_heading: "客户端配置片段",
+    stdio_note:
+      "此配置启动的是 WeftCut 自带的连接 shim — 应用重启、端口变动、令牌轮换后依然有效，应用未打开时也能连接（Agent 可通过 launch_weftcut 工具启动 WeftCut）。",
+    http_heading: "HTTP 直连（高级）",
+    http_note:
+      "直接连接运行中应用的端点：应用关闭即失败，端口或令牌变动后配置作废。除非你的客户端无法启动 stdio 服务，否则请优先使用上方的 shim 配置。",
     tabs: {
       codex: "Codex",
       claude: "Claude",
@@ -629,6 +652,12 @@ const zhCN: Resources = {
       claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
       cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
       generic: "适用于任何 streamable-HTTP MCP 客户端",
+    },
+    hint_stdio: {
+      codex: "粘贴到 ~/.codex/config.toml",
+      claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
+      cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
+      generic: "适用于任何能启动 stdio 服务的 MCP 客户端",
     },
   },
   settings: {

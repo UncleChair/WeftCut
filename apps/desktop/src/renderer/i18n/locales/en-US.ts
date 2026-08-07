@@ -636,6 +636,24 @@ const enUS = {
       "- Validate the resulting configuration syntax. If the client must be restarted, tell me.",
       "- When finished, report which file you changed and whether the configuration is valid.",
     ].join("\n"),
+    agent_prompt_stdio: [
+      "Configure the WeftCut MCP server for me. Make the configuration change directly; do not just describe the steps.",
+      "",
+      "Connection details:",
+      "- Server name: weftcut",
+      "- Transport: stdio (local command)",
+      "- Command: {{command}}",
+      "- Args: {{args}}",
+      "- Env: ELECTRON_RUN_AS_NODE=1, WEFTCUT_USERDATA={{userData}}",
+      "",
+      "Requirements:",
+      "- Use your client's official MCP config format and location.",
+      "- Inspect the existing configuration first and preserve all other settings and MCP servers.",
+      '- Add or update only the MCP server named "weftcut"; do not replace the whole configuration file.',
+      "- Keep the command, args, and env values exactly as given — they are machine-specific paths.",
+      "- Validate the resulting configuration syntax. If the client must be restarted, tell me.",
+      "- When finished, report which file you changed and whether the configuration is valid.",
+    ].join("\n"),
     reveal: "Reveal token",
     hide: "Hide token",
     refresh: "Refresh token",
@@ -646,6 +664,11 @@ const enUS = {
     token_note:
       "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
     snippets_heading: "Client config snippets",
+    stdio_note:
+      "This config launches WeftCut's connection shim — it stays valid across app restarts, port changes, and token rotations, and keeps working while the app is closed (agents can start WeftCut with the launch_weftcut tool).",
+    http_heading: "HTTP direct (advanced)",
+    http_note:
+      "Connects straight to the running app's endpoint. It fails whenever the app is closed and goes stale when the port or token changes — prefer the shim config above unless your client cannot spawn stdio servers.",
     tabs: {
       codex: "Codex",
       claude: "Claude",
@@ -657,6 +680,12 @@ const enUS = {
       claude: "Paste into .mcp.json (project) or ~/.claude.json",
       cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
       generic: "Works with any streamable-HTTP MCP client",
+    },
+    hint_stdio: {
+      codex: "Paste into ~/.codex/config.toml",
+      claude: "Paste into .mcp.json (project) or ~/.claude.json",
+      cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
+      generic: "Works with any MCP client that can spawn stdio servers",
     },
   },
   settings: {
