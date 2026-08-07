@@ -659,10 +659,12 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   let totalDispatched = 0;
   let nativeHandles = 0;
   let colorDiag: unknown = null;
+  const sources: Array<{ mediaId: string; url: string }> = [];
   for (const h of exportPool.handles.values()) {
     totalDispatched += h.dispatchedTotal;
     if (h instanceof NativeExportSourceHandle) nativeHandles++;
     if (!colorDiag && h.firstFrameDiag) colorDiag = h.firstFrameDiag;
+    sources.push({ mediaId: h.mediaId, url: h.sourceUrl });
   }
   post({
     type: "done",
@@ -674,6 +676,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       waitMs: Math.round(totals.waitMs),
       totalMs: Math.round(totalMs),
       colorDiag,
+      sources,
     },
   });
 

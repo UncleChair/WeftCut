@@ -260,7 +260,11 @@ export function useImportReadiness(deps: {
           // pointing export at an original this machine can't decode). A
           // full-proxy source that fails the probe already routes correctly;
           // it just gets no bridge — preview waits for its proxy as before.
-          if (resolveDecode(m).route === "direct-export") {
+          // "unsupported" ONLY: like the sticky mark above, a transient
+          // "unknown" (probe deadline on a loaded machine) must not demote a
+          // decodable source onto a lossy proxy — it stays direct and the
+          // next sweep re-probes it.
+          if (verdict === "unsupported" && resolveDecode(m).route === "direct-export") {
             routeCorrected.current.add(m.id);
             try {
               await ensureFullProxy(m.id);

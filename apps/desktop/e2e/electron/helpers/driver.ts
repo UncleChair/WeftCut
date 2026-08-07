@@ -385,5 +385,11 @@ export async function driveExport(
     const s = (window as any).__weftcutExportState
     return { kind: s?.kind ?? null, detail: s?.detail ?? null }
   })) as { kind: string | null; detail: string | null }
+  // What each handle actually decoded (original vs proxy) — the readiness
+  // gate's route-corrections are otherwise invisible from a green export.
+  const sources = (await page.evaluate(
+    () => (window as any).__weftcutExportPerf?.sources ?? null,
+  )) as Array<{ mediaId: string; url: string }> | null
+  if (sources) console.log(`[e2e] export sources: ${JSON.stringify(sources)}`)
   return { done, lastKind: st.kind, lastDetail: st.detail }
 }

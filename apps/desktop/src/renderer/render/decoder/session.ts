@@ -177,6 +177,10 @@ export interface ExportDecodeSession extends DecodeSession {
   /// received (native). Aggregated into the export `done` perf payload as the
   /// re-seek-redundancy signal. Both concrete handles expose it as a field.
   dispatchedTotal: number;
+  /// The decode target this handle actually opened — the original's asset URL
+  /// or a proxy path. Surfaced in the perf payload so the E2E harness can see
+  /// when the readiness gate route-corrected an export onto a lossy proxy.
+  readonly sourceUrl: string;
   /// Color diagnostic captured off the FIRST decoded frame (config vs stamped
   /// colorSpace + format), forwarded in the perf payload for the E2E harness.
   firstFrameDiag: ExportColorDiag | null;

@@ -474,6 +474,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
     return this._disposed;
   }
 
+  get sourceUrl(): string {
+    return this.proxyAssetUrl;
+  }
+
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
     this.proxyAssetUrl = init.proxyAssetUrl;

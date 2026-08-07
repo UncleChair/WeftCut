@@ -6,6 +6,7 @@
 // See docs/data-model.md#mediaitem and docs/render.md#export-source-resolution.
 
 import { MEDIA_JOB_EVENTS, type MediaJobEvent, type MediaSummary } from "../ipc";
+import type { WebcodecsDecodeVerdict } from "./decoder/probeSourceDecodable";
 import { resolveDecode } from "./decodeRoute";
 
 /// Session probe memo value. "ok" = decoded a key frame this session (cache
@@ -57,8 +58,10 @@ export function sourcesNeedingPreviewProbe(
 }
 
 export interface PrepareDeps {
-  /// Decode one key frame; true = decodable on this machine.
-  probe: (assetUrl: string) => Promise<boolean>;
+  /// Three-valued decodability verdict for an original
+  /// (`classifyWebcodecsDecodability`). Only a DEFINITIVE "unsupported" may
+  /// route-correct — see the verdict handling in `prepareExportMedia`.
+  probe: (assetUrl: string) => Promise<WebcodecsDecodeVerdict>;
   /// Route-correct + enqueue the full proxy (`ensure_full_proxy` backend command).
   ensureFullProxy: (mediaId: string) => Promise<void>;
   /// Session proxy-job state for a media id (App `proxyState`).
@@ -117,14 +120,22 @@ export async function prepareExportMedia(
         continue;
       }
       deps.memo.set(m.id, "pending");
-      const ok = await deps.probe(deps.urlForOriginal(m));
-      if (ok) {
+      const verdict = await deps.probe(deps.urlForOriginal(m));
+      if (verdict === "ok") {
         deps.memo.set(m.id, "ok");
         continue;
       }
       deps.memo.delete(m.id);
-      await deps.ensureFullProxy(m.id);
-      waiting.push(m.id);
+      // Route-correct onto the lossy full proxy ONLY on a DEFINITIVE
+      // unsupported-codec verdict. "unknown" is a transient failure (probe
+      // deadline on a loaded machine, buffer-pool contention) — exporting the
+      // original may fail LOUDLY, but silently shipping proxy quality for a
+      // decodable source is worse, and the memo stays clear so the next
+      // export re-probes.
+      if (verdict === "unsupported") {
+        await deps.ensureFullProxy(m.id);
+        waiting.push(m.id);
+      }
       continue;
     }
     if (exportPath != null) continue; // Bypass / landed Proxied master — export path ready

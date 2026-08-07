@@ -79,7 +79,7 @@ describe("sourcesNeedingPreviewProbe", () => {
 
 describe("prepareExportMedia", () => {
   const deps = (over: Partial<Parameters<typeof prepareExportMedia>[1]> = {}) => ({
-    probe: vi.fn().mockResolvedValue(true),
+    probe: vi.fn().mockResolvedValue("ok"),
     ensureFullProxy: vi.fn().mockResolvedValue(undefined),
     proxyStateOf: () => undefined,
     urlForOriginal: (m: any) => `weftcut-media://${m.id}`,
@@ -98,7 +98,7 @@ describe("prepareExportMedia", () => {
   });
 
   it("decodable DirectExport source probes once and proceeds (export from original)", async () => {
-    const d = deps({ probe: vi.fn().mockResolvedValue(true) });
+    const d = deps({ probe: vi.fn().mockResolvedValue("ok") });
     const r = await prepareExportMedia([vid({ id: "ok", decode_route: directExport() })] as any, d);
     expect(r).toEqual({ waiting: [], failed: [] });
     expect(d.probe).toHaveBeenCalledTimes(1);
@@ -113,12 +113,23 @@ describe("prepareExportMedia", () => {
     expect(d.probe).not.toHaveBeenCalled();
   });
 
-  it("undecodable DirectExport source route-corrects and waits", async () => {
-    const d = deps({ probe: vi.fn().mockResolvedValue(false) });
+  it("definitively unsupported DirectExport source route-corrects and waits", async () => {
+    const d = deps({ probe: vi.fn().mockResolvedValue("unsupported") });
     const r = await prepareExportMedia([vid({ id: "bad", decode_route: directExport() })] as any, d);
     expect(r.waiting).toEqual(["bad"]);
     expect(r.failed).toEqual([]);
     expect(d.ensureFullProxy).toHaveBeenCalledWith("bad");
+  });
+
+  // A transient failure (probe deadline on a loaded machine) must not demote a
+  // decodable source onto its lossy proxy — the CI shape: cold decoders lose
+  // the 2.5s race, every export silently consumed proxy quality (SSIM ~0.67).
+  it("transient 'unknown' verdict exports the original and leaves no memo", async () => {
+    const d = deps({ probe: vi.fn().mockResolvedValue("unknown") });
+    const r = await prepareExportMedia([vid({ id: "busy", decode_route: directExport() })] as any, d);
+    expect(r).toEqual({ waiting: [], failed: [] });
+    expect(d.ensureFullProxy).not.toHaveBeenCalled();
+    expect(d.memo.has("busy")).toBe(false); // next export re-probes
   });
 
   it("encoding-in-flight source (Proxied, no master, proxyState pending) waits; failed source fails", async () => {

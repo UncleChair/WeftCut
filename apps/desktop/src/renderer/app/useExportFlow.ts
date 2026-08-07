@@ -21,7 +21,7 @@ import {
   type MediaSummary,
 } from "../ipc";
 import { type ProxyState } from "../panels/mediaReadiness";
-import { probeSourceDecodable } from "../render/decoder/probeSourceDecodable";
+import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
 import {
   type ExportSettings,
@@ -354,7 +354,7 @@ export function useExportFlow(deps: {
 
       setExportState({ kind: "starting" });
       const prep = await prepareExportMedia(proxyWaitScope(referencedMedia, decodeRouting), {
-        probe: (url) => probeSourceDecodable(url),
+        probe: (url) => classifyWebcodecsDecodability(url),
         ensureFullProxy: (id) => ensureFullProxy(id),
         proxyStateOf: (id) => proxyStateRef.current.get(id),
         urlForOriginal: (m) => convertFileSrc(m.path),

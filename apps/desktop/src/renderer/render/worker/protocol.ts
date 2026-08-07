@@ -212,6 +212,9 @@ export interface ExportPerf {
   /// colorSpace + format). `ExportColorDiag` from ExportDecoderPool; typed
   /// `unknown` here to avoid coupling the message contract to the decoder.
   colorDiag?: unknown;
+  /// Decode target each handle actually opened (original asset URL or proxy
+  /// path) — shows when the readiness gate route-corrected onto a lossy proxy.
+  sources?: Array<{ mediaId: string; url: string }>;
 }
 
 export type ExportEvent =

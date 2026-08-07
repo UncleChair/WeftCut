@@ -73,6 +73,10 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   dispatchedTotal = 0;
   firstFrameDiag: ExportColorDiag | null = null;
 
+  get sourceUrl(): string {
+    return this.sourcePath;
+  }
+
   constructor(init: SourceHandleInit, relay: NativeDecodeRelayClient = getNativeDecodeRelay()) {
     this.mediaId = init.mediaId;
     const ne = init.nativeExport!;
