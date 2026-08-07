@@ -28,20 +28,8 @@ test('emit() broadcasts an event across windows to a listen() subscriber', async
   await app.close()
 })
 
-test('shell:open and notification:send are wired (no missing-handler error)', async () => {
+test('shell:open is wired (no missing-handler error)', async () => {
   const { app, page } = await launchApp()
-
-  // notification:send always resolves (no-ops where unsupported) — proves the
-  // channel exists. An unregistered channel would reject "No handler registered".
-  const notifyResult = await page.evaluate(async () => {
-    try {
-      await (window as any).api.notification.send({ title: 'WeftCut', body: 'hi' })
-      return 'ok'
-    } catch (e) {
-      return String(e)
-    }
-  })
-  expect(notifyResult).toBe('ok')
 
   // shell:open of a non-existent path is handled (openPath returns an error
   // string → handler rejects). The rejection must NOT be the missing-handler
@@ -55,6 +43,27 @@ test('shell:open and notification:send are wired (no missing-handler error)', as
     }
   })
   expect(shellErr).not.toContain('No handler registered')
+
+  await app.close()
+})
+
+test('notification:send is wired (no missing-handler error)', async () => {
+  // Notification.show() is a main-thread libnotify/DBus call; a headless
+  // runner has no notification service and the call wedges the main process.
+  test.skip(process.platform === 'linux' && !!process.env.CI, 'no notification service on headless Linux runners')
+  const { app, page } = await launchApp()
+
+  // notification:send always resolves (no-ops where unsupported) — proves the
+  // channel exists. An unregistered channel would reject "No handler registered".
+  const notifyResult = await page.evaluate(async () => {
+    try {
+      await (window as any).api.notification.send({ title: 'WeftCut', body: 'hi' })
+      return 'ok'
+    } catch (e) {
+      return String(e)
+    }
+  })
+  expect(notifyResult).toBe('ok')
 
   await app.close()
 })

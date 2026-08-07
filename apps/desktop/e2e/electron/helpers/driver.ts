@@ -85,6 +85,14 @@ export function exportSsimFloor(dflt = 0.8): number {
   return Number.isFinite(v) && v > 0 ? v : dflt
 }
 
+/// Same calibration idea for the color gates' per-channel error ceiling: the
+/// software raster's ±1-2 LSB chroma rounding scales through the BT.709
+/// B-channel coefficient into 7-12/255 on the worst patches.
+export function colorFaithfulMax(dflt: number): number {
+  const v = Number(process.env.WEFTCUT_E2E_COLOR_FAITHFUL_MAX)
+  return Number.isFinite(v) && v > 0 ? v : dflt
+}
+
 export type DockDropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center'
 
 /**

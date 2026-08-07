@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyzeColor } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir, colorFaithfulMax } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -23,9 +23,10 @@ const BASELINE_PATH = path.resolve(MEDIA_DIR, '..', 'color_baseline.json')
 // colors. All four encodings are FAITHFUL; 601->709 normalization and
 // full->limited range conversion cost only codec round-trip. ADR 0014.
 //
-// Local-only by design: needs the generated color fixtures (`npm run fixtures`)
-// and a buildable `cargo media_conformance`. CI generates no fixtures, so this
-// group skips there (same status as conformance.spec.ts).
+// Fixtures come from global-setup; the committed baseline gates faithfulness.
+// GPU-less CI legs recalibrate the ceiling via WEFTCUT_E2E_COLOR_FAITHFUL_MAX:
+// the software raster's chroma rounding exceeds the real-GPU ceiling (README
+// §Export SSIM floors) without being an app color bug.
 
 // Reference matrix/range each encoding's SOURCE is decoded with (its tags are
 // incomplete — only a matrix is present). The OUTPUT is decoded by its own tag.
@@ -79,27 +80,28 @@ test.describe('color round-trip conformance (Electron)', () => {
       const [im, ir] = DECODE[enc]!
       const report = analyzeColor({ output, source, manifest: MANIFEST, inMatrix: im, inRange: ir, sample: 10 })
       const expectFaithful = BASELINE[enc].expectFaithful
+      const faithfulMax = colorFaithfulMax(BASELINE.faithfulMax)
       console.log(
         `[e2e] color ${enc}: worst_app_max=${report.worst_app_max} ` +
-          `(expectFaithful=${expectFaithful}, faithfulMax=${BASELINE.faithfulMax})`,
+          `(expectFaithful=${expectFaithful}, faithfulMax=${faithfulMax})`,
       )
 
       if (expectFaithful) {
         // Faithful round-trip: app-only color error must be ~0 across all
         // patches (flat patches, matching matrix). 709-limited is native space.
         const offenders = report.patches.filter(
-          (p: any) => Math.max(...p.app_error.max) > BASELINE.faithfulMax,
+          (p: any) => Math.max(...p.app_error.max) > faithfulMax,
         )
         expect(
           offenders,
           JSON.stringify(offenders.map((p: any) => ({ id: p.id, max: p.app_error.max }))),
         ).toHaveLength(0)
-        expect(report.worst_app_max).toBeLessThanOrEqual(BASELINE.faithfulMax)
+        expect(report.worst_app_max).toBeLessThanOrEqual(faithfulMax)
       } else {
         // KNOWN BUG sentinel: assert the bug is STILL present so the suite stays
         // green; when the color-management fix lands, worst_app_max drops
         // <= faithfulMax and THIS assertion fails — flip expectFaithful then.
-        expect(report.worst_app_max).toBeGreaterThan(BASELINE.faithfulMax)
+        expect(report.worst_app_max).toBeGreaterThan(faithfulMax)
       }
     })
   }

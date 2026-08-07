@@ -215,12 +215,23 @@ from ~0.90 to ~0.67 on smooth regions. Same encoder (`libx264`, identical
 version and settings) scores 0.90 on a real GPU and 0.67 behind SwiftShader,
 so the delta is the raster, not the pipeline.
 
-The workflow pins the Linux leg to `0.62`: its measured healthy baseline is
-~0.67, so a real regression (proxy consumption, black frames, misrender) still
-trips the gate. Windows CI (D3D11/WARP) and macOS (virtualized GPU) both
-measure ≥0.9 healthy and keep the 0.8 default. To recalibrate after a raster
-change (Electron/Chromium bump), read the passing legs' SSIM values from the
-per-test reports and set the floor ~0.05 below the observed baseline.
+The workflow pins BOTH GPU-less legs (Linux and Windows) to `0.62`: each
+measures a healthy baseline of ~0.665-0.68, so a real regression (proxy
+consumption, black frames, misrender) still trips the gate. The Windows
+runner lands in the same class as Linux — a locally-forced D3D11/WARP raster
+scores ≥0.9, but the CI runner's ANGLE ends up on a software raster with the
+SwiftShader signature. macOS (virtualized GPU) measures ≥0.9 and keeps the
+0.8 default. To recalibrate after a raster change (Electron/Chromium bump),
+read the passing legs' SSIM values from the per-test reports and set the
+floor ~0.05 below the observed baseline.
+
+The color gates calibrate the same way: the software raster's ±1-2 LSB chroma
+rounding scales through the BT.709 blue-channel coefficient into per-channel
+patch errors of 7-12/255 on the worst encoding (709ltd) — beyond the
+real-GPU `faithfulMax` of 5 without being an app color bug.
+`WEFTCUT_E2E_COLOR_FAITHFUL_MAX` (workflow: 16 on the GPU-less legs) raises
+the ceiling with margin while still catching real matrix/range mistakes,
+which land at 20+/255.
 
 To reproduce a leg's GL stack locally, launch the suite with
 `WEFTCUT_E2E_GL` (extra Chromium switches for every `launchApp`), e.g.
