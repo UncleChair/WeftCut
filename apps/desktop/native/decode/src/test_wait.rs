@@ -14,15 +14,17 @@
 use std::thread;
 use std::time::Duration;
 
-/// Poll `cond` until it holds, for up to ~5 s. Returns whether it held, so the
-/// caller keeps its own assertion message (and can print the state it observed).
+/// Poll `cond` until it holds, for up to ~30 s — a cold CI runner was measured
+/// blowing a 5 s budget just loading the ffmpeg DLLs under a parallel test
+/// herd. Returns whether it held, so the caller keeps its own assertion
+/// message (and can print the state it observed).
 ///
 /// Use this instead of a fixed sleep whenever the next statement asserts on
 /// something a session thread produces. A fixed sleep is still right for the
 /// opposite shape — proving something does NOT happen, or that a call returns
 /// promptly — where there is no condition to poll for.
 pub(crate) fn wait_for(mut cond: impl FnMut() -> bool) -> bool {
-    for _ in 0..500 {
+    for _ in 0..3000 {
         if cond() {
             return true;
         }
