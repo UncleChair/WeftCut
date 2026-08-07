@@ -23,8 +23,14 @@ export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 /// Windows and macOS deliberately get NOTHING: both have a real GPU stack on
 /// the runners, and forcing software GL on Windows 11 HANGS the offscreen CDP
 /// capture — see the RENDERER CHOICE note in .github/workflows/electron-ci.yml.
-export const GL_SWITCHES: readonly string[] =
-  process.platform === 'linux' ? ['--enable-unsafe-swiftshader'] : []
+/// WEFTCUT_E2E_GL overrides the table (space-separated switches) so a dev
+/// machine can reproduce a CI leg's GL stack, e.g. ubuntu's SwiftShader:
+/// WEFTCUT_E2E_GL="--use-angle=swiftshader --enable-unsafe-swiftshader"
+export const GL_SWITCHES: readonly string[] = process.env.WEFTCUT_E2E_GL
+  ? process.env.WEFTCUT_E2E_GL.split(/\s+/).filter(Boolean)
+  : process.platform === 'linux'
+    ? ['--enable-unsafe-swiftshader']
+    : []
 
 /// Temp-dir lifecycle & default userData isolation.
 ///
@@ -242,6 +248,11 @@ export async function launchApp(
   app.close = wrapClose(app)
   try {
     const page = await app.firstWindow({ timeout: 60_000 })
+    // Opt-in renderer console tap for wedge diagnosis (local or a CI leg).
+    if (process.env.WEFTCUT_E2E_CONSOLE === '1') {
+      page.on('console', (msg) => console.log(`[renderer:${msg.type()}] ${msg.text()}`))
+      page.on('pageerror', (err) => console.log(`[renderer:pageerror] ${err.message}`))
+    }
     await page.waitForLoadState('domcontentloaded')
     return { app, page }
   } catch (e) {

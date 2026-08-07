@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 
-test('H.264 import -> export stays frame-aligned with low loss (Electron)', async () => {
+test('H.264 import -> export stays frame-aligned with low loss (Electron)', async ({}, testInfo) => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
   test.setTimeout(220000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-proj-')
@@ -31,8 +31,14 @@ test('H.264 import -> export stays frame-aligned with low loss (Electron)', asyn
     const SSIM_FLOOR = 0.8
     const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 90, 150], ssimMin: SSIM_FLOOR })
     const misaligned = report.samples.filter((s: any) => !s.aligned)
-    expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
     const lowSsim = report.samples.filter((s: any) => s.ssim < SSIM_FLOOR)
+    if (misaligned.length || lowSsim.length || !report.pass) {
+      // Ship the actual pixels with the failure — a CI SSIM number alone can't
+      // distinguish blur, color shift, or misrender.
+      await testInfo.attach('export-output.mp4', { path: OUTPUT, contentType: 'video/mp4' })
+      await testInfo.attach('source-fixture.mp4', { path: SOURCE, contentType: 'video/mp4' })
+    }
+    expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
     expect(lowSsim, JSON.stringify(lowSsim)).toHaveLength(0)
     expect(report.pass).toBe(true)
   } finally {

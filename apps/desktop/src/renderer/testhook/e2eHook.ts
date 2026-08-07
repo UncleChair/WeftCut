@@ -1059,8 +1059,24 @@ function mediaFromStore(mediaId: string) {
   return useProjectStore.getState().mediaById.get(mediaId);
 }
 
-/// App-side: the real export. `runExport` is App's `runExportWithSettings`,
-/// which awaits the full encode + audio + mux to completion.
+/// A failed export sets exportState to `error` and resolves normally, so "no
+/// output file" is all a spec would see. Reading the window mirror here is
+/// race-free: the `exists()` IPC round trip preceding every call has already
+/// let React commit the mirroring effect.
+function throwNoOutput(outputAbsPath: string): never {
+  const state = (
+    window as unknown as {
+      __weftcutExportState?: { kind?: string; detail?: string };
+    }
+  ).__weftcutExportState;
+  if (state?.kind === "error") {
+    throw new Error(`export failed: ${state.detail ?? "(no detail)"}`);
+  }
+  throw new Error(
+    `export produced no output file at ${outputAbsPath} (last state=${state?.kind})`,
+  );
+}
+
 export function installExportHook(
   runExport: RunExport,
   revealLayer: (layerId: string) => void,
@@ -1087,9 +1103,7 @@ export function installExportHook(
 
   hookSlot().exportTimeline = async ({ outputAbsPath, settings, range }) => {
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
-    if (!(await exists(outputAbsPath))) {
-      throw new Error(`export produced no output file at ${outputAbsPath}`);
-    }
+    if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
   };
 
   hookSlot().mediaConformPath = ({ mediaId }) =>
@@ -1178,9 +1192,7 @@ export function installExportHook(
       // these audio scenarios doubling as overlap-export regression cover.
     }
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
-    if (!(await exists(outputAbsPath))) {
-      throw new Error(`export produced no output file at ${outputAbsPath}`);
-    }
+    if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
   };
 
   hookSlot().exportMotifClip = async ({
@@ -1202,9 +1214,7 @@ export function installExportHook(
     // export proceeds straight to bake + composite. runExport bakes the
     // motif frames on the main thread and transfers them into the Worker.
     await runExport(mergeSettings(settings ?? null), outputAbsPath, undefined);
-    if (!(await exists(outputAbsPath))) {
-      throw new Error(`export produced no output file at ${outputAbsPath}`);
-    }
+    if (!(await exists(outputAbsPath))) throwNoOutput(outputAbsPath);
   };
 }
 
