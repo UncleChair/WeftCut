@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir, exportSsimFloor } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -28,7 +28,7 @@ test('H.264 import -> export stays frame-aligned with low loss (Electron)', asyn
     // Frame alignment (strict) + app-only loss (loose 0.80 floor) at interior
     // frames — one sample per 2s GOP of the 6s fixture, the last 30 frames
     // before EOS (the analyzer's ±2 match window needs center+2 <= 179).
-    const SSIM_FLOOR = 0.8
+    const SSIM_FLOOR = exportSsimFloor()
     const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 90, 150], ssimMin: SSIM_FLOOR })
     const misaligned = report.samples.filter((s: any) => !s.aligned)
     const lowSsim = report.samples.filter((s: any) => s.ssim < SSIM_FLOOR)

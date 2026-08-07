@@ -198,6 +198,37 @@ islands at 5 s, 60 s, and 120 s. The same spec samples it through the real tile
 producer at 80, 15, and 8 px/s, covering the roughly 62.64, 15.66, and 7.83
 peaks/s LODs where an integer peaks/s timebase used to accumulate severe drift.
 
+## Export SSIM floors are environment-calibrated
+
+The 1:1 export gates (`conformance`, `export_overlap_same_source`,
+`export_eos_tail`, the pinned-software `export-range-audio` test) assert
+SSIM ≥ `exportSsimFloor()` — 0.8 by default, overridable per CI leg via
+`WEFTCUT_E2E_SSIM_FLOOR`.
+
+The override exists because the floor's healthy value depends on the runner's
+GL raster, not on the app. On a GPU-less Linux runner the export composites on
+SwiftShader, whose shader rounding lands the YUV→RGB→YUV round trip ±1-2 LSB
+away from real-GPU output on most pixels (measured: ~77% of pixels off by 1-2,
+biased per luma level). That is within the color gates' 1-2/255 tolerance and
+leaves PSNR flat (~33 dB both ways), but SSIM — variance-sensitive — collapses
+from ~0.90 to ~0.67 on smooth regions. Same encoder (`libx264`, identical
+version and settings) scores 0.90 on a real GPU and 0.67 behind SwiftShader,
+so the delta is the raster, not the pipeline.
+
+The workflow pins the Linux leg to `0.62`: its measured healthy baseline is
+~0.67, so a real regression (proxy consumption, black frames, misrender) still
+trips the gate. Windows CI (D3D11/WARP) and macOS (virtualized GPU) both
+measure ≥0.9 healthy and keep the 0.8 default. To recalibrate after a raster
+change (Electron/Chromium bump), read the passing legs' SSIM values from the
+per-test reports and set the floor ~0.05 below the observed baseline.
+
+To reproduce a leg's GL stack locally, launch the suite with
+`WEFTCUT_E2E_GL` (extra Chromium switches for every `launchApp`), e.g.
+`--use-angle=d3d11-warp` for Windows CI or
+`--use-angle=swiftshader --enable-unsafe-swiftshader` for Linux — and
+`WEFTCUT_E2E_CONSOLE=1` to stream the renderer/worker console into the test
+output (dispatch CI runs set this automatically).
+
 ## The dev control surface
 
 The specs drive `apps/desktop/src/testhook/e2eHook.ts` (`window.__weftcutTest`),

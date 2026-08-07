@@ -76,6 +76,15 @@ export function tmpDir(prefix: string): string {
   return dir
 }
 
+/// Export-fidelity SSIM floor for the 1:1 export gates. Default 0.8; a CI leg
+/// whose GL raster legitimately rounds differently (SwiftShader: pervasive
+/// ±1-2 LSB, SSIM-visible but PSNR-flat) overrides it to its measured healthy
+/// baseline minus margin via WEFTCUT_E2E_SSIM_FLOOR — see e2e/README.md.
+export function exportSsimFloor(dflt = 0.8): number {
+  const v = Number(process.env.WEFTCUT_E2E_SSIM_FLOOR)
+  return Number.isFinite(v) && v > 0 ? v : dflt
+}
+
 export type DockDropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center'
 
 /**

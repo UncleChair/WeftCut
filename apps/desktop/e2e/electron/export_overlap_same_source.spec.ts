@@ -3,12 +3,12 @@ import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, tmpDir, waitForHook, driveExport } from './helpers/driver'
+import { launchApp, newProject, tmpDir, waitForHook, driveExport, exportSsimFloor } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
-const SSIM_FLOOR = 0.8
+const SSIM_FLOOR = exportSsimFloor()
 const OFFSET_US = 2_000_000
 const OFFSET_FRAMES = 60
 

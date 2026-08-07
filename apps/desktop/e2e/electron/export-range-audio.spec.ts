@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia, invokeCmd, summary, tmpDir } from './helpers/driver'
+import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia, invokeCmd, summary, tmpDir, exportSsimFloor } from './helpers/driver'
 
 // Runtime smoke for the export-range + audio-settings feature, end-to-end
 // through the real renderer + real ffmpeg mux. Reuses the per-second
@@ -423,7 +423,7 @@ test.describe('export range + audio settings (Electron)', () => {
 
     await bootAndExport({ output, source: VIDEO_SOURCE, settings: { hwAccel: 'software' } })
 
-    const SSIM_FLOOR = 0.8
+    const SSIM_FLOOR = exportSsimFloor()
     const report = analyze({ output, source: VIDEO_SOURCE, samples: [30, 90, 150], ssimMin: SSIM_FLOOR })
     console.log('[e2e] software-encode report:', JSON.stringify(report))
     expect(report.samples.filter((s: any) => !s.aligned)).toHaveLength(0)

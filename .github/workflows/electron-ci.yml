@@ -330,6 +330,10 @@ jobs:
           # Dispatch runs are the scoped-diagnosis tool — tap the renderer
           # console so a wedge reports its last milestone in the job log.
           WEFTCUT_E2E_CONSOLE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          # Linux renders on SwiftShader, whose shader rounding shifts smooth
+          # regions by ±1-2 LSB — SSIM-visible, PSNR-flat. Floor calibrated to
+          # that leg's measured healthy baseline (~0.67); see e2e/README.md.
+          WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os == 'ubuntu-latest' && '0.62' || '' }}
           E2E_ARGS: ${{ inputs.e2e_args }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then

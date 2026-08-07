@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir, exportSsimFloor } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -36,7 +36,7 @@ test('EOS-tail export completes and keeps the drained tail frame-aligned (Electr
 
     // Samples 200 + 270 sit inside the EOS drain region; keep below 300 (the
     // clamp-held overhang frames are last-frame dups by design).
-    const SSIM_FLOOR = 0.8
+    const SSIM_FLOOR = exportSsimFloor()
     const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150, 200, 270], ssimMin: SSIM_FLOOR })
     const misaligned = report.samples.filter((s: any) => !s.aligned)
     expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
