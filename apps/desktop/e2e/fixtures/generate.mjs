@@ -54,6 +54,7 @@ const COLOR_TAGS = [
 export function outputName({
   fps,
   format,
+  seconds,
   audio,
   color,
   colorProres,
@@ -90,10 +91,14 @@ export function outputName({
   if (gradientH2644k) return 'test_2160p_gradient10_h264.mp4'
   if (h264Interframe) return 'test_1080p_h264.mp4'
   const container = format ?? 'mp4'
-  if (container === 'prores') return `test_1080p_${fps}fps_prores.mov`
-  if (eostail) return `test_1080p_${fps}fps_eostail.${container}`
-  if (audio) return `test_1080p_${fps}fps_audio.${container}`
-  return `test_1080p_${fps}fps.${container}`
+  // Non-default durations are part of the name so a warm media dir can never
+  // satisfy an entry with a stale file of the old length (generation skips on
+  // existence alone).
+  const secondsSuffix = seconds ? `_${seconds}s` : ''
+  if (container === 'prores') return `test_1080p_${fps}fps${secondsSuffix}_prores.mov`
+  if (eostail) return `test_1080p_${fps}fps${secondsSuffix}_eostail.${container}`
+  if (audio) return `test_1080p_${fps}fps${secondsSuffix}_audio.${container}`
+  return `test_1080p_${fps}fps${secondsSuffix}.${container}`
 }
 
 export function colorPatches(width, height) {
@@ -633,6 +638,20 @@ function generateVideo(entry, outputDir, run, fontOptions) {
   if (!Number.isInteger(fps) || fps <= 0) {
     throw new Error('--fps must be a positive integer')
   }
+  const seconds = entry.seconds ?? DURATION_SECONDS
+  if (!Number.isInteger(seconds) || seconds <= 0) {
+    throw new Error('--seconds must be a positive integer')
+  }
+  if (entry.gop !== undefined && (!Number.isInteger(entry.gop) || entry.gop <= 0)) {
+    throw new Error('--gop must be a positive integer (frames)')
+  }
+  // Explicit keyframe cadence (x264 lanes only). Without it the keyframe grid
+  // is whatever x264's default keyint=250 leaves behind, which shifts with
+  // duration — a short clip would silently collapse to a single GOP and lose
+  // the cross-GOP seek geometry the export gates sample.
+  const gopArgs = entry.gop
+    ? ['-g', String(entry.gop), '-keyint_min', String(entry.gop), '-sc_threshold', '0']
+    : []
   const format = entry.format ?? 'mp4'
   let output = outputName({ ...entry, fps, format })
   const font = drawtextFontFile(fontOptions)
@@ -640,7 +659,7 @@ function generateVideo(entry, outputDir, run, fontOptions) {
   const colorFilter = 'format=rgb24,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p'
   const input = [
     '-y', '-f', 'lavfi', '-i',
-    `testsrc2=size=${WIDTH}x${HEIGHT}:rate=${fps}:duration=${DURATION_SECONDS}`,
+    `testsrc2=size=${WIDTH}x${HEIGHT}:rate=${fps}:duration=${seconds}`,
   ]
   let args
 
@@ -649,7 +668,7 @@ function generateVideo(entry, outputDir, run, fontOptions) {
     case 'mkv':
     case 'mov': {
       if (entry.eostail || entry.audio) {
-        const audioSeconds = entry.eostail ? DURATION_SECONDS + 1 : DURATION_SECONDS
+        const audioSeconds = entry.eostail ? seconds + 1 : seconds
         args = [...input]
         const concatInputs = appendToneInputs(args, audioSeconds, 1)
         const complexFilter = `[0:v]${filterChain},${colorFilter}[v];${concatInputs}concat=n=${audioSeconds}:v=0:a=1[a]`
@@ -659,8 +678,12 @@ function generateVideo(entry, outputDir, run, fontOptions) {
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'medium',
         )
         if (entry.eostail) {
+          // eostail owns its keyframe grid (keys at 0s/5s ARE the deadlock
+          // geometry) — an entry-level gop must not override it.
           const gop = String(5 * fps)
           args.push('-g', gop, '-keyint_min', gop, '-sc_threshold', '0')
+        } else {
+          args.push(...gopArgs)
         }
         args.push(...COLOR_TAGS, '-c:a', 'aac', '-b:a', '192k', output)
       } else {
@@ -668,6 +691,7 @@ function generateVideo(entry, outputDir, run, fontOptions) {
           ...input,
           '-vf', `${filterChain},${colorFilter}`,
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'medium',
+          ...gopArgs,
           ...COLOR_TAGS,
           '-an', output,
         ]
@@ -703,7 +727,7 @@ function generateVideo(entry, outputDir, run, fontOptions) {
       throw new Error(`unsupported --format ${JSON.stringify(format)} (supported: mp4, mkv, mov, webm, gif, prores)`)
   }
 
-  console.log(`Generating ${output} (${WIDTH}x${HEIGHT}, ${fps} fps, ${DURATION_SECONDS}s)`)
+  console.log(`Generating ${output} (${WIDTH}x${HEIGHT}, ${fps} fps, ${seconds}s)`)
   run(args, { cwd: outputDir })
   console.log(`Done: ${output}`)
 }
@@ -740,6 +764,8 @@ export function generateFixture(entry, {
 const VALUE_FLAGS = new Map([
   ['--fps', ['fps', Number]],
   ['--format', ['format', String]],
+  ['--seconds', ['seconds', Number]],
+  ['--gop', ['gop', Number]],
   ['--aformat', ['aformat', String]],
   ['--pts-offset-ms', ['ptsOffsetMs', Number]],
   ['--color', ['color', String]],
@@ -804,6 +830,7 @@ function printHelp() {
 Generate one deterministic fixture in the current directory.
 
   --fps N --format mp4|mkv|mov|webm|gif|prores [--audio] [--eostail]
+        [--seconds N] [--gop FRAMES]
   --imageset
   --audiotones --aformat wav|mp3|flac|m4a|ogg
   --audio-timing [--pts-offset-ms N]

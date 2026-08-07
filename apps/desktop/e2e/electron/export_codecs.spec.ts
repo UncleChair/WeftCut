@@ -9,8 +9,10 @@ import { launchApp, tmpDir, newProject, driveExport } from './helpers/driver'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 
-// Standard 1080p30 source for AV1 + HEVC 8-bit smoke.
-const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps.mp4')
+// Standard 1080p30 source for AV1 + HEVC 8-bit smoke — the 6s short fixture
+// (pinned 2s GOPs), sized so sample 150 still lands cross-GOP (GOP 3 of 3)
+// while the full-clip export stays ~40% cheaper than the 10s clips.
+const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 // 10-bit H.264 gradient ramp source — proves >256 luma levels survive the
 // f16/WebGL2 + yuv420p10le pack + native IPC video sink + ffmpeg HEVC Main10 chain.
 const SOURCE_10BIT = path.resolve(MEDIA_DIR, 'test_1080p_gradient10_h264.mp4')
@@ -176,7 +178,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // -------------------------------------------------------------------------
   // AV1, pinned `encoderEngine:'webcodecs'` (WebCodecs sw encode → ffmpeg
   // mux_export) — why the pin: see AV1_SETTINGS.
-  // Source: test_1080p_30fps.mp4 (standard 10s fixture, always present).
+  // Source: test_1080p_30fps_6s.mp4 (the short standard fixture, always present).
   // Asserts: export completes, output is frame-aligned (analyze SSIM ≥ 0.6).
   // Deliberately does NOT assert the explicit bt709/limited color 4-tuple —
   // that's the native sink's contract; the WebCodecs/mux_export lane relies
@@ -263,7 +265,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
 
   // -------------------------------------------------------------------------
   // HEVC on `auto` — rides the native ffmpeg video sink.
-  // Source: test_1080p_30fps.mp4.
+  // Source: test_1080p_30fps_6s.mp4.
   // Asserts: export completes, output is HEVC-tagged + 8-bit, carries the
   // explicit bt709/limited color 4-tuple (the native sink's assertable
   // color-tagging contract, same as the pinned-native H.264 cell below), and
@@ -389,7 +391,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // -------------------------------------------------------------------------
   // Pinned-native H.264 (encoderEngine:'native' → PackYuvPlanar yuv420p →
   // chunk/ack IPC → ffmpeg video sink, bypassing WebCodecs entirely).
-  // Source: test_1080p_30fps.mp4.
+  // Source: test_1080p_30fps_6s.mp4.
   // Asserts: export completes, output is h264/yuv420p, EXPLICIT bt709/limited
   // color tags (the native sink's assertable color-tagging contract), and
   // frame-aligned (SSIM ≥ 0.6).
@@ -441,12 +443,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
 
   // -------------------------------------------------------------------------
   // ProRes 422 (intermediate; native ffmpeg video sink, f16 10-bit composite →
-  // prores_ks). Source: test_1080p_30fps.mp4.
+  // prores_ks). Source: test_1080p_30fps_6s.mp4.
   // Asserts: export completes, output is prores/yuv422p10le with an explicit
   // tv (limited) color_range in a MOV container, and frame-aligned (SSIM ≥ 0.6).
   // Timeout matches the 10-bit HEVC cell (600000/560000): ProRes composites at
   // 10-bit (same f16/PackYuvPlanar pipeline cost) even though the source here
-  // is 8-bit test_1080p_30fps.mp4.
+  // is 8-bit test_1080p_30fps_6s.mp4.
   // -------------------------------------------------------------------------
   test('ProRes 422 export lands in MOV with 10-bit 4:2:2 (Electron) @matrix', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
@@ -503,7 +505,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
 
   // -------------------------------------------------------------------------
   // DNxHR SQ (intermediate; native ffmpeg video sink, 8-bit composite → dnxhd).
-  // Source: test_1080p_30fps.mp4.
+  // Source: test_1080p_30fps_6s.mp4.
   // Asserts: export completes, output is dnxhd/yuv422p (ffprobe reports the
   // codec FAMILY name `dnxhd`, with the specific profile string carrying the
   // "DNXHR SQ" flavor), and frame-aligned (SSIM ≥ 0.6).

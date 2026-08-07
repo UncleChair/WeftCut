@@ -20,6 +20,11 @@ export const MATRIX = [
   { fps: 120, format: "mp4" },
   { fps: 30, format: "mkv" },
   { fps: 30, format: "prores" }, // emits test_1080p_30fps_prores.mov
+  // short standard clip (6s, pinned 2s GOPs) — the codec-shape export smokes
+  // (export_codecs.spec.ts). The 10s clips owe their second keyframe to x264's
+  // default keyint=250; the explicit -g 60 keeps mid-GOP and cross-GOP sample
+  // geometry alive at the shorter runtime.
+  { fps: 30, format: "mp4", seconds: 6, gop: 60 },
   // audio (per-second tone markers) — sources for the audio axis (3 frame rates)
   { fps: 30, format: "mp4", audio: true },
   { fps: 60, format: "mp4", audio: true },

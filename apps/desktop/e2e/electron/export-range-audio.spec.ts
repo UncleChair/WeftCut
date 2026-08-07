@@ -20,7 +20,8 @@ const fixture = (name: string) => path.resolve(MEDIA_DIR, name)
 const SOURCE = fixture('test_1080p_30fps_audio.mp4')
 // Burned-in-counter video fixture (no audio) — for the software-encode case
 // (video frame-alignment + SSIM; hwAccel only affects the video encoder).
-const VIDEO_SOURCE = fixture('test_1080p_30fps.mp4')
+// The 6s short fixture: one sample per 2s GOP still crosses every GOP.
+const VIDEO_SOURCE = fixture('test_1080p_30fps_6s.mp4')
 
 const toneHz = (second: number) => 400 + 120 * second
 
@@ -423,7 +424,7 @@ test.describe('export range + audio settings (Electron)', () => {
     await bootAndExport({ output, source: VIDEO_SOURCE, settings: { hwAccel: 'software' } })
 
     const SSIM_FLOOR = 0.8
-    const report = analyze({ output, source: VIDEO_SOURCE, samples: [30, 150, 270], ssimMin: SSIM_FLOOR })
+    const report = analyze({ output, source: VIDEO_SOURCE, samples: [30, 90, 150], ssimMin: SSIM_FLOOR })
     console.log('[e2e] software-encode report:', JSON.stringify(report))
     expect(report.samples.filter((s: any) => !s.aligned)).toHaveLength(0)
     expect(report.samples.filter((s: any) => s.ssim < SSIM_FLOOR)).toHaveLength(0)

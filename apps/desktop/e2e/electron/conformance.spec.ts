@@ -7,7 +7,7 @@ import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
-const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps.mp4')
+const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 
 test('H.264 import -> export stays frame-aligned with low loss (Electron)', async () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
@@ -25,9 +25,11 @@ test('H.264 import -> export stays frame-aligned with low loss (Electron)', asyn
     const r = await driveExport(page, { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT })
     if (!r.done.ok) throw new Error('exportClip failed: ' + r.done.error)
 
-    // Frame alignment (strict) + app-only loss (loose 0.80 floor) at interior frames.
+    // Frame alignment (strict) + app-only loss (loose 0.80 floor) at interior
+    // frames — one sample per 2s GOP of the 6s fixture, the last 30 frames
+    // before EOS (the analyzer's ±2 match window needs center+2 <= 179).
     const SSIM_FLOOR = 0.8
-    const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150, 270], ssimMin: SSIM_FLOOR })
+    const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 90, 150], ssimMin: SSIM_FLOOR })
     const misaligned = report.samples.filter((s: any) => !s.aligned)
     expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
     const lowSsim = report.samples.filter((s: any) => s.ssim < SSIM_FLOOR)

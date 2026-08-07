@@ -7,7 +7,7 @@ import { launchApp, newProject, tmpDir, waitForHook, driveExport } from './helpe
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
-const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps.mp4')
+const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 const SSIM_FLOOR = 0.8
 const OFFSET_US = 2_000_000
 const OFFSET_FRAMES = 60
@@ -72,9 +72,9 @@ test.describe('same-source overlapping clips export (Electron)', () => {
       await bootProject(page, tmpDir('weftcut-e2e-overlap-proj-'), 'e2e-overlap-base')
       await placeSameSourceClips(page, [])
       const perf = await runTimelineExport(page, out)
-      expect(perf.totalFrames, '10s @ 30fps = 300 frames').toBe(300)
+      expect(perf.totalFrames, '6s @ 30fps = 180 frames').toBe(180)
       baselineDispatched = perf.totalDispatched
-      const report = analyze({ output: out, source: SOURCE, samples: [30, 150, 290], ssimMin: SSIM_FLOOR })
+      const report = analyze({ output: out, source: SOURCE, samples: [30, 90, 170], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(report)
     } finally {
       await app.close()
@@ -89,8 +89,8 @@ test.describe('same-source overlapping clips export (Electron)', () => {
       await bootProject(page, tmpDir('weftcut-e2e-overlap-proj-'), 'e2e-overlap-stack')
       await placeSameSourceClips(page, [0])
       const perf = await runTimelineExport(page, out)
-      expect(perf.totalFrames).toBe(300)
-      const report = analyze({ output: out, source: SOURCE, samples: [30, 150, 290], ssimMin: SSIM_FLOOR })
+      expect(perf.totalFrames).toBe(180)
+      const report = analyze({ output: out, source: SOURCE, samples: [30, 90, 170], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(report)
       if (baselineDispatched == null) throw new Error('baseline dispatch reference missing')
       const ceiling = Math.ceil(baselineDispatched * 1.25)
@@ -108,12 +108,17 @@ test.describe('same-source overlapping clips export (Electron)', () => {
       await bootProject(page, tmpDir('weftcut-e2e-overlap-proj-'), 'e2e-overlap-offset')
       await placeSameSourceClips(page, [OFFSET_US])
       const perf = await runTimelineExport(page, out)
-      expect(perf.totalFrames, '12s composition = 360 frames').toBe(360)
+      expect(perf.totalFrames, '8s composition = 240 frames').toBe(240)
       const headReport = analyze({ output: out, source: SOURCE, samples: [30], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(headReport)
-      const tail = analyze({ output: out, source: SOURCE, samples: [200], window: OFFSET_FRAMES + 2 })
+      // Output 100 sits mid-overlap ([60, 180)) where the offset copy is on
+      // top, so it must best-match source 40. The center is boxed on both
+      // sides: past 180 leaves the overlap (proving only the solo tail), and
+      // the analyzer's search window has no clamp at the source's end, so
+      // center + OFFSET_FRAMES + 2 must stay <= 179.
+      const tail = analyze({ output: out, source: SOURCE, samples: [100], window: OFFSET_FRAMES + 2 })
       const s = tail.samples[0]
-      expect(s.best_match_index, `output 200 best-matches source ${200 - OFFSET_FRAMES}`).toBe(200 - OFFSET_FRAMES)
+      expect(s.best_match_index, `output 100 best-matches source ${100 - OFFSET_FRAMES}`).toBe(100 - OFFSET_FRAMES)
     } finally {
       await app.close()
     }
