@@ -129,8 +129,16 @@ export function rememberGeometry(
     if (win.isDestroyed() || win.isMinimized()) return
     const measured = win.getNormalBounds()
     if (baseline && !withinDeadband(measured, baseline)) baseline = null
+    // While maximized/fullscreen, keep the last stored rect and refresh only
+    // the flags. macOS reports the zoomed/fullscreen frame as "normal" bounds
+    // for a window that was never in normal state (zoomed from birth has no
+    // pre-zoom rect), which would overwrite a good restore-down size; the true
+    // pre-maximize rect was already captured by the move/resize events that
+    // preceded the state flip.
+    const held =
+      win.isMaximized() || win.isFullScreen() ? store.get(label)?.bounds : undefined
     store.remember(label, {
-      bounds: baseline ?? measured,
+      bounds: held ?? baseline ?? measured,
       maximized: win.isMaximized(),
       fullScreen: win.isFullScreen(),
     })
