@@ -27,6 +27,10 @@ on:
         description: 'Run the unsigned packaging step'
         type: boolean
         default: true
+      no_export:
+        description: 'Keep the WEFTCUT_E2E_NO_EXPORT-disabled export legs off'
+        type: boolean
+        default: true
 
 # Least-privilege token: this workflow only reads the repo, builds, tests, and
 # uploads artifacts (the artifact API uses its own runtime token) — it never
@@ -322,7 +326,9 @@ jobs:
       - name: E2E tests (includes determinism capture)
         shell: bash
         env:
-          WEFTCUT_E2E_NO_EXPORT: '1'
+          # A dispatch can turn the disabled export legs back on (no_export:
+          # false) — the validation path for recovering that coverage.
+          WEFTCUT_E2E_NO_EXPORT: ${{ (github.event_name != 'workflow_dispatch' || inputs.no_export) && '1' || '' }}
           # The @matrix tier (see playwright.config.ts) runs only on the nightly
           # sweep — per-PR it would blow the job budget. A dispatch opts in by
           # passing --full in e2e_args instead of getting it implicitly.
