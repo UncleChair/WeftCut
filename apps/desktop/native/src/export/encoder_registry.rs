@@ -590,12 +590,13 @@ trait CapabilityProbe: Send + Sync {
 ///
 /// The probe only encodes a single 640x360 black frame, so probes that resolve
 /// at all resolve fast — but the wall clock also covers spawning ffmpeg and,
-/// for the hardware adapters, driver/runtime enumeration, which a loaded
-/// machine can stretch past any tight budget. A timeout must mean "this
-/// encoder is unusable", never "this machine was busy", so the budget is
-/// generous; each result is cached per capability key, so a slow probe is
-/// paid once.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+/// for the hardware adapters, driver/runtime enumeration. A timeout must mean
+/// "this encoder is unusable", never "this machine was busy": a saturated CI
+/// box (two suite workers exporting at once) was measured pushing every spawn
+/// past 15s, so the budget is generous. Candidates probe concurrently, so a
+/// resolution pays this budget once, and each result is cached per capability
+/// key.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Default)]
 struct FfmpegCapabilityProbe;
@@ -708,9 +709,28 @@ impl EncoderRegistry {
 
     async fn select(&self, key: CapabilityKey) -> CachedSelection {
         let candidates = candidate_adapters(self.platform, key);
+        // Concurrent: sequential probing multiplies the timeout by the
+        // candidate count on a machine where probes run slow (GPU-less CI),
+        // and the wait itself keeps the box saturated. Preference order still
+        // decides — results are consumed in candidate order below.
+        let handles: Vec<_> = candidates
+            .iter()
+            .map(|&adapter| {
+                let probe = Arc::clone(&self.probe);
+                tokio::spawn(async move { probe.probe(adapter, key).await })
+            })
+            .collect();
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            results.push(
+                handle
+                    .await
+                    .unwrap_or_else(|e| Err(format!("probe task failed: {e}"))),
+            );
+        }
         let mut attempts = Vec::with_capacity(candidates.len());
-        for adapter in candidates {
-            match self.probe.probe(adapter, key).await {
+        for (&adapter, result) in candidates.iter().zip(results) {
+            match result {
                 Ok(()) => {
                     info!(
                         codec = %key.codec,
@@ -1191,7 +1211,13 @@ mod tests {
 
         assert_eq!(plan.encoder_name, "h264_qsv");
         assert_eq!(plan.acceleration, SelectedAcceleration::Hardware);
-        assert_eq!(probe.calls(), vec!["h264_nvenc", "h264_qsv"]);
+        // Candidates probe concurrently, so every adapter is asked — but the
+        // preference order still decides: qsv wins even though libx264 also
+        // passed its probe.
+        assert_eq!(
+            probe.calls(),
+            vec!["h264_nvenc", "h264_qsv", "h264_amf", "libx264"]
+        );
     }
 
     #[tokio::test]
