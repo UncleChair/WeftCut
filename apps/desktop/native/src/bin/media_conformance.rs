@@ -263,19 +263,94 @@ fn psnr_pngs(a_png: &[u8], b_png: &[u8]) -> Result<f64> {
     Ok(10.0 * (255.0_f64 * 255.0 / mse).log10())
 }
 
+/// Split a concatenated image2pipe PNG stream into individual files by walking
+/// each PNG's chunk grammar (length + type + data + CRC) to its IEND — the
+/// signature bytes can legally appear inside compressed data, so scanning for
+/// them would mis-split.
+fn split_png_stream(buf: &[u8]) -> Result<Vec<Vec<u8>>> {
+    const SIG: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < buf.len() {
+        anyhow::ensure!(buf[i..].starts_with(SIG), "PNG signature expected at byte {i}");
+        let start = i;
+        i += SIG.len();
+        loop {
+            anyhow::ensure!(i + 8 <= buf.len(), "truncated PNG chunk header");
+            let len = u32::from_be_bytes([buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]) as usize;
+            let is_iend = &buf[i + 4..i + 8] == b"IEND";
+            i += 8 + len + 4;
+            anyhow::ensure!(i <= buf.len(), "truncated PNG chunk");
+            if is_iend {
+                break;
+            }
+        }
+        out.push(buf[start..i].to_vec());
+    }
+    Ok(out)
+}
+
+/// Decode source frames `[lo, hi]` as PNGs in ONE ffmpeg pass. One spawn per
+/// frame made a window scan quadratic (select-by-index decodes from the start
+/// every time) and spawn-bound on Windows CI, where each process costs seconds.
+/// A source that ends inside the window is an error, same as the per-frame
+/// path — the e2e suites rely on that to catch truncated exports.
+fn extract_frames_png_range(mp4: &Path, lo: u64, hi: u64) -> Result<Vec<Vec<u8>>> {
+    if !mp4.exists() {
+        anyhow::bail!("mp4 not found: {}", mp4.display());
+    }
+    let want = (hi - lo + 1) as usize;
+    let out = Command::new(ffmpeg_path())
+        .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
+        .arg(mp4)
+        .args([
+            "-vf",
+            &format!("select=between(n\\,{lo}\\,{hi})"),
+            "-frames:v",
+            &want.to_string(),
+            "-vsync",
+            "0",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "png",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn ffmpeg (frame range)")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "ffmpeg frame-range decode failed for {} [{lo}..={hi}]: {}",
+            mp4.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let frames = split_png_stream(&out.stdout)?;
+    anyhow::ensure!(
+        frames.len() == want,
+        "source {} ended inside the search window: got {} of {want} frames [{lo}..={hi}]",
+        mp4.display(),
+        frames.len()
+    );
+    Ok(frames)
+}
+
 /// Over source indices `[center-window, center+window]`, return the index whose
 /// frame best-matches `out_png` (highest SSIM) and that score. This is the
 /// alignment primitive: a correctly-aligned output frame best-matches its OWN
 /// source index, because the burned-in counter makes neighbors distinct.
 fn best_match_index(out_png: &[u8], source: &Path, center: u64, window: u64) -> Result<(u64, f64)> {
     let lo = center.saturating_sub(window);
-    let hi = center + window;
+    let frames = extract_frames_png_range(source, lo, center + window)?;
     let mut best = (center, f64::MIN);
-    for m in lo..=hi {
-        let src = extract_frame_png(source, m)?;
-        let s = ssim_pngs(out_png, &src)?;
+    for (off, src) in frames.iter().enumerate() {
+        let s = ssim_pngs(out_png, src)?;
         if s > best.1 {
-            best = (m, s);
+            best = (lo + off as u64, s);
         }
     }
     Ok(best)
@@ -1360,6 +1435,19 @@ mod tests {
         let (best, score) = best_match_index(&out10, clip, 10, 2).unwrap();
         assert_eq!(best, 10, "self best-match must be the same index");
         assert!(score > 0.999);
+    }
+
+    #[test]
+    fn best_match_window_past_eof_errors() {
+        // A search window the source cannot fill must ERROR, not truncate —
+        // the e2e suites lean on this to catch short exports (exit 3).
+        let clip = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/media/tiny.mp4"
+        ));
+        let out10 = extract_frame_png(clip, 10).unwrap();
+        let err = best_match_index(&out10, clip, 100_000, 2);
+        assert!(err.is_err(), "window past EOF must error: {err:?}");
     }
 
     #[test]
