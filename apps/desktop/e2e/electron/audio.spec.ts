@@ -22,9 +22,9 @@ const fixture = (name: string) => path.resolve(MEDIA_DIR, name)
 // by the envelope + role suites.
 const SOURCE = fixture('test_1080p_30fps_audio.mp4')
 
-// Local-only by design: needs the generated tone fixtures (`npm run fixtures`)
-// and a buildable `cargo media_conformance`. CI generates no fixtures, so these
-// groups skip there.
+// Fixtures come from global-setup. The envelope + role suites assert ONLY
+// audio, so they export with includeVideo:false — on the GPU-less CI legs the
+// incidental 1080p video lane (software raster) was 5-8x the test's real cost.
 
 // ─── 1. Audio conformance matrix ─────────────────────────────────────────────
 // Audio conformance across the matrix: source frame rate (video-grid-vs-audio
@@ -202,7 +202,7 @@ test.describe('audio envelope conformance (Electron)', () => {
     })
     const args: Record<string, unknown> = { mediaAbsPath: SOURCE, outputAbsPath: opts.output }
     if (opts.audioPatches) args.audioPatches = opts.audioPatches
-    if (opts.settings) args.settings = opts.settings
+    args.settings = { includeVideo: false, includeAudio: true, ...(opts.settings ?? {}) }
     const r = await driveExport(page, args)
     if (!r.done.ok) {
       throw new Error(`exportClip failed: ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`)
@@ -359,7 +359,8 @@ test.describe('audio role mixing conformance (Electron)', () => {
 
     // Sanity: both roles audible ⇒ symmetric stereo field (L−R ≈ 0 dB).
     const baselineOut = path.join(tmpDir('weftcut-e2e-role-out-'), 'role-baseline.mp4')
-    let r = await driveExport(page, { outputAbsPath: baselineOut }, { hook: 'exportTimeline' })
+    const AUDIO_ONLY = { includeVideo: false, includeAudio: true }
+    let r = await driveExport(page, { outputAbsPath: baselineOut, settings: AUDIO_ONLY }, { hook: 'exportTimeline' })
     if (!r.done.ok) throw new Error(`baseline export failed: ${r.done.error}`)
     const baseline = analyzeAudioPan({ output: baselineOut, expectLrDb: 0.0 })
     console.log('[e2e] role baseline pan report:', JSON.stringify(baseline))
@@ -368,7 +369,7 @@ test.describe('audio role mixing conformance (Electron)', () => {
     // Mute the MUSIC role — the only lever that silences the music.
     await invokeCmd(page, 'update_role_flags', { role: 'music', patch: { muted: true } })
 
-    r = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline' })
+    r = await driveExport(page, { outputAbsPath: output, settings: AUDIO_ONLY }, { hook: 'exportTimeline' })
     if (!r.done.ok) {
       throw new Error(`role-mute export failed: ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`)
     }
@@ -421,7 +422,11 @@ test.describe('audio role mixing conformance (Electron)', () => {
       })
       await invokeCmd(page, 'set_role_gain', { role: 'dialogue', gainDb })
 
-      const r = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline' })
+      const r = await driveExport(
+        page,
+        { outputAbsPath: output, settings: { includeVideo: false, includeAudio: true } },
+        { hook: 'exportTimeline' },
+      )
       if (!r.done.ok) {
         throw new Error(
           `role-gain export failed (gain ${gainDb} dB): ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`,
