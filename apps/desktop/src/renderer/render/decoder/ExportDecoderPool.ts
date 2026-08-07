@@ -456,6 +456,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// worker for the E2E perf diagnostic.
   dispatchedTotal = 0;
   private downgraded = false;
+  /// Bumped by `rebuildDecoder`/`dispose` — the two things that interleave with
+  /// `decodeRange`'s awaits (the WebCodecs error callback fires as a queued
+  /// task). Same discipline as PacketPump's generation guard: a moved
+  /// generation means the fresh decoder is keyframe-hungry and the in-flight
+  /// dispatch must restart from a key seek, not feed it its next delta.
+  private generation = 0;
   private _disposed = false;
   /// Source PTS where the EOS drain began — the `aUs` of the range whose
   /// dispatch ran out of packets. Ranges at/after it need no packet dispatch
@@ -637,6 +643,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// re-seeks a key packet into the fresh decoder. `downgraded` + in-store
   /// frames stay.
   private rebuildDecoder(): void {
+    this.generation += 1;
     try {
       this.decoder?.close();
     } catch {
@@ -686,128 +693,142 @@ export class ExportSourceHandle implements ExportDecodeSession {
     const packetSink = this.opened?.packetSink;
     if (!packetSink) return;
 
-    // End-of-stream handling. A forward tail range was already fully fed by
-    // the range that hit EOS — return immediately so the worker proceeds to
-    // `waitForPts`, which frees the pool slots the floated flush needs to keep
-    // emitting. Blocking here on the flush deadlocks the export: the final
-    // GOP's drain can span multiple chunks, and nothing frees slots until the
-    // consumer loop runs (the observed freeze at 12660/12731).
-    if (this.eosFrontierUs !== null) {
-      if (aUs >= this.eosFrontierUs) return;
-      // True backward jump (same-media clip reuse) into a drained/draining
-      // decoder. A re-seek must restart from a keyframe anyway, and the
-      // in-flight flush may be stalled on pool slots — rebuild instead of
-      // awaiting it; the superseded flush settles harmlessly (identity-guarded
-      // callbacks).
+    // A rebuild (HW→SW downgrade / inactivity recovery) can land during any
+    // await below — the error callback fires as a queued task. The fresh
+    // decoder must be seeded from a key packet; continuing this dispatch would
+    // feed it its next delta (the synchronous "key frame required" throw).
+    // So every await is generation-checked and a moved generation restarts the
+    // range: the rebuild nulled the cursor, so the retry takes the key-seek
+    // path and re-feeds the fresh decoder. Same discipline as PacketPump.
+    restart: for (;;) {
+      // End-of-stream handling. A forward tail range was already fully fed by
+      // the range that hit EOS — return immediately so the worker proceeds to
+      // `waitForPts`, which frees the pool slots the floated flush needs to keep
+      // emitting. Blocking here on the flush deadlocks the export: the final
+      // GOP's drain can span multiple chunks, and nothing frees slots until the
+      // consumer loop runs (the observed freeze at 12660/12731).
+      if (this.eosFrontierUs !== null) {
+        if (aUs >= this.eosFrontierUs) return;
+        // True backward jump (same-media clip reuse) into a drained/draining
+        // decoder. A re-seek must restart from a keyframe anyway, and the
+        // in-flight flush may be stalled on pool slots — rebuild instead of
+        // awaiting it; the superseded flush settles harmlessly (identity-guarded
+        // callbacks).
+        // eslint-disable-next-line no-console
+        console.log(
+          `[weftcut/export] ${this.mediaId} backward range pts=[${aUs}..${bUs}]us ` +
+            `across EOS frontier — rebuilding decoder`,
+        );
+        this.rebuildDecoder();
+      }
+      const gen = this.generation;
+
+      // Forward ranges (the export's normal march) continue from the cursor;
+      // only a true backward jump (aUs before the previous range — same-media
+      // clip reuse) re-seeks. The per-packet frontier `lastDispatchedPtsUs` must
+      // NOT drive this: the stop-after-key rule overshoots it to the next GOP's
+      // key, and misreading that as "backward" re-feeds the whole stream prefix
+      // behind the consumer (stale-frame corruption at GOP boundaries).
+      const forward = this.cursor !== null && aUs >= this.lastRangeAUs;
+      this.lastRangeAUs = aUs;
+
+      // Fully covered by a prior overshooting dispatch: every packet this range
+      // needs is already in the decoder/ring pipeline — feed nothing.
+      if (forward && bUs < this.coveredThroughUs) {
+        return;
+      }
+
+      let pkt: EncodedPacket | null;
+      if (forward) {
+        pkt = await packetSink.getNextPacket(this.cursor!);
+      } else {
+        pkt = await packetSink.getKeyPacket(this.toContainerPtsUs(aUs) / 1e6);
+        // `getKeyPacket` is null when `aUs` precedes the first key packet — a
+        // trimmed / edit-list source whose first frame PTS is past the requested
+        // time (e.g. ffmpeg `-ss` clips). Fall back to the track's first packet
+        // (always the opening keyframe) so the decode starts from the GOP head
+        // instead of feeding from nothing and wedging the export. Mirrors the
+        // same fallback in `probeSourceDecodable`.
+        if (!pkt) {
+          pkt = await packetSink.getFirstPacket();
+        }
+      }
+      if (this._disposed) return;
+      if (this.generation !== gen) continue;
+
       // eslint-disable-next-line no-console
       console.log(
-        `[weftcut/export] ${this.mediaId} backward range pts=[${aUs}..${bUs}]us ` +
-          `across EOS frontier — rebuilding decoder`,
+        `[weftcut/export] ${this.mediaId} decodeRange pts=[${aUs}..${bUs}]us ` +
+          `(start=${pkt ? this.clock.sourceUs(pkt.microsecondTimestamp) : "none"}us, ` +
+          `frontier=${this.lastDispatchedPtsUs}us)`,
       );
-      this.rebuildDecoder();
-    }
 
-    // Forward ranges (the export's normal march) continue from the cursor;
-    // only a true backward jump (aUs before the previous range — same-media
-    // clip reuse) re-seeks. The per-packet frontier `lastDispatchedPtsUs` must
-    // NOT drive this: the stop-after-key rule overshoots it to the next GOP's
-    // key, and misreading that as "backward" re-feeds the whole stream prefix
-    // behind the consumer (stale-frame corruption at GOP boundaries).
-    const forward = this.cursor !== null && aUs >= this.lastRangeAUs;
-    this.lastRangeAUs = aUs;
+      let dispatched = 0;
+      // PTS of the stop key once dispatched. The loop then keeps feeding ONLY
+      // the packets that decode after the key but display before it (open-GOP
+      // leading B-frames) so "everything strictly below the key's PTS is fed"
+      // becomes an exact invariant — what `coveredThroughUs` claims.
+      let stopKeyPtsUs: number | null = null;
+      while (pkt) {
+        const ptsUs = this.clock.sourceUs(pkt.microsecondTimestamp);
+        if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
+        const prepared = this.clock.prepare(pkt);
+        this.decoder.decode(prepared.chunk);
+        this.cursor = pkt;
+        this.lastDispatchedPtsUs = prepared.sourcePtsUs;
+        dispatched++;
+        this.dispatchedTotal++;
+        // Mark the first key strictly past bUs — that key begins the GOP after
+        // bUs, so everything with PTS ≤ bUs has been fed once its leading
+        // B-frames (if any) follow.
+        if (stopKeyPtsUs === null && pkt.type === "key" && ptsUs > bUs) {
+          stopKeyPtsUs = ptsUs;
+        }
+        pkt = await packetSink.getNextPacket(pkt);
+        if (this._disposed) return;
+        if (this.generation !== gen) continue restart;
+      }
+      // Lead-in past the stop key, on every lane: push the decoder's withheld
+      // reorder/pipelining tail out with real input (a mid-stream flush is the
+      // deadlock landmine — see the header). A zero-delay decoder just sees a
+      // few extra frames the ring already tolerates, and the next range
+      // continues from the cursor, so nothing is ever fed twice.
+      let extra = 0;
+      while (pkt && extra < REORDER_MARGIN) {
+        const prepared = this.clock.prepare(pkt);
+        this.decoder.decode(prepared.chunk);
+        this.cursor = pkt;
+        this.lastDispatchedPtsUs = prepared.sourcePtsUs;
+        dispatched++;
+        this.dispatchedTotal++;
+        extra++;
+        pkt = await packetSink.getNextPacket(pkt);
+        if (this._disposed) return;
+        if (this.generation !== gen) continue restart;
+      }
+      if (stopKeyPtsUs !== null) {
+        this.coveredThroughUs = Math.max(this.coveredThroughUs, stopKeyPtsUs);
+      }
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/export] ${this.mediaId} decodeRange dispatched ${dispatched} ` +
+          `(queue=${this.decoder.decodeQueueSize})`,
+      );
 
-    // Fully covered by a prior overshooting dispatch: every packet this range
-    // needs is already in the decoder/ring pipeline — feed nothing.
-    if (forward && bUs < this.coveredThroughUs) {
+      // End-of-stream discriminator: `getNextPacket` returned null (`pkt ===
+      // null`), NOT the key-past-bUs `break` (which leaves `pkt` holding that
+      // key). Either this range dispatched to exhaustion, or — `dispatched === 0`
+      // with a positioned cursor — a PREVIOUS range's stop-after-key break
+      // already consumed the stream's final packet and this range found nothing
+      // left. Both are true EOS: the final GOP's trailing frames stay parked in
+      // the decoder's reorder buffer until an explicit flush (the mid-stream
+      // drain mechanism — the next GOP key — can never arrive).
+      if (pkt === null && (dispatched > 0 || this.cursor !== null)) {
+        this.eosFrontierUs = aUs;
+        this.coveredThroughUs = Number.POSITIVE_INFINITY;
+        this.issueEosFlush();
+      }
       return;
-    }
-
-    let pkt: EncodedPacket | null;
-    if (forward) {
-      pkt = await packetSink.getNextPacket(this.cursor!);
-    } else {
-      pkt = await packetSink.getKeyPacket(this.toContainerPtsUs(aUs) / 1e6);
-      // `getKeyPacket` is null when `aUs` precedes the first key packet — a
-      // trimmed / edit-list source whose first frame PTS is past the requested
-      // time (e.g. ffmpeg `-ss` clips). Fall back to the track's first packet
-      // (always the opening keyframe) so the decode starts from the GOP head
-      // instead of feeding from nothing and wedging the export. Mirrors the
-      // same fallback in `probeSourceDecodable`.
-      if (!pkt) {
-        pkt = await packetSink.getFirstPacket();
-      }
-    }
-    if (this._disposed) return;
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/export] ${this.mediaId} decodeRange pts=[${aUs}..${bUs}]us ` +
-        `(start=${pkt ? this.clock.sourceUs(pkt.microsecondTimestamp) : "none"}us, ` +
-        `frontier=${this.lastDispatchedPtsUs}us)`,
-    );
-
-    let dispatched = 0;
-    // PTS of the stop key once dispatched. The loop then keeps feeding ONLY
-    // the packets that decode after the key but display before it (open-GOP
-    // leading B-frames) so "everything strictly below the key's PTS is fed"
-    // becomes an exact invariant — what `coveredThroughUs` claims.
-    let stopKeyPtsUs: number | null = null;
-    while (pkt) {
-      const ptsUs = this.clock.sourceUs(pkt.microsecondTimestamp);
-      if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
-      const prepared = this.clock.prepare(pkt);
-      this.decoder.decode(prepared.chunk);
-      this.cursor = pkt;
-      this.lastDispatchedPtsUs = prepared.sourcePtsUs;
-      dispatched++;
-      this.dispatchedTotal++;
-      // Mark the first key strictly past bUs — that key begins the GOP after
-      // bUs, so everything with PTS ≤ bUs has been fed once its leading
-      // B-frames (if any) follow.
-      if (stopKeyPtsUs === null && pkt.type === "key" && ptsUs > bUs) {
-        stopKeyPtsUs = ptsUs;
-      }
-      pkt = await packetSink.getNextPacket(pkt);
-      if (this._disposed) return;
-    }
-    // Lead-in past the stop key, on every lane: push the decoder's withheld
-    // reorder/pipelining tail out with real input (a mid-stream flush is the
-    // deadlock landmine — see the header). A zero-delay decoder just sees a
-    // few extra frames the ring already tolerates, and the next range
-    // continues from the cursor, so nothing is ever fed twice.
-    let extra = 0;
-    while (pkt && extra < REORDER_MARGIN) {
-      const prepared = this.clock.prepare(pkt);
-      this.decoder.decode(prepared.chunk);
-      this.cursor = pkt;
-      this.lastDispatchedPtsUs = prepared.sourcePtsUs;
-      dispatched++;
-      this.dispatchedTotal++;
-      extra++;
-      pkt = await packetSink.getNextPacket(pkt);
-      if (this._disposed) return;
-    }
-    if (stopKeyPtsUs !== null) {
-      this.coveredThroughUs = Math.max(this.coveredThroughUs, stopKeyPtsUs);
-    }
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/export] ${this.mediaId} decodeRange dispatched ${dispatched} ` +
-        `(queue=${this.decoder.decodeQueueSize})`,
-    );
-
-    // End-of-stream discriminator: `getNextPacket` returned null (`pkt ===
-    // null`), NOT the key-past-bUs `break` (which leaves `pkt` holding that
-    // key). Either this range dispatched to exhaustion, or — `dispatched === 0`
-    // with a positioned cursor — a PREVIOUS range's stop-after-key break
-    // already consumed the stream's final packet and this range found nothing
-    // left. Both are true EOS: the final GOP's trailing frames stay parked in
-    // the decoder's reorder buffer until an explicit flush (the mid-stream
-    // drain mechanism — the next GOP key — can never arrive).
-    if (pkt === null && (dispatched > 0 || this.cursor !== null)) {
-      this.eosFrontierUs = aUs;
-      this.coveredThroughUs = Number.POSITIVE_INFINITY;
-      this.issueEosFlush();
     }
   }
 
@@ -870,6 +891,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   dispose(): void {
+    this.generation += 1;
     if (this.decoder) {
       try {
         this.decoder.close();

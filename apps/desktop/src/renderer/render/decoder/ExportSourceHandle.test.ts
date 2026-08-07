@@ -27,7 +27,7 @@ function pkt(tSec: number, type: "key" | "delta"): FakePacket {
     timestamp: tSec,
     microsecondTimestamp: timestampUs,
     type,
-    toEncodedVideoChunk: () => ({ timestamp: timestampUs }) as EncodedVideoChunk,
+    toEncodedVideoChunk: () => ({ timestamp: timestampUs, type }) as EncodedVideoChunk,
   };
 }
 
@@ -53,6 +53,7 @@ function makeSink(packets: FakePacket[]) {
 class FakeVideoDecoder {
   static instances: FakeVideoDecoder[] = [];
   readonly output: (frame: VideoFrame) => void;
+  readonly errorCb: (e: unknown) => void;
   decoded: unknown[] = [];
   flushCalls = 0;
   closed = false;
@@ -61,6 +62,7 @@ class FakeVideoDecoder {
 
   constructor(init: { output: (frame: VideoFrame) => void; error: (e: unknown) => void }) {
     this.output = init.output;
+    this.errorCb = init.error;
     FakeVideoDecoder.instances.push(this);
   }
   configure(_cfg: VideoDecoderConfig): void {}
@@ -356,6 +358,44 @@ describe("ExportSourceHandle reorder margin", () => {
     const dec = FakeVideoDecoder.instances[0]!;
     // 11 through the stop key + exactly 16 margin (not 17 or more).
     expect(dec.decoded.length).toBe(11 + 16);
+  });
+});
+
+// A decoder rebuild fired by the error callback (the CI shape: a GPU-less
+// runner fails the prefer-hardware configure before any output frame, so
+// handleDecodeError downgrades to software) lands BETWEEN decodeRange's
+// dispatch awaits. The fresh decoder starts keyframe-hungry; continuing the
+// old dispatch fed it a delta — the synchronous "A key frame is required
+// after configure() or flush()" throw that killed every export on CI.
+describe("ExportSourceHandle mid-dispatch rebuild", () => {
+  it("restarts the range from a key seek instead of feeding the fresh decoder a delta", async () => {
+    const packets = [pkt(0, "key")];
+    for (let i = 1; i <= 20; i++) packets.push(pkt(i * 0.02, "delta"));
+    const base = makeSink(packets);
+    let nextCalls = 0;
+    sink = {
+      ...base,
+      async getNextPacket(p: FakePacket) {
+        nextCalls++;
+        // The HW failure surfaces mid-dispatch, as a task between awaits —
+        // exactly how Chromium queues the WebCodecs error callback.
+        if (nextCalls === 3) {
+          FakeVideoDecoder.instances[0]!.errorCb(new Error("Unsupported configuration"));
+        }
+        return base.getNextPacket(p);
+      },
+    };
+    const h = makeHandle();
+
+    await h.decodeRange(0, 400_000);
+
+    expect(FakeVideoDecoder.instances.length).toBe(2);
+    expect(FakeVideoDecoder.instances[0]!.closed).toBe(true);
+    const rebuilt = FakeVideoDecoder.instances[1]!;
+    expect((rebuilt.decoded[0] as { type: string }).type).toBe("key");
+    // The restart re-fed the whole range, so the chunk's waiters can resolve
+    // (a bailed dispatch parks the worker's waitForPts forever).
+    expect(rebuilt.decoded.length).toBe(packets.length);
   });
 });
 
