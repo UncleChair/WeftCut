@@ -376,11 +376,28 @@ export async function driveExport(
     },
     { h: hook, a: args },
   )
-  const handle = await page.waitForFunction(() => (window as any).__e2eExportDone, undefined, {
-    timeout,
-    polling: 1000,
-  })
-  const done = (await handle.jsonValue()) as { ok: boolean; error?: string }
+  let done: { ok: boolean; error?: string }
+  try {
+    const handle = await page.waitForFunction(() => (window as any).__e2eExportDone, undefined, {
+      timeout,
+      polling: 1000,
+    })
+    done = (await handle.jsonValue()) as { ok: boolean; error?: string }
+  } catch (e) {
+    // Timed out mid-export: surface WHERE it wedged, not just that it did.
+    const st = await page
+      .evaluate(() => {
+        const s = (window as any).__weftcutExportState
+        const p = (window as any).__weftcutExportPerf
+        return { kind: s?.kind ?? null, detail: s?.detail ?? null, perf: p ?? null }
+      })
+      .catch(() => null)
+    throw new Error(
+      `export did not complete within ${timeout}ms; ` +
+        `last state=${st?.kind}/${JSON.stringify(st?.detail)} perf=${JSON.stringify(st?.perf)}`,
+      { cause: e },
+    )
+  }
   const st = (await page.evaluate(() => {
     const s = (window as any).__weftcutExportState
     return { kind: s?.kind ?? null, detail: s?.detail ?? null }
