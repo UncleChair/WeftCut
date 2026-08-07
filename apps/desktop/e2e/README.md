@@ -68,6 +68,24 @@ npm run e2e -- --project=serial                  # only the @serial gates
 The preflight always prints which tier it is running, so a smaller-than-expected
 test count is never a mystery.
 
+### Timing reports
+
+Every Playwright invocation writes a JSON report to `e2e-report/<project>.json`
+(gitignored) — one per project, since an unscoped run invokes Playwright twice.
+It is the only durable record of what the suite costs: the console reporter is
+`list` locally and `dot` on CI, and `dot` prints no per-test time at all.
+
+- `stats.duration` / `stats.startTime` — that invocation's wall clock. The
+  `serial` report's is the suite's hard floor; it owns the machine at
+  `workers: 1`, so no worker count shortens it.
+- `suites[].specs[].tests[].results[]` — per test: `duration`, `startTime`,
+  `workerIndex`, and `steps[].duration`.
+
+electron-ci publishes them per OS as the `e2e-timings-<os>` artifact on every
+run, green or red. Nothing consumes the reports automatically — they exist to be
+read when a leg approaches its job timeout, which is what produced the `@matrix`
+tier below.
+
 The Rust analyzer (`media_conformance`) used by the export/conformance specs,
 fixture generation, and per-gate details are documented in
 [`../../../docs/conformance.md`](../../../docs/conformance.md).

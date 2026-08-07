@@ -63,6 +63,27 @@ export function planE2ERuns(args) {
   ]
 }
 
+const REPORT_DIR = 'e2e-report'
+
+/** Per-invocation destination for the JSON timing report, named after the
+ * project the run targets. playwright.config.ts can only name ONE path, and an
+ * unscoped run invokes Playwright once per project — without this the parallel
+ * report overwrites the serial one, which is the half whose wall clock is the
+ * suite's hard floor (it owns the machine at `workers: 1`).
+ *
+ * Stale files from an earlier partial run are deliberately left in place rather
+ * than cleared: each report carries its own `stats.startTime`, so age is
+ * readable from the file, and a `--project=`-scoped run does not destroy the
+ * other half's timings. */
+export function reportFileForRun(args, root = ROOT) {
+  const separate = args.indexOf('--project')
+  const project =
+    args.find((arg) => arg.startsWith('--project='))?.slice('--project='.length) ||
+    (separate === -1 ? null : args[separate + 1]) ||
+    'e2e'
+  return path.join(root, REPORT_DIR, `${project}.json`)
+}
+
 // Same per-OS tables the fetch script (resources/ffmpeg/<os>/) and the specs'
 // component probe (export-native-wedges.spec.ts ADDON_FILE) use.
 const FFMPEG_OS_DIR = { win32: 'win', linux: 'linux', darwin: 'mac' }
@@ -204,10 +225,12 @@ export function runE2E(argv = process.argv.slice(2)) {
   // time; being able to see the rest is the point.
   const statuses = []
   for (const runArgs of planE2ERuns(args)) {
+    const reportFile = reportFileForRun(runArgs)
+    console.log(`[e2e preflight] JSON timing report → ${path.relative(ROOT, reportFile)}`)
     const result = spawnSync(
       process.execPath,
       [cli, 'test', '-c', 'playwright.config.ts', ...runArgs],
-      { cwd: ROOT, env, stdio: 'inherit' },
+      { cwd: ROOT, env: { ...env, PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile }, stdio: 'inherit' },
     )
     // A spawn error (no binary, EAGAIN) is not a test result — fail loudly
     // rather than folding it into a status the caller reads as "tests ran".

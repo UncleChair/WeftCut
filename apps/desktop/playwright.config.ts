@@ -15,6 +15,21 @@ export default defineConfig({
   testDir: 'e2e/electron',
   timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
+  /// A JSON report rides alongside the console reporter because it is the only
+  /// durable record of what the suite costs: `stats` carries the invocation's
+  /// wall clock, every test result its own `duration`, `workerIndex`, and
+  /// `startTime`. Nothing else here does — CI's default `dot` prints no
+  /// per-test time at all, and Playwright's built-in slow-test warning cannot
+  /// fire on a single test, its 5-minute default threshold sitting well above
+  /// the 60 s `timeout` above.
+  ///
+  /// The path must stay OUT of `outputDir` (test-results/): Playwright clears
+  /// that at the start of every run, and an unscoped `npm run e2e` invokes
+  /// Playwright twice (serial, then parallel) — the serial report would not
+  /// survive. For the same reason scripts/run-e2e.mjs gives each invocation its
+  /// own file via `PLAYWRIGHT_JSON_OUTPUT_FILE`, which outranks this value;
+  /// what is written here is what a bare `npx playwright test` produces.
+  reporter: [[process.env.CI ? 'dot' : 'list'], ['json', { outputFile: 'e2e-report/e2e.json' }]],
   /// Generate any missing fixture media before workers boot (see
   /// e2e/global-setup.ts). Idempotent — a warm checkout is a fast no-op.
   globalSetup: './e2e/global-setup.ts',

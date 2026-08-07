@@ -83,8 +83,8 @@ large and generated. Merging them would recouple the two and bloat the repo.
 
 These appear in a working tree but are never tracked; they're rebuilt locally or
 in CI: `determinism-artifacts/`, `test-results/`, `playwright-report/`,
-`apps/desktop/e2e/fixtures/media/`, `apps/desktop/e2e/fixtures/decode-bench/`,
-`reports/`, `.stryker-tmp/`.
+`e2e-report/`, `apps/desktop/e2e/fixtures/media/`,
+`apps/desktop/e2e/fixtures/decode-bench/`, `reports/`, `.stryker-tmp/`.
 
 ## Deeper docs
 

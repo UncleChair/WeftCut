@@ -7,6 +7,7 @@ import {
   foldRunStatuses,
   planE2ERuns,
   prepareE2EEnv,
+  reportFileForRun,
   splitFullFlag,
   splitGateFlags,
 } from './run-e2e.mjs'
@@ -36,6 +37,40 @@ test('an explicit E2E project remains one targeted run', () => {
     planE2ERuns(['--project', 'parallel', '-g', 'edge drop']),
     [['--project', 'parallel', '-g', 'edge drop']],
   )
+})
+
+// ── reportFileForRun ───────────────────────────────────────────────────────
+// The load-bearing property is that the planned runs get DISTINCT files. They
+// share one config, so a collision silently costs the serial project's timings
+// — the report still exists and still parses, just describing the wrong half.
+
+test('each planned run writes its own timing report', () => {
+  const files = planE2ERuns(['audio.spec.ts']).map((run) => reportFileForRun(run, '/root'))
+  assert.deepEqual(files, [
+    path.join('/root', 'e2e-report', 'serial.json'),
+    path.join('/root', 'e2e-report', 'parallel.json'),
+  ])
+})
+
+test('a report is named for the project, in either --project spelling', () => {
+  assert.equal(
+    reportFileForRun(['--project=serial', '-g', 'ruler'], '/root'),
+    path.join('/root', 'e2e-report', 'serial.json'),
+  )
+  assert.equal(
+    reportFileForRun(['--project', 'parallel', '-g', 'edge drop'], '/root'),
+    path.join('/root', 'e2e-report', 'parallel.json'),
+  )
+})
+
+test('a project-less run still names a file rather than an undefined path', () => {
+  // Reachable through a bare `npx playwright test`-shaped argv; a literal
+  // "undefined.json" would be a working report under a name nobody searches.
+  assert.equal(
+    reportFileForRun(['smoke.spec.ts'], '/root'),
+    path.join('/root', 'e2e-report', 'e2e.json'),
+  )
+  assert.equal(reportFileForRun(['--project'], '/root'), path.join('/root', 'e2e-report', 'e2e.json'))
 })
 
 // ── foldRunStatuses ────────────────────────────────────────────────────────

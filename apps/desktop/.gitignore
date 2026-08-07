@@ -13,6 +13,9 @@ native/decode/*.dylib
 # Playwright-for-Electron e2e output (transient; S3b+)
 test-results/
 playwright-report/
+# JSON timing reports, one per Playwright invocation (run-e2e.mjs). Separate
+# from test-results/ because Playwright clears that dir at the start of a run.
+e2e-report/
 
 # ffmpeg binaries (fetched in CI / Task 2; not committed) + the GPLv3
 # compliance records fetch-ffmpeg.mjs derives from them (banner provenance —

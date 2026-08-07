@@ -331,6 +331,19 @@ jobs:
           retention-days: 14
           path: apps/desktop/test-results/**
 
+      # Per-test durations for the run, one JSON per project (playwright.config.ts
+      # §reporter). Its own artifact rather than a path added to test-results-*
+      # above: that one is empty on a green run, and a green run is exactly when
+      # these timings are worth reading. if: always() so a red or timed-out leg —
+      # the case that motivates looking at cost at all — still publishes them.
+      - name: Upload e2e timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-timings-${{ matrix.os }}
+          retention-days: 14
+          path: apps/desktop/e2e-report/**
+
       # Sign-free packaging. Deliberately NOT `npm run package`: that script
       # re-runs napi:build + napi:build:decode for a one-shot local package,
       # and both addons already built above (their .node artefacts persist in
