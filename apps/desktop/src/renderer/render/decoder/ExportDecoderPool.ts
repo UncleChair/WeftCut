@@ -462,6 +462,16 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// generation means the fresh decoder is keyframe-hungry and the in-flight
   /// dispatch must restart from a key seek, not feed it its next delta.
   private generation = 0;
+  /// The most recently requested range and whether its dispatch is still in
+  /// flight. An error-callback rebuild landing BETWEEN ranges (short single-GOP
+  /// sources dispatch + return before the async configure error arrives) has no
+  /// restart loop to re-drive it — `rebuildDecoder` re-runs this range itself,
+  /// else the ring stays empty and every `waitForPts` waiter hangs.
+  private lastRange: { aUs: number; bUs: number } | null = null;
+  private rangeInFlight = false;
+  /// Serializes range dispatches: a rebuild-issued re-drive must never
+  /// interleave with the worker's next `decodeRange` (shared cursor).
+  private driveChain: Promise<void> = Promise.resolve();
   private _disposed = false;
   /// Source PTS where the EOS drain began — the `aUs` of the range whose
   /// dispatch ran out of packets. Ranges at/after it need no packet dispatch
@@ -667,6 +677,18 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // Stale copy-chain links are identity-guarded; reset so new copies from the
     // rebuilt decoder don't chain behind an old settled tail.
     this.copyChain = Promise.resolve();
+    // Between ranges there is no restart loop to notice the new generation —
+    // re-drive the last range into the fresh decoder, or the ring never fills
+    // and the worker's waitForPts hangs. A failed re-drive fails the ring so
+    // the export errors loudly instead of wedging.
+    if (!this.rangeInFlight && this.lastRange && !this._disposed) {
+      const { aUs, bUs } = this.lastRange;
+      // eslint-disable-next-line no-console
+      console.log(`[weftcut/export] ${this.mediaId} re-driving range pts=[${aUs}..${bUs}]us after rebuild`);
+      void this.decodeRange(aUs, bUs).catch((e: unknown) => {
+        this.ring.fail(`[weftcut/export] ${this.mediaId} post-rebuild re-drive failed: ${String(e)}`);
+      });
+    }
   }
 
   /// Compositor's `setAnchorTime` reaches us here; export drives decoding via
@@ -691,7 +713,23 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// `ring.waitForPts`; flushing would deadlock against the held VideoFrame
   /// pool slots). Awaiting `getNextPacket` faults in uncached bytes natively
   /// — no pre-fault needed.
-  async decodeRange(aUs: number, bUs: number): Promise<void> {
+  decodeRange(aUs: number, bUs: number): Promise<void> {
+    const run = this.driveChain.then(() => this.driveRange(aUs, bUs));
+    this.driveChain = run.catch(() => {});
+    return run;
+  }
+
+  private async driveRange(aUs: number, bUs: number): Promise<void> {
+    this.lastRange = { aUs, bUs };
+    this.rangeInFlight = true;
+    try {
+      await this.dispatchRange(aUs, bUs);
+    } finally {
+      this.rangeInFlight = false;
+    }
+  }
+
+  private async dispatchRange(aUs: number, bUs: number): Promise<void> {
     if (!this.config || !this.decoder) await this.ensureReady();
     if (!this.config || !this.decoder) return;
     const packetSink = this.opened?.packetSink;

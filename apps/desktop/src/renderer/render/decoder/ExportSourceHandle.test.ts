@@ -397,6 +397,31 @@ describe("ExportSourceHandle mid-dispatch rebuild", () => {
     // (a bailed dispatch parks the worker's waitForPts forever).
     expect(rebuilt.decoded.length).toBe(packets.length);
   });
+
+  // Short single-GOP sources (the 1s color fixtures) dispatch every packet and
+  // return before Chromium's queued configure error lands — no restart loop is
+  // alive to re-drive the range, which was the macOS CI wedge: rebuilt decoder,
+  // empty ring, waitForPts parked forever.
+  it("re-drives the range when the error lands after decodeRange returned", async () => {
+    const packets = [pkt(0, "key")];
+    for (let i = 1; i <= 20; i++) packets.push(pkt(i * 0.02, "delta"));
+    sink = makeSink(packets);
+    const h = makeHandle();
+
+    await h.decodeRange(0, 400_000);
+    expect(FakeVideoDecoder.instances.length).toBe(1);
+
+    FakeVideoDecoder.instances[0]!.errorCb(new Error("Unsupported configuration"));
+    // The re-drive is a detached async chain — settle it.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(FakeVideoDecoder.instances.length).toBe(2);
+    expect(FakeVideoDecoder.instances[0]!.closed).toBe(true);
+    const rebuilt = FakeVideoDecoder.instances[1]!;
+    expect((rebuilt.decoded[0] as { type: string }).type).toBe("key");
+    expect(rebuilt.decoded.length).toBe(packets.length);
+  });
 });
 
 // preferSoftware: 10-bit decode has no HW path; pre-configure SW to skip the
