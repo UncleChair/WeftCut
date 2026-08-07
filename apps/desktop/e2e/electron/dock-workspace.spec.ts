@@ -32,6 +32,15 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
   // Editing layout, not whatever a previous default-userData spec autosaved.
   const { app, page } = await launchApp();
   try {
+    // Proportions are only meaningful at a defined viewport. The default
+    // window tracks the runner's display — and macOS zooms a screen-sized
+    // window into a frame with its own geometry — so pin a size every CI
+    // display can host before measuring.
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]!;
+      if (win.isMaximized()) win.unmaximize();
+      win.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    });
     const parent = tmpDir("weftcut-dock-");
     await newProject(page, {
       parentFolder: parent,

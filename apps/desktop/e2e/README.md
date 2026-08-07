@@ -44,8 +44,9 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
 - **The analyzer-backed gates need a buildable `cargo`.** `lib/analyze.mjs`
   shells `cargo run --bin media_conformance --features jobs,export`; the first
   invocation compiles it (slow), later runs reuse the binary. These gates
-  (`conformance`, `color-conformance`, `audio`, `export-range-audio`) therefore
-  run **locally only** and skip in CI, which generates no fixtures.
+  (`conformance`, `color-conformance`, `audio`, `export-range-audio`) run in
+  CI too — electron-ci fetches ffmpeg (so `globalSetup` generates fixtures)
+  and prebuilds the analyzer so no spec pays the cold compile.
 - **`export-native-wedges.spec.ts` (native export decode wedge gates) is gated
   on `WEFTCUT_DECODE_E2E=1`** — the preflight sets it automatically when the
   native-decode component is built (see above), so locally it just runs. It
@@ -127,7 +128,10 @@ tolerate running alongside other app instances.
 
 Both projects also drop titles tagged `@matrix` unless `WEFTCUT_E2E_FULL=1` is
 set (`--full` does that for you). electron-ci runs the default tier per push/PR
-and the full tier on its nightly schedule and on manual dispatch.
+and the full tier on its nightly schedule; a manual dispatch runs the default
+tier unless `--full` is passed in its `e2e_args` input, which also scopes a
+partial run (spec files, `-g` filters) to one `os` without paying for the
+whole matrix.
 
 The tier exists because the suite is dominated by a small number of tests that
 drive a **real encode**, and the windows leg outgrew its job timeout once CI
@@ -219,9 +223,9 @@ before the retirement commit `e1321538`):
   sampled off the live preview + the tiff-stays-empty negative). Its gif=Video
   full-proxy routing leg IS ported, as `media-gif-routing.spec.ts`.
 
-Like `conformance.spec.ts`, the analyzer-backed gates run **locally** (they need
-`npm run fixtures` + a buildable `cargo media_conformance`) and skip in CI,
-which generates no fixtures.
+Like `conformance.spec.ts`, the analyzer-backed gates need `npm run fixtures`
+plus a buildable `cargo media_conformance` — both provided locally by the
+preflight and in CI by the ffmpeg-fetch + analyzer-prebuild steps.
 
 ## Known flakes
 
