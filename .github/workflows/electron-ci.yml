@@ -10,7 +10,23 @@ on:
   # duplicated setup: only WEFTCUT_E2E_FULL differs (see the e2e step).
   schedule:
     - cron: '0 4 * * *' # 04:00 UTC daily
+  # Partial runs for CI iteration: pick one OS, scope the e2e suite (spec
+  # files, -g filters, --full), skip packaging. Defaults reproduce a push run.
   workflow_dispatch:
+    inputs:
+      os:
+        description: 'Runner set'
+        type: choice
+        options: [all, windows-latest, ubuntu-latest, macos-latest]
+        default: all
+      e2e_args:
+        description: 'Extra args forwarded to npm run e2e'
+        type: string
+        default: ''
+      package:
+        description: 'Run the unsigned packaging step'
+        type: boolean
+        default: true
 
 # Least-privilege token: this workflow only reads the repo, builds, tests, and
 # uploads artifacts (the artifact API uses its own runtime token) — it never
@@ -24,7 +40,9 @@ permissions:
 # can never cancel each other — schedule/dispatch runs group only among
 # themselves.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # run_id for dispatch: partial runs of DIFFERENT parts must coexist, not
+  # cancel each other.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'ref' }}
   cancel-in-progress: true
 
 jobs:
@@ -44,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -238,6 +256,13 @@ jobs:
       - name: Build app (E2E mode)
         run: npm run build:e2e
 
+      # The analyzer-backed e2e gates shell `cargo run --bin media_conformance`
+      # per assertion (e2e/lib/analyze.mjs). Build it up front so the first
+      # gate's test timeout never absorbs a cold compile and concurrent workers
+      # never queue on the cargo target-dir lock for it.
+      - name: Prebuild conformance analyzer
+        run: cargo build --manifest-path native/Cargo.toml --bin media_conformance --features jobs,export
+
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
       # otherwise leave unresolved `napi_*` symbols in a standalone `cargo test`
@@ -299,15 +324,15 @@ jobs:
         env:
           WEFTCUT_E2E_NO_EXPORT: '1'
           # The @matrix tier (see playwright.config.ts) runs only on the nightly
-          # sweep and on a manual dispatch — per-PR it would blow the job budget.
-          WEFTCUT_E2E_FULL: >-
-            ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-            && '1' || '' }}
+          # sweep — per-PR it would blow the job budget. A dispatch opts in by
+          # passing --full in e2e_args instead of getting it implicitly.
+          WEFTCUT_E2E_FULL: ${{ github.event_name == 'schedule' && '1' || '' }}
+          E2E_ARGS: ${{ inputs.e2e_args }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run e2e
+            xvfb-run -a npm run e2e -- $E2E_ARGS
           else
-            npm run e2e
+            npm run e2e -- $E2E_ARGS
           fi
 
       # Upload determinism PNGs so the compare job can fetch all three OSes.
@@ -351,6 +376,7 @@ jobs:
       # halves directly — `build` for a clean non-E2E renderer bundle (no
       # VITE_WEFTCUT_E2E), then electron-builder.
       - name: Package (unsigned)
+        if: github.event_name != 'workflow_dispatch' || inputs.package
         run: npm run build && npx electron-builder --publish never
 
       # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
@@ -362,7 +388,7 @@ jobs:
       # installer when explicitly wanted — a tag build or a manual dispatch —
       # with short retention on top.
       - name: Upload installer
-        if: success() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+        if: success() && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
@@ -373,6 +399,8 @@ jobs:
   # (needs: build + fail-fast: false means all three attempt even if one fails).
   compare:
     needs: build
+    # A partial dispatch (one OS or a scoped suite) cannot feed a 3-way compare.
+    if: github.event_name != 'workflow_dispatch' || (inputs.os == 'all' && inputs.e2e_args == '')
     timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
