@@ -45,7 +45,10 @@ export default defineConfig({
     {
       name: 'parallel',
       grepInvert: [/@serial/, ...MATRIX_EXCLUDED],
-      workers: process.env.CI ? 2 : '50%',
+      // GPU-less CI legs (Linux/SwiftShader, Windows/WARP) saturate their 4
+      // vCPUs with ONE export pipeline — two workers starve each other into
+      // the 170s export timeout. macOS runners have a real GPU; keep two.
+      workers: process.env.CI ? (process.platform === 'darwin' ? 2 : 1) : '50%',
     },
   ],
 })
