@@ -327,6 +327,9 @@ jobs:
           # sweep — per-PR it would blow the job budget. A dispatch opts in by
           # passing --full in e2e_args instead of getting it implicitly.
           WEFTCUT_E2E_FULL: ${{ github.event_name == 'schedule' && '1' || '' }}
+          # Dispatch runs are the scoped-diagnosis tool — tap the renderer
+          # console so a wedge reports its last milestone in the job log.
+          WEFTCUT_E2E_CONSOLE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
           E2E_ARGS: ${{ inputs.e2e_args }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
