@@ -101,7 +101,9 @@ test.describe('same-source overlapping clips export (Electron)', () => {
   })
 
   test('a 2s-offset overlap exports complete with both clips on their own frames', async () => {
-    test.setTimeout(360000)
+    // The 240-frame export + two window scans measured 344s on a slow Windows
+    // runner — 360s was a coin flip. Budget for the observed worst case.
+    test.setTimeout(540000)
     const { app, page } = await launchApp()
     try {
       const out = path.join(tmpDir('weftcut-e2e-overlap-'), 'offset.mp4')
