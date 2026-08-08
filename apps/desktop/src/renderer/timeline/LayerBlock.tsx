@@ -29,6 +29,7 @@ import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
+import { interpGlyphClass } from "../keyframe/curve";
 import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
 import { EasingMenu } from "./EasingMenu";
 import { transportSeek } from "../state/playbackStore";
@@ -510,14 +511,18 @@ export function LayerBlock({
   const diamonds = (() => {
     // When the track is expanded the keyframes render in the sub-lanes
     // below (KeyframeLane), so the collapsed in-clip diamonds are hidden.
-    if (isTrackExpanded) return [] as { id: string; x: number }[];
-    if (!focusedParam) return [] as { id: string; x: number }[];
+    if (isTrackExpanded) return [] as { id: string; x: number; glyph: string }[];
+    if (!focusedParam) return [] as { id: string; x: number; glyph: string }[];
     const track = readParamTrack(layer.params, focusedParam);
     if (!track || track.mode !== "Keyframed") return [];
     return track.value.flatMap((k) =>
       // collapsed mode hides out-of-range keys (kept in data)
       k.t_us >= 0 && k.t_us <= clipDurationUs
-        ? [{ id: k.id, x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx) }]
+        ? [{
+            id: k.id,
+            x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx),
+            glyph: interpGlyphClass(k.interp.kind),
+          }]
         : [],
     );
   })();
@@ -751,7 +756,7 @@ export function LayerBlock({
           {diamonds.map((d) => (
             <span
               key={d.id}
-              className={`kf-diamond${selectedKfId === d.id ? " is-selected" : ""}`}
+              className={`kf-diamond${d.glyph ? ` ${d.glyph}` : ""}${selectedKfId === d.id ? " is-selected" : ""}`}
               style={{ left: d.x }}
               data-kf-id={d.id}
             />

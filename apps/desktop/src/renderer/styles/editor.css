@@ -1252,6 +1252,16 @@
    24px sub-lane (vs the in-clip diamonds, which are bottom-pinned in
    .kf-diamond-row). The base .kf-diamond transform keeps the 45° rotation. */
 .kf-sublane-diamond { top: 50%; margin-top: -3.5px; pointer-events: auto; cursor: pointer; }
+/* Interp-coded keyframe glyphs (the Premiere/AE convention: diamond = linear,
+   square = hold, circle = eased) — interpolation reads at a glance without
+   opening the easing menu. Variants override only rotation/radius so size,
+   centering, and selection styling stay shared with the base .kf-diamond. */
+.kf-diamond.kf-interp-hold { transform: translateX(-50%); border-radius: 1px; }
+.kf-diamond.kf-interp-eased { transform: translateX(-50%); border-radius: 50%; }
+/* The easing command menu reuses .app-menu-item chrome on plain buttons inside
+   a Popover — no Base UI Menu, so no data-highlighted; :hover restores the
+   highlight the Menu primitive would provide. */
+.easing-command-menu .app-menu-item:hover:not(:disabled) { background: var(--hover-neutral-strong); }
 /* Parameter-curve badge on procedural (Elastic/Bounce) segments in the
    expanded curve editor. These segments have no tangent handles by design —
    the badge plus the --keyframe curve tint say "edit parameters, not

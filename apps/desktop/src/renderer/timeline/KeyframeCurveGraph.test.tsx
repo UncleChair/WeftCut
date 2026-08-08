@@ -168,3 +168,27 @@ describe("KeyframeCurveGraph — procedural segment class (Elastic/Bounce)", () 
     expect(container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(0);
   });
 });
+
+describe("KeyframeCurveGraph — interp glyph coding on dots", () => {
+  const dotClass = (container: HTMLElement, id: string) =>
+    container.querySelector(`.kf-sublane-diamond[data-kf-id="${id}"]`)!.className;
+
+  it("an eased keyframe renders as a circle (kf-interp-eased)", () => {
+    // The default track's k0 is Bezier — eased glyph; k1 is Linear — bare diamond.
+    const { container } = renderGraph();
+    expect(dotClass(container, "k0")).toContain("kf-interp-eased");
+    expect(dotClass(container, "k1")).not.toContain("kf-interp-eased");
+    expect(dotClass(container, "k1")).not.toContain("kf-interp-hold");
+  });
+  it("a Hold keyframe renders as a square (kf-interp-hold)", () => {
+    const { container } = renderGraph({ track: trackWith({ kind: "Hold" }) });
+    expect(dotClass(container, "k0")).toContain("kf-interp-hold");
+  });
+  it("procedural kinds carry the eased glyph too", () => {
+    for (const interp of [ELASTIC, BOUNCE]) {
+      const { container } = renderGraph({ track: trackWith(interp) });
+      expect(dotClass(container, "k0")).toContain("kf-interp-eased");
+      cleanup();
+    }
+  });
+});

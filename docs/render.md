@@ -121,9 +121,21 @@ Easing is shown and edited directly on the timeline. Each animated property's
 keyframe sub-lane draws its value over time as a curve; focusing a property
 expands its lane and exposes tangent handles on each keyframe (left = the
 previous segment's outgoing control point, right = this segment's). Dragging a
-handle edits that segment's `cubic-bezier`; right-clicking a keyframe or segment
-opens a preset / Smooth menu. The curve follows the value, so which segment an
-easing governs is read directly from the picture.
+handle edits that segment's `cubic-bezier`. The curve follows the value, so
+which segment an easing governs is read directly from the picture.
+
+Right-clicking a keyframe or segment opens a two-tier menu (`EasingMenu`).
+Tier 1 is the NLE-conventional command list — Linear / Hold / Ease In / Ease
+Out / Ease In-Out / Smooth — with the exact reverse lookup checkmarking the
+current state (a gallery-only preset checkmarks the "Easing library…" row
+instead). Tier 2, behind that row, is the full canonical preset table as a
+family-grouped grid of curve thumbnails, each sampled through the same wasm
+eval that draws the timeline curve; hovering a thumbnail previews it live on
+the owning segment via `easingPreviewStore`, and an Elastic keyframe's
+amplitude/period sliders sit at the top of the gallery. Keyframe markers also
+glyph-code their outgoing interpolation, per the Premiere convention: diamond =
+linear, square = hold, circle = eased (`interpGlyphClass`), on both the
+collapsed in-clip row and the sub-lane dots.
 
 Each expanded sub-lane header also carries an After Effects-style keyframe
 navigator — `◄ ◆ ►` — to the left of the property name. The arrows seek the

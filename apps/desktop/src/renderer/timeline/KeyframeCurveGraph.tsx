@@ -8,7 +8,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AnimTrack, Interpolation } from "../ipc";
-import { interpToCoeffs, isSplineInterp } from "../keyframe/curve";
+import { interpGlyphClass, interpToCoeffs, isSplineInterp } from "../keyframe/curve";
 import { useEasingPreviewStore } from "../keyframe/easingPreviewStore";
 import {
   computeValueRange, segmentPolyline, segmentHandles, handleDragToCoeff,
@@ -246,21 +246,24 @@ export function KeyframeCurveGraph({
           </span>
         ),
       )}
-      {keys.map((k) => (
-        <span
-          key={k.id}
-          className={`kf-diamond kf-sublane-diamond${selectedKfId === k.id ? " is-selected" : ""}`}
-          style={{ left: timeToXPx(k.t_us, geom), top: valueToY(k.value, geom) }}
-          data-kf-id={k.id}
-          onPointerDown={(e) => dragDot(k.id, k.t_us, e)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onSelectSeek(k.id);
-            onOpenMenu(e.clientX, e.clientY, k.id);
-          }}
-        />
-      ))}
+      {keys.map((k) => {
+        const glyph = interpGlyphClass(k.interp.kind);
+        return (
+          <span
+            key={k.id}
+            className={`kf-diamond kf-sublane-diamond${glyph ? ` ${glyph}` : ""}${selectedKfId === k.id ? " is-selected" : ""}`}
+            style={{ left: timeToXPx(k.t_us, geom), top: valueToY(k.value, geom) }}
+            data-kf-id={k.id}
+            onPointerDown={(e) => dragDot(k.id, k.t_us, e)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onSelectSeek(k.id);
+              onOpenMenu(e.clientX, e.clientY, k.id);
+            }}
+          />
+        );
+      })}
     </>
   );
 }

@@ -17,6 +17,17 @@ export function isSplineInterp(i: Interpolation): i is SplineInterpolation {
   return i.kind === "Hold" || i.kind === "Linear" || i.kind === "Bezier";
 }
 
+/// Glyph modifier class for a keyframe's outgoing interpolation — the NLE
+/// convention (diamond = linear, square = hold, circle = eased) so interp
+/// state reads at a glance without opening the easing menu. "" keeps the base
+/// .kf-diamond shape; shared by the collapsed in-clip row and the sub-lane
+/// curve editor so both surfaces speak the same glyph language.
+export function interpGlyphClass(kind: Interpolation["kind"]): "" | "kf-interp-hold" | "kf-interp-eased" {
+  if (kind === "Hold") return "kf-interp-hold";
+  if (kind === "Linear") return "";
+  return "kf-interp-eased";
+}
+
 /// Spline interp → cubic-bezier control coords for handle placement.
 /// Exhaustive over `SplineInterpolation` — no default arm, so a new kind is a
 /// compile error here rather than a silent identity diagonal.
