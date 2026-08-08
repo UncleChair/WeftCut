@@ -202,11 +202,16 @@ Effects (per-layer Pixi filter chains; v1 catalog: `blur`):
 - Keyframe an effect param via `set_keyframe { layer_id, param_key: "effects[<effect_id>].params[<key>]", t_us, value, interp? }`. **Ordering:** `add_effect` creates an effect with no params; set a static value first with `update_effect` (so the param key exists), then use `set_keyframe` to lift it to keyframed. Calling `set_keyframe` on a param key that has never been set returns `UnknownKeyframeParam`.
 
 Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
-- `get_param_track { layer_id, param_key }` → `{ mode, value }` (Static) or `{ mode, keyframes: [{ id, t_us, t_local_us, value, interp }] }` (Keyframed). Read this to discover keyframe ids before editing.
-- `set_keyframe { layer_id, param_key, t_us, value, interp? }` — insert-or-update. Lifts a Static track; updates in place at the same frame; `interp` omitted inherits the preceding key's easing (or Linear).
+- `get_param_track { layer_id, param_key }` → `{ mode, value }` (Static) or `{ mode, keyframes: [{ id, t_us, t_local_us, value, interp, preset_id? }] }` (Keyframed). Read this to discover keyframe ids before editing. `preset_id` names the canonical easing preset whose params exactly match the key's `interp` (exact-float reverse lookup — presets bake to params, the name is recovered on read); a hand-tuned curve omits the field.
+- `set_keyframe { layer_id, param_key, t_us, value, interp? }` — insert-or-update. Lifts a Static track; updates in place at the same frame; `interp` omitted inherits the preceding key's easing (or Linear). `interp` takes the raw kinds below (not the preset form — that is a `set_keyframe_easing` payload).
 - `remove_keyframe { layer_id, param_key, keyframe_id }` — last key collapses to Static holding its value.
 - `retime_keyframe { layer_id, param_key, keyframe_id, t_us }` — move a key; re-sorts.
-- `set_keyframe_easing { layer_id, param_key, keyframe_id, interp }` — `interp` ∈ `Hold | Linear | EaseIn | EaseOut | Bezier{p1,p2}`.
+- `set_keyframe_easing { layer_id, param_key, keyframe_id, interp }` — `interp` is one of:
+  - `{ "preset": "<id>" }` — a named preset from the canonical easing table (`src/shared/easing.ts::EASING_PRESETS`, the single source of the id list: `linear`, `hold`, the CSS curves `ease`/`ease_in`/`ease_out`/`ease_in_out`, and the `ease_{in,out,in_out}_{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}` families). Bezier-family presets bake to their canonical params at write time; the name comes back as `preset_id` on `get_param_track`. An unknown id rejects with the full live list in the error message.
+  - `{ "kind": "Hold" }` | `{ "kind": "Linear" }`
+  - `{ "kind": "Bezier", "p1": [x, y], "p2": [x, y] }` — control-point x within `[0, 1]` (x is segment time and the solver is single-valued only there; y may overshoot).
+  - `{ "kind": "Elastic", "dir": "In" | "Out" | "InOut", "amplitude"?, "period"? }` — `amplitude` ≥ 1 (default 1), `period` > 0 (default 0.3); omitted params take the defaults.
+  - `{ "kind": "Bounce", "dir": "In" | "Out" | "InOut" }`
 - `smooth_keyframes { layer_id, param_key, keyframe_id? }` — monotone auto-smooth one key, or the whole track when `keyframe_id` is omitted.
 - `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
 - `set_param_track { layer_id, param_key, track }` — low-level: replace the whole `AnimTrack<f64>` (keyframe `t_us` timeline-absolute).

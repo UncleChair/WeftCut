@@ -20,7 +20,7 @@ use crate::{
     frame_index_floor as frame_index_floor_impl, frame_index_round as frame_index_round_impl,
     pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_ceil,
     snap_frame_floor, snap_frame_round, time_us_at_frame as time_us_at_frame_impl,
-    us_to_frame as us_to_frame_impl, Interpolation, Kf, Rgba8,
+    us_to_frame as us_to_frame_impl, EaseDir, Interpolation, Kf, Rgba8,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -105,6 +105,58 @@ pub extern "C" fn us_to_frame(us: f64, rate: i32) -> f64 {
     us_to_frame_impl(us as i64, rate as u32) as f64
 }
 
+/// `0=In, 1=Out, 2=InOut`. Anything else is a code-table drift: debug assert +
+/// `In` (the same deliberate-fallback policy as `decode_interp`).
+fn decode_dir(code: f64) -> EaseDir {
+    match code as i32 {
+        0 => EaseDir::In,
+        1 => EaseDir::Out,
+        2 => EaseDir::InOut,
+        _ => {
+            debug_assert!(false, "unknown ease-dir code");
+            EaseDir::In
+        }
+    }
+}
+
+/// ABI interp code + param slots → `Interpolation` (shared by `set_kf` and
+/// `set_kf_rgba`).
+///
+/// Code table — KEEP in lockstep with TS `renderer/eval/index.ts::interpCode`:
+///   0 = Hold, 1 = Linear, 4 = Bezier, 5 = Elastic, 6 = Bounce.
+/// Codes 2/3 are RETIRED (the removed named EaseIn/EaseOut variants) and must
+/// never be reassigned — a stale caller sending them must not get a different
+/// curve than it asked for.
+///
+/// Param-slot layout by code (slots unused by a code are ignored):
+///   4 Bezier:  p1 = (p1x, p1y), p2 = (p2x, p2y)
+///   5 Elastic: p1x = dir (see `decode_dir`), p1y = amplitude, p2x = period
+///   6 Bounce:  p1x = dir
+///
+/// Unknown codes (incl. the retired 2/3) fall back to Linear — visible motion
+/// rather than a silently wrong curve — and trip a debug assert so a code-table
+/// drift fails loudly in debug builds.
+fn decode_interp(interp: i32, p1x: f64, p1y: f64, p2x: f64, p2y: f64) -> Interpolation {
+    match interp {
+        0 => Interpolation::Hold,
+        1 => Interpolation::Linear,
+        4 => Interpolation::Bezier {
+            p1: (p1x, p1y),
+            p2: (p2x, p2y),
+        },
+        5 => Interpolation::Elastic {
+            dir: decode_dir(p1x),
+            amplitude: p1y,
+            period: p2x,
+        },
+        6 => Interpolation::Bounce { dir: decode_dir(p1x) },
+        _ => {
+            debug_assert!(false, "unknown interp code");
+            Interpolation::Linear
+        }
+    }
+}
+
 /// Set the resident track length (number of keyframes uploaded via `set_kf`).
 #[no_mangle]
 pub extern "C" fn set_n(n: i32) {
@@ -114,9 +166,8 @@ pub extern "C" fn set_n(n: i32) {
     }
 }
 
-/// Upload one keyframe into the resident buffer. `interp`: 0=Hold, 1=Linear,
-/// 2=EaseIn, 3=EaseOut, else=Bezier(p1,p2). The p1/p2 args are ignored for the
-/// non-Bezier codes.
+/// Upload one keyframe into the resident buffer. Interp codes and the
+/// param-slot layout are documented at `decode_interp`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn set_kf(
@@ -129,16 +180,7 @@ pub extern "C" fn set_kf(
     p2x: f64,
     p2y: f64,
 ) {
-    let it = match interp {
-        0 => Interpolation::Hold,
-        1 => Interpolation::Linear,
-        2 => Interpolation::EaseIn,
-        3 => Interpolation::EaseOut,
-        _ => Interpolation::Bezier {
-            p1: (p1x, p1y),
-            p2: (p2x, p2y),
-        },
-    };
+    let it = decode_interp(interp, p1x, p1y, p2x, p2y);
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
         T[i] = t_us as i64;
@@ -178,7 +220,7 @@ pub extern "C" fn set_n_rgba(n: i32) {
 }
 
 /// Upload one COLOR keyframe. `packed` layout is documented at the color-track
-/// buffer above; `interp` codes + p1/p2 semantics match `set_kf`.
+/// buffer above; interp codes + param slots at `decode_interp`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn set_kf_rgba(
@@ -191,16 +233,7 @@ pub extern "C" fn set_kf_rgba(
     p2x: f64,
     p2y: f64,
 ) {
-    let it = match interp {
-        0 => Interpolation::Hold,
-        1 => Interpolation::Linear,
-        2 => Interpolation::EaseIn,
-        3 => Interpolation::EaseOut,
-        _ => Interpolation::Bezier {
-            p1: (p1x, p1y),
-            p2: (p2x, p2y),
-        },
-    };
+    let it = decode_interp(interp, p1x, p1y, p2x, p2y);
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
         TC[i] = t_us as i64;

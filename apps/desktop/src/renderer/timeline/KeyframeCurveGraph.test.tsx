@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, fireEvent } from "@testing-library/react";
-import type { AnimTrack } from "../ipc";
+import { act, cleanup, render, fireEvent } from "@testing-library/react";
+import "../i18n"; // initialize i18next so the procedural badge label resolves
+import type { AnimTrack, Interpolation } from "../ipc";
+import { clearEasingPreview, setEasingPreview } from "../keyframe/easingPreviewStore";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 
 // jsdom 25 does not implement PointerEvent; polyfill it so fireEvent.pointerDown
@@ -10,7 +12,10 @@ if (typeof window !== "undefined" && !window.PointerEvent) {
   (window as unknown as Record<string, unknown>).PointerEvent = window.MouseEvent;
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  clearEasingPreview();
+});
 
 const track: Extract<AnimTrack<number>, { mode: "Keyframed" }> = {
   mode: "Keyframed",
@@ -97,5 +102,69 @@ describe("KeyframeCurveGraph", () => {
     expect(onSetInterp).toHaveBeenCalledTimes(1);
     expect(onSetInterp.mock.calls[0]![0]).toBe("k0");
     expect(onSetInterp.mock.calls[0]![1].kind).toBe("Bezier");
+  });
+});
+
+/// Same two keys as `track` with k0's interp swapped — each case states only
+/// the segment class under test.
+function trackWith(interp: Interpolation): Extract<AnimTrack<number>, { mode: "Keyframed" }> {
+  return {
+    mode: "Keyframed",
+    value: [
+      { id: "k0", t_us: 0, value: 0, interp },
+      { id: "k1", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
+    ],
+  };
+}
+
+const ELASTIC: Interpolation = { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 };
+const BOUNCE: Interpolation = { kind: "Bounce", dir: "InOut" };
+
+/// The visible curve strokes (each segment renders a transparent hit polyline
+/// first, then the painted one).
+function strokes(container: HTMLElement): string[] {
+  return [...container.querySelectorAll("polyline")]
+    .map((p) => p.getAttribute("stroke")!)
+    .filter((s) => s !== "transparent");
+}
+
+describe("KeyframeCurveGraph — procedural segment class (Elastic/Bounce)", () => {
+  it("shows no tangent handles on a procedural segment even when editable", () => {
+    for (const interp of [ELASTIC, BOUNCE]) {
+      const { container } = renderGraph({ track: trackWith(interp), editable: true });
+      expect(container.querySelectorAll('[data-testid="kf-handle"]').length).toBe(0);
+      cleanup();
+    }
+  });
+  it("tints a procedural curve with the --keyframe token; spline keeps --ring", () => {
+    expect(strokes(renderGraph({ track: trackWith(ELASTIC) }).container))
+      .toEqual(["var(--keyframe, #facc15)"]);
+    cleanup();
+    expect(strokes(renderGraph().container)).toEqual(["var(--ring, #9a9aff)"]);
+  });
+  it("badges a procedural segment in the expanded editor only", () => {
+    const { container } = renderGraph({ track: trackWith(BOUNCE), editable: true });
+    expect(container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(1);
+    cleanup();
+    const collapsed = renderGraph({ track: trackWith(BOUNCE), editable: false });
+    expect(collapsed.container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(0);
+  });
+  it("never badges a spline (Bezier) segment", () => {
+    const { container } = renderGraph({ editable: true });
+    expect(container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(0);
+  });
+  it("redraws live from an easingPreviewStore entry for one of its keys", () => {
+    // Committed Linear; the popover's slider preview swaps in an Elastic —
+    // the segment must re-render as procedural without any commit.
+    const { container } = renderGraph({ track: trackWith({ kind: "Linear" }), editable: true });
+    expect(container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(0);
+    act(() => setEasingPreview("k0", ELASTIC));
+    expect(container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(1);
+    expect(strokes(container)).toEqual(["var(--keyframe, #facc15)"]);
+  });
+  it("ignores a preview keyed to a keyframe it does not render", () => {
+    const { container } = renderGraph({ track: trackWith({ kind: "Linear" }), editable: true });
+    act(() => setEasingPreview("not-our-key", ELASTIC));
+    expect(container.querySelectorAll('[data-testid="kf-procedural-badge"]').length).toBe(0);
   });
 });

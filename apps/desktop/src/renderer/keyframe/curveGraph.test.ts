@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { Interpolation } from "../ipc";
+import { resolveAnimated } from "../render/animated";
 import {
   computeValueRange, valueToY, yToValue, timeToXPx, xPxToTimeUs,
   type CurveGeom,
@@ -53,6 +55,13 @@ describe("computeValueRange", () => {
     ]);
     expect(r.vmax).toBeGreaterThan(r.vmin);
   });
+  it("includes procedural (Elastic) overshoot sampled through the engine", () => {
+    const r = computeValueRange([
+      { t_us: 0, value: 0, interp: { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 } },
+      { t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
+    ], 0);
+    expect(r.vmax).toBeGreaterThan(1); // elastic ring rises past the end value
+  });
 });
 
 import { segmentPolyline, segmentHandles, type Seg } from "./curveGraph";
@@ -92,12 +101,40 @@ describe("segmentPolyline", () => {
     const y0 = pts[0]!.y;
     expect(pts.every((p) => Math.abs(p.y - y0) < 1e-9)).toBe(true);
   });
+  it("samples exactly what the wasm eval computes (no JS curve twin)", () => {
+    const interp: Interpolation = { kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] };
+    const pts = segmentPolyline(SEG, interp, G2, 10);
+    for (let s = 0; s <= 10; s++) {
+      const t = (SEG.bTUs - SEG.aTUs) * (s / 10);
+      const v = resolveAnimated(
+        { mode: "Keyframed", value: [
+          { id: "a", t_us: SEG.aTUs, value: SEG.aVal, interp },
+          { id: "b", t_us: SEG.bTUs, value: SEG.bVal, interp: { kind: "Linear" } },
+        ] },
+        t, SEG.aVal,
+      );
+      expect(pts[s]!.y).toBeCloseTo(valueToY(v, G2), 9);
+    }
+  });
+  it("Elastic → sampled curve shows the engine's overshoot; endpoints anchored", () => {
+    const pts = segmentPolyline(
+      SEG, { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }, G2, 10,
+    );
+    expect(pts[0]).toEqual({ x: 0, y: 100 });
+    expect(pts[10]).toEqual({ x: 100, y: 0 });
+    // u=0.1 → elastic_out = 1.25 (pinned closed form) → 25px ABOVE the lane top.
+    expect(pts[1]!.y).toBeCloseTo(-25, 4);
+  });
 });
 
 describe("segmentHandles", () => {
   it("returns null for Hold and Linear (no editable handles)", () => {
     expect(segmentHandles(SEG, { kind: "Hold" }, G2)).toBeNull();
     expect(segmentHandles(SEG, { kind: "Linear" }, G2)).toBeNull();
+  });
+  it("returns null for procedural kinds (read-only sampled curve)", () => {
+    expect(segmentHandles(SEG, { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }, G2)).toBeNull();
+    expect(segmentHandles(SEG, { kind: "Bounce", dir: "InOut" }, G2)).toBeNull();
   });
   it("places p1/p2 control points in time/value px space", () => {
     const h = segmentHandles(SEG, { kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] }, G2)!;

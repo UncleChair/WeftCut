@@ -9,6 +9,7 @@ import {
   MAX_KEYFRAMES,
 } from './index'
 import snap from '../snapFrameGolden.fixture.json'
+import type { Interpolation } from '../../shared/easing'
 
 beforeAll(async () => {
   await initEval()
@@ -47,13 +48,38 @@ describe('eval wasm smoke', () => {
     expect(evalTrack(500_000, 0)).toBeCloseTo(3, 6)
   })
 
+  it('Elastic and Bounce cross the ABI on their explicit codes', () => {
+    // Pinned closed-form values (independent CPython derivation, spec formulas).
+    loadTrack(3, [
+      { t_us: 0, value: 0, interp: { kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 } },
+      { t_us: 1_000_000, value: 10, interp: { kind: 'Linear' } },
+    ])
+    expect(evalTrack(250_000, 0)).toBeCloseTo(9.116116523516816, 9)
+    loadTrack(4, [
+      { t_us: 0, value: 0, interp: { kind: 'Bounce', dir: 'In' } },
+      { t_us: 1_000_000, value: 10, interp: { kind: 'Linear' } },
+    ])
+    expect(evalTrack(500_000, 0)).toBeCloseTo(2.34375, 9)
+  })
+
+  it('an unknown interp kind falls back to Linear — deliberate, no bezier catch-all', () => {
+    const assertSpy = vi.spyOn(console, 'assert').mockImplementation(() => {})
+    loadTrack(5, [
+      { t_us: 0, value: 0, interp: { kind: 'Wobble' } as unknown as Interpolation },
+      { t_us: 1_000_000, value: 10, interp: { kind: 'Linear' } },
+    ])
+    expect(evalTrack(500_000, 0)).toBeCloseTo(5, 9)
+    expect(assertSpy).toHaveBeenCalledWith(false, expect.stringContaining('unknown interp kind'), expect.anything())
+    assertSpy.mockRestore()
+  })
+
   it('truncates an over-capacity property to MAX_KEYFRAMES and warns once', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     // Linear 0..N-1 over 1ms steps; only the first MAX_KEYFRAMES are evaluated.
     const big = Array.from({ length: MAX_KEYFRAMES + 50 }, (_, i) => ({
       t_us: i * 1_000,
       value: i,
-      interp: { kind: 'Linear' },
+      interp: { kind: 'Linear' as const },
     }))
     loadTrack(100, big) // first oversized upload → warns
     loadTrack(101, big) // second → no further warning (once per session)

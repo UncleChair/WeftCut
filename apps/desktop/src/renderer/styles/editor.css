@@ -1252,6 +1252,25 @@
    24px sub-lane (vs the in-clip diamonds, which are bottom-pinned in
    .kf-diamond-row). The base .kf-diamond transform keeps the 45° rotation. */
 .kf-sublane-diamond { top: 50%; margin-top: -3.5px; pointer-events: auto; cursor: pointer; }
+/* Parameter-curve badge on procedural (Elastic/Bounce) segments in the
+   expanded curve editor. These segments have no tangent handles by design —
+   the badge plus the --keyframe curve tint say "edit parameters, not
+   handles". Pill fill/stroke derive from the --keyframe domain accent via
+   color-mix, per the status-hue convention in app.css. */
+.kf-procedural-badge {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--keyframe);
+  background: color-mix(in srgb, var(--keyframe) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--keyframe) 40%, transparent);
+}
 
 /* Read-only envelope context (kind/track/group) inside a prop Field row. */
 .prop-readonly {

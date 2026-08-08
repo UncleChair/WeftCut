@@ -1,5 +1,6 @@
-import type { Animated, Interpolation, Keyframe, Layer, Project, Transform, Uuid } from '../model'
+import type { Animated, Keyframe, Layer, Project, Transform, Uuid } from '../model'
 import type { IdGen } from '../ids'
+import { cloneInterp, interpEqExact } from '../../../shared/easing'
 import { CommandFailure } from '../errors'
 import { checkTrackLock, locateLayer } from './helpers'
 
@@ -7,12 +8,6 @@ import { checkTrackLock, locateLayer } from './helpers'
 export function transformOf(layer: Layer): Transform | null {
   const p = layer.params
   return p.kind === 'Color' || p.kind === 'Audio' ? null : p.transform
-}
-
-function interpEq(a: Interpolation, b: Interpolation): boolean {
-  if (a.kind !== b.kind) return false
-  if (a.kind !== 'Bezier' || b.kind !== 'Bezier') return true
-  return a.p1[0] === b.p1[0] && a.p1[1] === b.p1[1] && a.p2[0] === b.p2[0] && a.p2[1] === b.p2[1]
 }
 
 /** Structural twin test for the two scale tracks. Keyframe `id`s are per-track
@@ -31,25 +26,21 @@ export function scaleTracksTwins(a: Animated<number>, b: Animated<number>): bool
   return ka.every((k, i) => {
     const o = kb[i]
     return k !== null && o !== null && typeof k === 'object' && typeof o === 'object'
-      && k.t_us === o.t_us && k.value === o.value && interpEq(k.interp, o.interp)
+      && k.t_us === o.t_us && k.value === o.value && interpEqExact(k.interp, o.interp)
   })
 }
 
 /** Structural copy of a scale track for the OTHER axis: fresh keyframe ids
  *  (per-track identities — see scaleTracksTwins), no shared mutable state
- *  (Bezier handle arrays are re-created, not aliased). The renderer's
- *  fan-out twin (keyframe/fanOut.ts twinTrackCopy) is the same shape with
- *  crypto ids — a change here usually needs the same change there. */
+ *  (interp params re-created via the shared `cloneInterp`, not aliased). The
+ *  renderer's fan-out twin (keyframe/fanOut.ts twinTrackCopy) is the same
+ *  shape with crypto ids — a change here usually needs the same change there. */
 export function copyTrackFreshIds(track: Animated<number>, idGen: IdGen): Animated<number> {
   if (track.mode === 'Static') return { mode: 'Static', value: track.value }
   return {
     mode: 'Keyframed',
     value: track.value.map((k) => ({ id: idGen(), t_us: k.t_us, value: k.value, interp: cloneInterp(k.interp) })),
   }
-}
-
-function cloneInterp(i: Interpolation): Interpolation {
-  return i.kind === 'Bezier' ? { kind: 'Bezier', p1: [i.p1[0], i.p1[1]], p2: [i.p2[0], i.p2[1]] } : { kind: i.kind }
 }
 
 /** The scale-link invariant: `scale_linked = true` ⇒ the two tracks are twins.

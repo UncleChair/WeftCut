@@ -1,19 +1,59 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, McpArgError, toolJson } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseEasing, parseAnimatedF64, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, McpArgError, toolJson } from '../mcp-commands'
+import { EASING_PRESETS } from '../../../shared/easing'
 
 describe('parseInterp', () => {
-  it('accepts the simple kinds', () => {
-    for (const kind of ['Hold', 'Linear', 'EaseIn', 'EaseOut'] as const)
+  it('accepts Hold and Linear', () => {
+    for (const kind of ['Hold', 'Linear'] as const)
       expect(parseInterp({ kind })).toEqual({ kind })
   })
-  it('accepts Bezier with two control points', () => {
+  it('accepts Bezier with two in-range control points', () => {
     expect(parseInterp({ kind: 'Bezier', p1: [0.42, 0], p2: [0.58, 1] })).toEqual({ kind: 'Bezier', p1: [0.42, 0], p2: [0.58, 1] })
   })
-  it('rejects an unknown kind', () => {
-    expect(() => parseInterp({ kind: 'bogus' })).toThrow(McpArgError)
+  it('accepts Bezier y overshoot (only x is range-gated)', () => {
+    expect(parseInterp({ kind: 'Bezier', p1: [1 / 3, 1.567], p2: [2 / 3, -0.5] }))
+      .toEqual({ kind: 'Bezier', p1: [1 / 3, 1.567], p2: [2 / 3, -0.5] })
+  })
+  it('accepts Elastic with explicit dir/amplitude/period', () => {
+    expect(parseInterp({ kind: 'Elastic', dir: 'InOut', amplitude: 1.5, period: 0.45 }))
+      .toEqual({ kind: 'Elastic', dir: 'InOut', amplitude: 1.5, period: 0.45 })
+  })
+  it('backfills omitted Elastic amplitude/period with the shared defaults', () => {
+    expect(parseInterp({ kind: 'Elastic', dir: 'Out' }))
+      .toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
+  })
+  it('accepts Bounce with each dir', () => {
+    for (const dir of ['In', 'Out', 'InOut'] as const)
+      expect(parseInterp({ kind: 'Bounce', dir })).toEqual({ kind: 'Bounce', dir })
+  })
+  it('rejects EaseIn/EaseOut pointing at the preset replacement and the live kinds', () => {
+    expect(() => parseInterp({ kind: 'EaseIn' })).toThrow(/"preset":"ease_in"/)
+    expect(() => parseInterp({ kind: 'EaseOut' })).toThrow(/"preset":"ease_out"/)
+    expect(() => parseInterp({ kind: 'EaseIn' })).toThrow(/'Hold' \| 'Linear' \| 'Bezier' \| 'Elastic' \| 'Bounce'/)
+  })
+  it('rejects an unknown kind naming the live kinds', () => {
+    expect(() => parseInterp({ kind: 'bogus' })).toThrow(/'Hold' \| 'Linear' \| 'Bezier' \| 'Elastic' \| 'Bounce'/)
   })
   it('rejects Bezier with a malformed control point', () => {
     expect(() => parseInterp({ kind: 'Bezier', p1: [0.42], p2: [0.58, 1] })).toThrow(McpArgError)
+  })
+  it('rejects Bezier control-point x outside [0, 1] on either handle, naming the handle', () => {
+    expect(() => parseInterp({ kind: 'Bezier', p1: [-0.1, 0], p2: [0.58, 1] })).toThrow(/p1\[0\].*within \[0, 1\]/)
+    expect(() => parseInterp({ kind: 'Bezier', p1: [0.42, 0], p2: [1.2, 1] })).toThrow(/p2\[0\].*within \[0, 1\]/)
+    expect(() => parseInterp({ kind: 'Bezier', p1: [NaN, 0], p2: [0.58, 1] })).toThrow(McpArgError)
+  })
+  it('rejects Elastic amplitude below 1 and period at or below 0, naming the defaults', () => {
+    expect(() => parseInterp({ kind: 'Elastic', dir: 'Out', amplitude: 0.5 })).toThrow(/amplitude must be >= 1.*default 1/)
+    expect(() => parseInterp({ kind: 'Elastic', dir: 'Out', period: 0 })).toThrow(/period must be > 0.*default 0\.3/)
+    expect(() => parseInterp({ kind: 'Elastic', dir: 'Out', period: -0.3 })).toThrow(McpArgError)
+    expect(() => parseInterp({ kind: 'Elastic', dir: 'Out', amplitude: 'big' })).toThrow(McpArgError)
+  })
+  it('rejects Elastic/Bounce without a valid dir, naming the three options', () => {
+    expect(() => parseInterp({ kind: 'Elastic' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
+    expect(() => parseInterp({ kind: 'Bounce', dir: 'Sideways' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
+  })
+  it('rejects a preset payload here, pointing at set_keyframe_easing', () => {
+    expect(() => parseInterp({ preset: 'ease_in_out' })).toThrow(/set_keyframe_easing/)
   })
   it('rejects non-objects', () => {
     expect(() => parseInterp(42)).toThrow(McpArgError)
@@ -23,15 +63,64 @@ describe('parseInterpOpt', () => {
   it('passes undefined through', () => { expect(parseInterpOpt(undefined)).toBeUndefined() })
   it('validates a present value', () => { expect(() => parseInterpOpt({ kind: 'nope' })).toThrow(McpArgError) })
 })
+describe('parseEasing', () => {
+  it('bakes every table preset id to a fresh copy of its canonical interp', () => {
+    for (const p of EASING_PRESETS) {
+      const out = parseEasing({ preset: p.id })
+      expect(out, p.id).toEqual(p.interp)
+      expect(out, p.id).not.toBe(p.interp) // a table entry must never alias into a track
+    }
+  })
+  it('baked Bezier handles are fresh arrays, not table references', () => {
+    const out = parseEasing({ preset: 'ease_in_out' })
+    const table = EASING_PRESETS.find((p) => p.id === 'ease_in_out')!.interp
+    if (out.kind !== 'Bezier' || table.kind !== 'Bezier') throw new Error('ease_in_out must be a Bezier preset')
+    expect(out.p1).not.toBe(table.p1)
+    expect(out.p2).not.toBe(table.p2)
+  })
+  it('accepts each raw kind (delegates to parseInterp, defaults included)', () => {
+    expect(parseEasing({ kind: 'Hold' })).toEqual({ kind: 'Hold' })
+    expect(parseEasing({ kind: 'Linear' })).toEqual({ kind: 'Linear' })
+    expect(parseEasing({ kind: 'Bezier', p1: [0.2, -0.5], p2: [0.8, 1.5] })).toEqual({ kind: 'Bezier', p1: [0.2, -0.5], p2: [0.8, 1.5] })
+    expect(parseEasing({ kind: 'Elastic', dir: 'In' })).toEqual({ kind: 'Elastic', dir: 'In', amplitude: 1, period: 0.3 })
+    expect(parseEasing({ kind: 'Bounce', dir: 'InOut' })).toEqual({ kind: 'Bounce', dir: 'InOut' })
+  })
+  it('rejects an unknown preset id with the live id list in the message', () => {
+    expect(() => parseEasing({ preset: 'ease_in_bogus' })).toThrow(/unknown preset 'ease_in_bogus' — presets: linear, hold, ease,/)
+    expect(() => parseEasing({ preset: 'ease_in_bogus' })).toThrow(/ease_in_out_bounce/)
+  })
+  it('rejects preset and kind together (ambiguous)', () => {
+    expect(() => parseEasing({ preset: 'linear', kind: 'Linear' })).toThrow(/not both/)
+  })
+  it('rejects an object with neither form, naming both', () => {
+    expect(() => parseEasing({})).toThrow(/\{"preset":"<id>"\} or a raw kind/)
+  })
+  it('rejects the retired named-ease kinds (same message as parseInterp)', () => {
+    expect(() => parseEasing({ kind: 'EaseIn' })).toThrow(/"preset":"ease_in"/)
+  })
+  it('rejects non-objects', () => { expect(() => parseEasing(null)).toThrow(McpArgError) })
+})
 describe('parseAnimatedF64', () => {
   it('accepts Static', () => { expect(parseAnimatedF64({ mode: 'Static', value: 1 })).toEqual({ mode: 'Static', value: 1 }) })
   it('accepts Keyframed', () => {
     const t = { mode: 'Keyframed', value: [{ id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, interp: { kind: 'Linear' } }] }
     expect(parseAnimatedF64(t)).toEqual(t)
   })
+  it('accepts Keyframed keys carrying the procedural kinds (Elastic defaults backfilled)', () => {
+    const t = { mode: 'Keyframed', value: [
+      { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, interp: { kind: 'Elastic', dir: 'Out' } },
+      { id: '00000000-0000-0000-0000-000000000002', t_us: 1, value: 1, interp: { kind: 'Bounce', dir: 'In' } },
+    ] }
+    const parsed = parseAnimatedF64(t) as { value: Array<{ interp: unknown }> }
+    expect(parsed.value[0].interp).toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
+    expect(parsed.value[1].interp).toEqual({ kind: 'Bounce', dir: 'In' })
+  })
   it('rejects a bad mode', () => { expect(() => parseAnimatedF64({ mode: 'Bogus', value: 1 })).toThrow(McpArgError) })
   it('rejects a keyframe with a bad interp', () => {
     expect(() => parseAnimatedF64({ mode: 'Keyframed', value: [{ id: 'x', t_us: 0, value: 0, interp: { kind: 'no' } }] })).toThrow(McpArgError)
+  })
+  it('rejects a keyframe with the retired EaseIn interp', () => {
+    expect(() => parseAnimatedF64({ mode: 'Keyframed', value: [{ id: 'x', t_us: 0, value: 0, interp: { kind: 'EaseIn' } }] })).toThrow(McpArgError)
   })
 })
 describe('parseRole', () => {

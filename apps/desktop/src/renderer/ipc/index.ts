@@ -13,6 +13,7 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
+import type { Interpolation } from "../../shared/easing";
 
 export interface CompositionSummary {
   width: number;
@@ -339,13 +340,9 @@ export interface GroupSummary {
   layer_ids: string[];
 }
 
-/// Wire-compatible mirror of the Rust `Interpolation` enum.
-export type Interpolation =
-  | { kind: "Hold" }
-  | { kind: "Linear" }
-  | { kind: "EaseIn" }
-  | { kind: "EaseOut" }
-  | { kind: "Bezier"; p1: [number, number]; p2: [number, number] };
+/// Wire mirror of the Rust `Interpolation` enum, single-sourced with main
+/// under src/shared (the canonical preset table lives beside it).
+export type { EaseDir, Interpolation } from "../../shared/easing";
 
 export interface Keyframe<T> {
   id: string;

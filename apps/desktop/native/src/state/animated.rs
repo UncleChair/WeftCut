@@ -17,7 +17,7 @@ use super::time::TimeUs;
 // in the `weftcut-eval` leaf crate (one source of truth shared with the renderer
 // via wasm). `Animated<f64>::value_at` below delegates to `eval_f64` through a
 // POD `Kf` slice; `Animated<T>` itself (imbl-backed) stays here.
-pub use weftcut_eval::{unit_bezier, Interpolation};
+pub use weftcut_eval::{unit_bezier, EaseDir, Interpolation};
 
 /// `T: Clone` is required because `imbl::Vector` uses structural sharing — the
 /// inner `Keyframe<T>` must be cloneable. Bounding the type is cleaner than
@@ -151,7 +151,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// `resolveAnimated`): the segment `[kf[i].t_us, kf[i+1].t_us)` is
     /// governed by `kf[i].interp`. Hold on the left → no motion in the
     /// segment (value is constant `kf[i].value`); continuous interp
-    /// (Linear / EaseIn / EaseOut / Bezier) on the left WITH
+    /// (Linear / Bezier / Elastic / Bounce) on the left WITH
     /// `kf[i].value != kf[i+1].value` → motion across the segment.
     ///
     /// Static tracks and zero/one keyframe tracks return empty.
@@ -498,23 +498,69 @@ mod tests {
     }
 
     #[test]
-    fn value_at_ease_in_uses_cubic_bezier() {
-        let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::EaseIn),
-            kf(10_000_000, 10.0, Interpolation::EaseIn),
-        ]);
+    fn value_at_baked_ease_in_bezier_uses_cubic_bezier() {
+        // (0.42,0),(1,1) — the params the retired named ease-in variant baked to.
+        let interp = Interpolation::Bezier {
+            p1: (0.42, 0.0),
+            p2: (1.0, 1.0),
+        };
+        let a = keyframed(vec![kf(0, 0.0, interp), kf(10_000_000, 10.0, interp)]);
         let expected = super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
         assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
     }
 
     #[test]
-    fn value_at_ease_out_uses_cubic_bezier() {
-        let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::EaseOut),
-            kf(10_000_000, 10.0, Interpolation::EaseOut),
-        ]);
+    fn value_at_baked_ease_out_bezier_uses_cubic_bezier() {
+        // (0,0),(0.58,1) — the params the retired named ease-out variant baked to.
+        let interp = Interpolation::Bezier {
+            p1: (0.0, 0.0),
+            p2: (0.58, 1.0),
+        };
+        let a = keyframed(vec![kf(0, 0.0, interp), kf(10_000_000, 10.0, interp)]);
         let expected = super::unit_bezier(0.0, 0.0, 0.58, 1.0, 0.5) * 10.0;
         assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_elastic_and_bounce_use_closed_form() {
+        // The native path must remap through the SAME leaf easings the wasm
+        // preview runs; pinned values match the leaf's closed-form tests.
+        let e = keyframed(vec![
+            kf(
+                0,
+                0.0,
+                Interpolation::Elastic {
+                    dir: EaseDir::Out,
+                    amplitude: 1.0,
+                    period: 0.3,
+                },
+            ),
+            kf(10_000_000, 10.0, Interpolation::Linear),
+        ]);
+        assert!((e.value_at(2_500_000, 0.0) - 9.116116523516816).abs() < 1e-9);
+        let b = keyframed(vec![
+            kf(0, 0.0, Interpolation::Bounce { dir: EaseDir::In }),
+            kf(10_000_000, 10.0, Interpolation::Linear),
+        ]);
+        assert!((b.value_at(5_000_000, 0.0) - 2.34375).abs() < 1e-9);
+    }
+
+    /// Locks the serde wire shape of the procedural variants — the TS union in
+    /// `render/animated.ts` mirrors exactly this JSON (`dir` as the bare
+    /// variant name).
+    #[test]
+    fn procedural_interp_wire_shape() {
+        let e = Interpolation::Elastic {
+            dir: EaseDir::InOut,
+            amplitude: 1.0,
+            period: 0.3,
+        };
+        assert_eq!(
+            serde_json::to_value(e).unwrap(),
+            serde_json::json!({ "kind": "Elastic", "dir": "InOut", "amplitude": 1.0, "period": 0.3 })
+        );
+        let b: Interpolation = serde_json::from_str(r#"{ "kind": "Bounce", "dir": "In" }"#).unwrap();
+        assert_eq!(b, Interpolation::Bounce { dir: EaseDir::In });
     }
 
     #[test]

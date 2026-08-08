@@ -30,12 +30,14 @@
           "interp": { "kind": "Bezier", "p1": [0.25, 0.1], "p2": [0.25, 1.0] } },
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
       "samples": [ { "t_us": 0, "expect": 0.0 }, { "t_us": 10000000, "expect": 10.0 } ] },
-    { "name": "ease_in_cubic", "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
+    { "name": "bezier_css_ease_in", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.42, 0.0], "p2": [1.0, 1.0] } },
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
       "samples": [ { "t_us": 2500000, "expect": 0.934647 }, { "t_us": 5000000, "expect": 3.153568 } ] },
-    { "name": "ease_out_cubic", "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseOut" } },
+    { "name": "bezier_css_ease_out", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.0, 0.0], "p2": [0.58, 1.0] } },
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
       "samples": [ { "t_us": 5000000, "expect": 6.846432 }, { "t_us": 7500000, "expect": 9.065353 } ] },
     { "name": "custom_bezier_interior", "track": { "mode": "Keyframed", "value": [
@@ -48,6 +50,87 @@
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 4000000, "value": 8.0, "interp": { "kind": "Hold" } },
         { "id": "00000000-0000-7000-8000-000000000003", "t_us": 8000000, "value": 2.0, "interp": { "kind": "Linear" } } ] },
       "samples": [ { "t_us": 2000000, "expect": 4.0 }, { "t_us": 6000000, "expect": 8.0 },
-                   { "t_us": 8000000, "expect": 2.0 } ] }
+                   { "t_us": 8000000, "expect": 2.0 } ] },
+    { "name": "elastic_out_default_params", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Elastic", "dir": "Out", "amplitude": 1.0, "period": 0.3 } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 1000000, "expect": 12.5 }, { "t_us": 2500000, "expect": 9.116116523516816 },
+                   { "t_us": 5000000, "expect": 10.15625 }, { "t_us": 7500000, "expect": 10.0552427172802 },
+                   { "t_us": 9000000, "expect": 9.98046875 } ] },
+    { "name": "elastic_in_default_params", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Elastic", "dir": "In", "amplitude": 1.0, "period": 0.3 } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 1000000, "expect": 0.01953125 }, { "t_us": 2500000, "expect": -0.05524271728019903 },
+                   { "t_us": 5000000, "expect": -0.15625000000000044 }, { "t_us": 7500000, "expect": 0.8838834764831844 },
+                   { "t_us": 9000000, "expect": -2.500000000000001 } ] },
+    { "name": "elastic_in_out_default_params", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Elastic", "dir": "InOut", "amplitude": 1.0, "period": 0.3 } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 1250000, "expect": -0.027621358640099514 }, { "t_us": 2500000, "expect": -0.07812500000000022 },
+                   { "t_us": 5000000, "expect": 5.0 }, { "t_us": 7500000, "expect": 10.078125 },
+                   { "t_us": 8750000, "expect": 10.0276213586401 } ] },
+    { "name": "elastic_out_a1_5_p0_45", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Elastic", "dir": "Out", "amplitude": 1.5, "period": 0.45 } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 10.98518089936772 }, { "t_us": 5000000, "expect": 9.985191860018086 },
+                   { "t_us": 7500000, "expect": 9.974132827633737 } ] },
+    { "name": "elastic_in_a1_5_p0_45", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Elastic", "dir": "In", "amplitude": 1.5, "period": 0.45 } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": -0.0811098896464634 }, { "t_us": 5000000, "expect": 0.4639696369674468 },
+                   { "t_us": 7500000, "expect": -2.337134222575655 } ] },
+    { "name": "elastic_in_out_a1_5_p0_45", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Elastic", "dir": "InOut", "amplitude": 1.5, "period": 0.45 } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 0.2319848184837234 }, { "t_us": 5000000, "expect": 5.0 },
+                   { "t_us": 7500000, "expect": 9.992595930009042 } ] },
+    { "name": "bounce_out", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bounce", "dir": "Out" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 1000000, "expect": 0.7562500000000001 }, { "t_us": 4000000, "expect": 9.099999999999998 },
+                   { "t_us": 8500000, "expect": 9.4515625 }, { "t_us": 9500000, "expect": 9.8453125 } ] },
+    { "name": "bounce_in", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bounce", "dir": "In" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 0.2734375 }, { "t_us": 5000000, "expect": 2.34375 },
+                   { "t_us": 9000000, "expect": 9.24375 } ] },
+    { "name": "bounce_in_out", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bounce", "dir": "InOut" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 1.171875 }, { "t_us": 5000000, "expect": 5.0 },
+                   { "t_us": 7500000, "expect": 8.828125 } ] },
+    { "name": "preset_ease_in_quad_exact_t2", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.3333333333333333, 0.0], "p2": [0.6666666666666666, 0.3333333333333333] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 1.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 0.0625 }, { "t_us": 5000000, "expect": 0.25 },
+                   { "t_us": 7500000, "expect": 0.5625 } ] },
+    { "name": "preset_ease_out_cubic_exact", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.3333333333333333, 1.0], "p2": [0.6666666666666666, 1.0] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 1.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 0.578125 }, { "t_us": 5000000, "expect": 0.875 },
+                   { "t_us": 7500000, "expect": 0.984375 } ] },
+    { "name": "preset_ease_in_back_exact", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.3333333333333333, 0.0], "p2": [0.6666666666666666, -0.5671933333333333] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 1.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": -0.0641365625 }, { "t_us": 5000000, "expect": -0.08769749999999998 },
+                   { "t_us": 7500000, "expect": 0.1825903125 } ] },
+    { "name": "preset_ease_in_out_expo_approx", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.87, 0.0], "p2": [0.13, 1.0] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 1.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 0.040058886520232616 }, { "t_us": 5000000, "expect": 0.5 },
+                   { "t_us": 7500000, "expect": 0.9599411134797673 } ] }
   ]
 }

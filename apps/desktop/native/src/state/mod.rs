@@ -31,7 +31,7 @@ pub mod transition;
 pub use command::{CommandError, FullProxyLanded, MediaDerivativesPatch, ValidationError};
 pub use decode_route::DecodeRoute;
 
-pub use animated::{Animated, Interpolation, Keyframe};
+pub use animated::{Animated, EaseDir, Interpolation, Keyframe};
 pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;

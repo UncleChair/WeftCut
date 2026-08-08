@@ -123,14 +123,19 @@ pub fn set_interp(track: &Animated<f64>, id: KeyframeId, interp: Interpolation) 
     )
 }
 
-/// Port of `keyframe/curve.ts::interpToCoeffs`: interp → cubic-bezier control
-/// coords. Linear / Hold map to the identity diagonal.
+/// Port of `keyframe/edits.ts::smoothCoeffs`: interp → cubic-bezier control
+/// coords for the smoothing read-back. Linear / Hold map to the identity
+/// diagonal, and so do the procedural kinds (Elastic / Bounce): smoothing
+/// bakes tangents into a SPLINE segment, so smoothing over a procedural
+/// segment deliberately replaces the procedural curve — the TS twin resolves
+/// them the same way.
 fn interp_to_coeffs(interp: Interpolation) -> [f64; 4] {
     match interp {
         Interpolation::Bezier { p1, p2 } => [p1.0, p1.1, p2.0, p2.1],
-        Interpolation::EaseIn => [0.42, 0.0, 1.0, 1.0],
-        Interpolation::EaseOut => [0.0, 0.0, 0.58, 1.0],
-        _ => [0.0, 0.0, 1.0, 1.0],
+        Interpolation::Hold
+        | Interpolation::Linear
+        | Interpolation::Elastic { .. }
+        | Interpolation::Bounce { .. } => [0.0, 0.0, 1.0, 1.0],
     }
 }
 
@@ -225,6 +230,13 @@ pub fn smooth_all(track: &Animated<f64>) -> Animated<f64> {
 mod tests {
     use super::*;
 
+    /// A distinctive non-Linear interp for identity/inheritance assertions
+    /// (the baked ease-in params — any recognizable `Bezier` would do).
+    const EASE_IN_BAKED: Interpolation = Interpolation::Bezier {
+        p1: (0.42, 0.0),
+        p2: (1.0, 1.0),
+    };
+
     fn kf(id: u128, t_us: i64, value: f64, interp: Interpolation) -> Keyframe<f64> {
         Keyframe {
             id: uuid::Uuid::from_u128(id),
@@ -257,7 +269,7 @@ mod tests {
 
     #[test]
     fn upsert_updates_existing_preserves_id_and_interp() {
-        let tr = keyframed(vec![kf(1, 0, 0.0, Interpolation::EaseIn)]);
+        let tr = keyframed(vec![kf(1, 0, 0.0, EASE_IN_BAKED)]);
         let id_before = ids(&tr);
         let out = upsert(&tr, 0, 0.7, None);
         assert_eq!(ids(&out), id_before, "id preserved on in-place update");
@@ -265,16 +277,13 @@ mod tests {
             panic!()
         };
         assert!((kfs[0].value - 0.7).abs() < 1e-9);
-        assert!(
-            matches!(kfs[0].interp, Interpolation::EaseIn),
-            "interp preserved when None"
-        );
+        assert_eq!(kfs[0].interp, EASE_IN_BAKED, "interp preserved when None");
     }
 
     #[test]
     fn upsert_insert_inherits_preceding_interp() {
         let tr = keyframed(vec![
-            kf(1, 0, 0.0, Interpolation::EaseIn),
+            kf(1, 0, 0.0, EASE_IN_BAKED),
             kf(2, 2_000_000, 1.0, Interpolation::Linear),
         ]);
         let out = upsert(&tr, 1_000_000, 0.5, None);
@@ -283,10 +292,7 @@ mod tests {
         };
         assert_eq!(kfs.len(), 3);
         assert_eq!(kfs[1].t_us, 1_000_000);
-        assert!(
-            matches!(kfs[1].interp, Interpolation::EaseIn),
-            "inherits preceding key interp"
-        );
+        assert_eq!(kfs[1].interp, EASE_IN_BAKED, "inherits preceding key interp");
     }
 
     #[test]

@@ -185,9 +185,12 @@ pub fn us_to_frame(us: i64, rate: u32) -> i64 {
 // ===========================================================================
 
 /// Keyframe interpolation. Segment `[kf[i], kf[i+1])` is governed by
-/// `kf[i].interp`: Hold holds the left value; Linear/EaseIn/EaseOut/Bezier
-/// interpolate via `unit_bezier`. `Default = Linear`. The serde wire shape
-/// (`{kind: ...}`) is gated on the `serde` feature.
+/// `kf[i].interp`: Hold holds the left value; Bezier remaps `u` via
+/// `unit_bezier`; Elastic/Bounce remap `u` via the closed-form Penner easings
+/// below. `Default = Linear`. The serde wire shape (`{kind: ...}`) is gated on
+/// the `serde` feature. Named ease presets are a display-layer concept — they
+/// bake to `Bezier` params at authoring time, so the engine carries no named
+/// variants.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "kind"))]
@@ -195,18 +198,39 @@ pub enum Interpolation {
     Hold,
     #[default]
     Linear,
-    EaseIn,
-    EaseOut,
     Bezier {
         p1: (f64, f64),
         p2: (f64, f64),
     },
+    /// `amplitude` ≥ 1 (engine clamps defensively), `period` > 0 (authoring
+    /// enforces; the engine divides by it as given).
+    Elastic {
+        dir: EaseDir,
+        amplitude: f64,
+        period: f64,
+    },
+    Bounce {
+        dir: EaseDir,
+    },
 }
 
-/// Two-endpoint blend at eased progress `u` ∈ [0,1]. `u` is ALREADY remapped
-/// by the segment's `Interpolation` before lerp sees it, so easing stays
-/// orthogonal to the value type. (Spatial motion paths are NOT this trait —
-/// they need the whole keyframe sequence; a separate future layer.)
+/// Easing direction for the procedural families (`Elastic` / `Bounce`).
+/// Serializes as the bare variant name (`"In"` / `"Out"` / `"InOut"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum EaseDir {
+    In,
+    Out,
+    InOut,
+}
+
+/// Two-endpoint blend at eased progress `u`. `u` is ALREADY remapped by the
+/// segment's `Interpolation` before lerp sees it, so easing stays orthogonal
+/// to the value type. Overshooting eases (Elastic, Bezier with y outside
+/// [0,1]) hand over `u < 0` / `u > 1` and the blend extrapolates — correct for
+/// scalars; colors extrapolate in OkLab and clamp at the u8 conversion.
+/// (Spatial motion paths are NOT this trait — they need the whole keyframe
+/// sequence; a separate future layer.)
 pub trait Interpolate: Copy {
     fn lerp(a: Self, b: Self, u: f64) -> Self;
 }
@@ -437,6 +461,86 @@ pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
     sample_y(t)
 }
 
+// ===========================================================================
+// Closed-form procedural easing (Penner elastic + bounce). Transcendental math
+// through `libm` (`pow` / `sin` / `asin`) ONLY — std math is unavailable in the
+// no_std wasm build and would break native↔wasm bit-identity (same rule as
+// `db_to_linear`). Inputs are normalized segment progress t ∈ [0,1]; elastic
+// outputs overshoot, and `eval` feeds them straight to `T::lerp`.
+// ===========================================================================
+
+/// Penner elastic-out: `a·2^(−10t)·sin((t−s)·2π/p) + 1` with phase
+/// `s = p/(2π)·asin(1/a)`. `amplitude` is clamped to ≥ 1 (the phase needs
+/// `asin(1/a)` to exist; authoring enforces the same floor). The phase puts
+/// the sine within the flat top of −1 at `t=0` for `a=1`, so the curve starts
+/// at exactly 0; at `t→1` the exponential leaves the standard Penner residue
+/// ≤ `a·2⁻¹⁰`. `eval` clamps AT the right key, so the residue exists only
+/// strictly inside the segment — deliberately not special-cased.
+fn elastic_out(t: f64, amplitude: f64, period: f64) -> f64 {
+    let tau = 2.0 * core::f64::consts::PI;
+    let a = if amplitude < 1.0 { 1.0 } else { amplitude };
+    let s = period / tau * libm::asin(1.0 / a);
+    a * libm::pow(2.0, -10.0 * t) * libm::sin((t - s) * tau / period) + 1.0
+}
+
+/// Penner elastic-in: `−a·2^(10(t−1))·sin((t−1−s)·2π/p)` — the genuine
+/// in-form, with the residue at `t→0` and the exact arrival at `t=1`.
+/// LANDMINE: this is NOT `1 − elastic_out(1 − t)`; the reflection identity
+/// happens to agree at `a = 1` but diverges for `a > 1` tails
+/// (`elastic_in_is_not_a_reflection_of_out` pins the divergence).
+fn elastic_in(t: f64, amplitude: f64, period: f64) -> f64 {
+    let tau = 2.0 * core::f64::consts::PI;
+    let a = if amplitude < 1.0 { 1.0 } else { amplitude };
+    let s = period / tau * libm::asin(1.0 / a);
+    -(a * libm::pow(2.0, 10.0 * (t - 1.0)) * libm::sin((t - 1.0 - s) * tau / period))
+}
+
+/// Standard piecewise halves: elastic-in compressed into `[0, ½]`, elastic-out
+/// into `[½, 1]`, both on the caller's unchanged `(amplitude, period)`.
+fn elastic_in_out(t: f64, amplitude: f64, period: f64) -> f64 {
+    if t < 0.5 {
+        0.5 * elastic_in(2.0 * t, amplitude, period)
+    } else {
+        0.5 + 0.5 * elastic_out(2.0 * t - 1.0, amplitude, period)
+    }
+}
+
+/// Penner bounce-out: the classic four-parabola piecewise (gravity 7.5625 over
+/// spans of 2.75). `7.5625 = 2.75²`, so adjacent pieces meet at exactly 1 in
+/// exact arithmetic — C0 joints by construction; 0 at t=0 and 1 at t=1. Pure
+/// `+·−` arithmetic (no libm), bit-identical everywhere.
+fn bounce_out(t: f64) -> f64 {
+    const G: f64 = 7.5625;
+    const D: f64 = 2.75;
+    if t < 1.0 / D {
+        G * t * t
+    } else if t < 2.0 / D {
+        let t = t - 1.5 / D;
+        G * t * t + 0.75
+    } else if t < 2.5 / D {
+        let t = t - 2.25 / D;
+        G * t * t + 0.9375
+    } else {
+        let t = t - 2.625 / D;
+        G * t * t + 0.984375
+    }
+}
+
+/// Bounce-in is the exact reflection of bounce-out (no amplitude tail to break
+/// the identity, unlike elastic).
+fn bounce_in(t: f64) -> f64 {
+    1.0 - bounce_out(1.0 - t)
+}
+
+/// Standard piecewise halves, mirroring `elastic_in_out`.
+fn bounce_in_out(t: f64) -> f64 {
+    if t < 0.5 {
+        0.5 * bounce_in(2.0 * t)
+    } else {
+        0.5 + 0.5 * bounce_out(2.0 * t - 1.0)
+    }
+}
+
 /// Generic slice-form keyframe evaluator. Empty slice ⇒ `default`; `t_us`
 /// before-first/after-last clamps to the end key. Segment interpolation follows
 /// [`Interpolation`]. PRECONDITION: keyframes sorted by `t_us` (the actor stores
@@ -472,9 +576,25 @@ pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
     match a.interp {
         Interpolation::Hold => return a.value,
         Interpolation::Linear => {}
-        Interpolation::EaseIn => u = unit_bezier(0.42, 0.0, 1.0, 1.0, u),
-        Interpolation::EaseOut => u = unit_bezier(0.0, 0.0, 0.58, 1.0, u),
         Interpolation::Bezier { p1, p2 } => u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u),
+        Interpolation::Elastic {
+            dir,
+            amplitude,
+            period,
+        } => {
+            u = match dir {
+                EaseDir::In => elastic_in(u, amplitude, period),
+                EaseDir::Out => elastic_out(u, amplitude, period),
+                EaseDir::InOut => elastic_in_out(u, amplitude, period),
+            }
+        }
+        Interpolation::Bounce { dir } => {
+            u = match dir {
+                EaseDir::In => bounce_in(u),
+                EaseDir::Out => bounce_out(u),
+                EaseDir::InOut => bounce_in_out(u),
+            }
+        }
     }
     T::lerp(a.value, b.value, u)
 }
@@ -766,13 +886,245 @@ mod tests {
     }
 
     #[test]
-    fn eval_ease_in_matches_unit_bezier() {
+    fn eval_bezier_baked_ease_in_matches_unit_bezier() {
+        // (0.42,0),(1,1) — the params the retired named ease-in variant baked to.
         let kfs = [
-            kf(0, 0.0, Interpolation::EaseIn),
-            kf(10_000_000, 10.0, Interpolation::EaseIn),
+            kf(
+                0,
+                0.0,
+                Interpolation::Bezier {
+                    p1: (0.42, 0.0),
+                    p2: (1.0, 1.0),
+                },
+            ),
+            kf(10_000_000, 10.0, Interpolation::Linear),
         ];
         let expected = unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
         assert!((eval_f64(&kfs, 5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eval_bezier_baked_ease_out_matches_unit_bezier() {
+        // (0,0),(0.58,1) — the params the retired named ease-out variant baked to.
+        let kfs = [
+            kf(
+                0,
+                0.0,
+                Interpolation::Bezier {
+                    p1: (0.0, 0.0),
+                    p2: (0.58, 1.0),
+                },
+            ),
+            kf(10_000_000, 10.0, Interpolation::Linear),
+        ];
+        let expected = unit_bezier(0.0, 0.0, 0.58, 1.0, 0.5) * 10.0;
+        assert!((eval_f64(&kfs, 5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    // ---- procedural easing (elastic + bounce) ----
+    // Pinned reference values computed from the Penner formulas independently
+    // of this implementation (CPython `math`, f64). Elastic asserts at 1e-12 —
+    // loose enough to absorb last-ulp libm differences, tight enough to pin
+    // the curve. Bounce is pure arithmetic, so its values assert exactly.
+
+    #[test]
+    fn elastic_out_pinned_values_default_params() {
+        for (t, expect) in [
+            (0.1, 1.25),
+            (0.25, 0.9116116523516815),
+            (0.5, 1.015625),
+            (0.75, 1.00552427172802),
+            (0.9, 0.998046875),
+        ] {
+            assert!((elastic_out(t, 1.0, 0.3) - expect).abs() < 1e-12, "t={t}");
+        }
+    }
+
+    #[test]
+    fn elastic_in_pinned_values_default_params() {
+        for (t, expect) in [
+            (0.1, 0.001953125),
+            (0.25, -0.005524271728019903),
+            (0.5, -0.015625000000000045),
+            (0.75, 0.08838834764831845),
+            (0.9, -0.2500000000000001),
+        ] {
+            assert!((elastic_in(t, 1.0, 0.3) - expect).abs() < 1e-12, "t={t}");
+        }
+    }
+
+    #[test]
+    fn elastic_in_out_pinned_values_default_params() {
+        for (t, expect) in [
+            (0.125, -0.0027621358640099515),
+            (0.25, -0.007812500000000023),
+            (0.5, 0.5),
+            (0.75, 1.0078125),
+            (0.875, 1.00276213586401),
+        ] {
+            assert!((elastic_in_out(t, 1.0, 0.3) - expect).abs() < 1e-12, "t={t}");
+        }
+    }
+
+    #[test]
+    fn elastic_pinned_values_custom_params() {
+        // a=1.5, p=0.45 — the non-default pair the animated golden fixture
+        // extends with.
+        for (t, expect) in [
+            (0.25, 1.098518089936772),
+            (0.5, 0.9985191860018086),
+            (0.75, 0.9974132827633736),
+        ] {
+            assert!((elastic_out(t, 1.5, 0.45) - expect).abs() < 1e-12, "out t={t}");
+        }
+        for (t, expect) in [
+            (0.25, -0.00811098896464634),
+            (0.5, 0.04639696369674468),
+            (0.75, -0.2337134222575655),
+        ] {
+            assert!((elastic_in(t, 1.5, 0.45) - expect).abs() < 1e-12, "in t={t}");
+        }
+        for (t, expect) in [
+            (0.25, 0.02319848184837234),
+            (0.5, 0.5),
+            (0.75, 0.9992595930009043),
+        ] {
+            assert!(
+                (elastic_in_out(t, 1.5, 0.45) - expect).abs() < 1e-12,
+                "in_out t={t}"
+            );
+        }
+    }
+
+    /// Bitwise-exact endpoints at a=1: `asin(1)` is the f64 nearest to π/2 and
+    /// sine is flat there, so the ±1 the phase aims for is hit exactly and the
+    /// `−1 + 1` cancellation is exact — Out reproduces the left key value with
+    /// no residue, In arrives at the right key at exactly 1.
+    #[test]
+    fn elastic_unit_amplitude_endpoints_are_exact() {
+        assert_eq!(elastic_out(0.0, 1.0, 0.3), 0.0);
+        assert_eq!(elastic_out(0.0, 1.0, 0.45), 0.0);
+        assert_eq!(elastic_in(1.0, 1.0, 0.3), 1.0);
+    }
+
+    #[test]
+    fn elastic_endpoint_residue_is_bounded() {
+        // The far endpoints carry the ≤ a·2⁻¹⁰ Penner residue (see
+        // `elastic_out`); `eval` clamps at the keys so it never surfaces there.
+        assert!(elastic_in(0.0, 1.0, 0.3).abs() <= 1.0 / 1024.0);
+        assert!((elastic_out(1.0, 1.0, 0.3) - 1.0).abs() <= 1.0 / 1024.0);
+        assert!(elastic_in(0.0, 1.5, 0.45).abs() <= 1.5 / 1024.0);
+        assert!((elastic_out(1.0, 1.5, 0.45) - 1.0).abs() <= 1.5 / 1024.0);
+    }
+
+    #[test]
+    fn elastic_amplitude_clamps_to_one() {
+        // Engine floor: a < 1 (asin(1/a) undefined) behaves as a = 1.
+        for t in [0.0, 0.25, 0.5, 0.75] {
+            assert_eq!(elastic_out(t, 0.5, 0.3), elastic_out(t, 1.0, 0.3), "t={t}");
+            assert_eq!(elastic_in(t, 0.5, 0.3), elastic_in(t, 1.0, 0.3), "t={t}");
+        }
+    }
+
+    /// LANDMINE GUARD: the reflection `1 − out(1−t)` agrees at a=1 but NOT for
+    /// a>1 — the genuine Penner in-form must stay independent.
+    #[test]
+    fn elastic_in_is_not_a_reflection_of_out() {
+        let via_reflection = 1.0 - elastic_out(1.0 - 0.25, 1.5, 0.45);
+        let genuine = elastic_in(0.25, 1.5, 0.45);
+        assert!((via_reflection - genuine).abs() > 1e-3);
+    }
+
+    #[test]
+    fn bounce_pinned_values() {
+        // One sample strictly inside each of the four out-parabolas, then the
+        // reflected/halved forms.
+        for (t, expect) in [
+            (0.1, 0.07562500000000001),
+            (0.4, 0.9099999999999998),
+            (0.85, 0.9451562499999999),
+            (0.95, 0.98453125),
+        ] {
+            assert_eq!(bounce_out(t), expect, "out t={t}");
+        }
+        for (t, expect) in [
+            (0.25, 0.02734375),
+            (0.5, 0.234375),
+            (0.9, 0.9243750000000001),
+        ] {
+            assert_eq!(bounce_in(t), expect, "in t={t}");
+        }
+        for (t, expect) in [(0.25, 0.1171875), (0.75, 0.8828125)] {
+            assert_eq!(bounce_in_out(t), expect, "in_out t={t}");
+        }
+    }
+
+    #[test]
+    fn bounce_out_endpoints_and_joints() {
+        assert_eq!(bounce_out(0.0), 0.0);
+        assert!((bounce_out(1.0) - 1.0).abs() < 1e-12);
+        // Adjacent parabolas meet at 1 (7.5625 = 2.75²); f64 evaluation stays
+        // within a few ulp on either side of each joint.
+        for j in [1.0 / 2.75, 2.0 / 2.75, 2.5 / 2.75] {
+            let below = bounce_out(j - 1e-12);
+            let at = bounce_out(j);
+            assert!((at - below).abs() < 1e-9, "joint {j} continuity");
+            assert!((at - 1.0).abs() < 1e-9, "joint {j} meets 1");
+        }
+    }
+
+    #[test]
+    fn eval_elastic_through_enum_matches_closed_form() {
+        let kfs = [
+            kf(
+                0,
+                0.0,
+                Interpolation::Elastic {
+                    dir: EaseDir::Out,
+                    amplitude: 1.0,
+                    period: 0.3,
+                },
+            ),
+            kf(10_000_000, 10.0, Interpolation::Linear),
+        ];
+        assert!((eval_f64(&kfs, 2_500_000, 0.0) - 9.116116523516816).abs() < 1e-9);
+        // u = 0.1 → 1.25: overshoot flows through the lerp unclamped.
+        let over = eval_f64(&kfs, 1_000_000, 0.0);
+        assert!((over - 12.5).abs() < 1e-9, "overshoot extrapolates, got {over}");
+    }
+
+    #[test]
+    fn eval_elastic_in_and_in_out_through_enum() {
+        let mk = |dir| {
+            [
+                kf(
+                    0,
+                    0.0,
+                    Interpolation::Elastic {
+                        dir,
+                        amplitude: 1.5,
+                        period: 0.45,
+                    },
+                ),
+                kf(10_000_000, 10.0, Interpolation::Linear),
+            ]
+        };
+        // In at u=0.25 lands negative — undershoot also flows through the lerp.
+        assert!((eval_f64(&mk(EaseDir::In), 2_500_000, 0.0) - -0.0811098896464634).abs() < 1e-9);
+        assert!((eval_f64(&mk(EaseDir::InOut), 7_500_000, 0.0) - 9.992595930009043).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eval_bounce_through_enum_matches_closed_form() {
+        let mk = |dir| {
+            [
+                kf(0, 0.0, Interpolation::Bounce { dir }),
+                kf(10_000_000, 10.0, Interpolation::Linear),
+            ]
+        };
+        assert!((eval_f64(&mk(EaseDir::Out), 2_500_000, 0.0) - 4.7265625).abs() < 1e-9);
+        assert!((eval_f64(&mk(EaseDir::In), 5_000_000, 0.0) - 2.34375).abs() < 1e-9);
+        assert!((eval_f64(&mk(EaseDir::InOut), 7_500_000, 0.0) - 8.828125).abs() < 1e-9);
     }
 
     // ---- color: Rgba8 OkLab + premultiplied-alpha lerp ----

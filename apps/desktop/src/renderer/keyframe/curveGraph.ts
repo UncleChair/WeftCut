@@ -1,13 +1,37 @@
-// Pure value-graph geometry for the inline keyframe curve editor. Maps the
-// stored per-segment cubic-bezier easing (Bezier{p1,p2}) into the
-// (time, value) pixel space of a timeline sub-lane, and back, for rendering
-// and in-place tangent-handle editing. DOM-free — all geometry is explicit
-// args so it unit-tests headless. UI-only (no Rust mirror).
+// Pure value-graph geometry for the inline keyframe curve editor. Maps a
+// segment's stored easing into the (time, value) pixel space of a timeline
+// sub-lane, and back, for rendering and in-place tangent-handle editing.
+// Curved segments are sampled through the SAME wasm eval the preview runs
+// (`resolveAnimated`), so the display shows exactly what the engine computes —
+// including the procedural kinds (Elastic/Bounce), which have no JS math at
+// all. DOM-free — all geometry is explicit args so it unit-tests headless.
 import type { Interpolation, Keyframe } from "../ipc";
-import { unitBezier } from "../render/animated";
-import { interpToCoeffs } from "./curve";
+import { resolveAnimated, type AnimTrack } from "../render/animated";
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/// Two-key throwaway track for sampling one segment through the wasm eval.
+/// Fresh array per call ⇒ fresh resident-buffer handle (render/animated.ts
+/// keys its cache by array reference), so build ONE track per segment and
+/// evaluate all its samples against it. Ids never cross the ABI — dummies.
+function segmentTrack(
+  aTUs: number, aVal: number, bTUs: number, bVal: number, interp: Interpolation,
+): AnimTrack<number> {
+  return {
+    mode: "Keyframed",
+    value: [
+      { id: "seg-a", t_us: aTUs, value: aVal, interp },
+      { id: "seg-b", t_us: bTUs, value: bVal, interp: { kind: "Linear" } },
+    ],
+  };
+}
+
+/// Segment value at progress `u` via the wasm eval. Fractional µs truncate at
+/// the ABI (≤1 µs ≪ one display pixel); u=0/u=1 clamp AT the keys, so segment
+/// endpoints reproduce the key values exactly.
+function sampleTrack(track: AnimTrack<number>, aTUs: number, aVal: number, bTUs: number, u: number): number {
+  return resolveAnimated(track, aTUs + (bTUs - aTUs) * u, aVal);
+}
 
 export interface CurveGeom {
   /// zoom: timeline pixels per second.
@@ -70,10 +94,11 @@ export function computeValueRange(
       const b = keys[i + 1]!;
       const dv = b.value - a.value;
       const curved = a.interp.kind !== "Hold" && a.interp.kind !== "Linear";
+      // Δv==0 skips: eased or not, the lerp of equal endpoints is flat.
       if (curved && dv !== 0) {
-        const [x1, y1, x2, y2] = interpToCoeffs(a.interp);
+        const track = segmentTrack(a.t_us, a.value, b.t_us, b.value, a.interp);
         for (let s = 1; s < samplesPerSeg; s++) {
-          note(a.value + unitBezier(x1, y1, x2, y2, s / samplesPerSeg) * dv);
+          note(sampleTrack(track, a.t_us, a.value, b.t_us, s / samplesPerSeg));
         }
       }
     }
@@ -95,7 +120,8 @@ export interface Seg {
 }
 
 /// Pixel polyline for one segment's value curve. Hold → flat then vertical
-/// step; Linear → straight; curved → sampled through unitBezier.
+/// step; Linear → straight; curved (Bezier/Elastic/Bounce) → sampled through
+/// the wasm eval.
 export function segmentPolyline(
   seg: Seg,
   interp: Interpolation,
@@ -108,26 +134,26 @@ export function segmentPolyline(
   const yb = valueToY(seg.bVal, g);
   if (interp.kind === "Hold") return [{ x: xa, y: ya }, { x: xb, y: ya }, { x: xb, y: yb }];
   if (interp.kind === "Linear") return [{ x: xa, y: ya }, { x: xb, y: yb }];
-  const [x1, y1, x2, y2] = interpToCoeffs(interp);
-  const dv = seg.bVal - seg.aVal;
+  const track = segmentTrack(seg.aTUs, seg.aVal, seg.bTUs, seg.bVal, interp);
   const out: Pt[] = [];
   for (let s = 0; s <= samples; s++) {
     const u = s / samples;
-    const v = seg.aVal + unitBezier(x1, y1, x2, y2, u) * dv;
+    const v = sampleTrack(track, seg.aTUs, seg.aVal, seg.bTUs, u);
     out.push({ x: xa + (xb - xa) * u, y: valueToY(v, g) });
   }
   return out;
 }
 
-/// Tangent-handle control points (px) for a segment, or null for Hold/Linear
-/// (no editable handles — pick a curved preset to start easing).
+/// Tangent-handle control points (px) for a Bezier segment, else null:
+/// Hold/Linear have nothing to edit, and procedural segments (Elastic/Bounce)
+/// have no coefficient representation — they render sampled-only.
 export function segmentHandles(
   seg: Seg,
   interp: Interpolation,
   g: CurveGeom,
 ): { p1: Pt; p2: Pt } | null {
-  if (interp.kind === "Hold" || interp.kind === "Linear") return null;
-  const [x1, y1, x2, y2] = interpToCoeffs(interp);
+  if (interp.kind !== "Bezier") return null;
+  const [[x1, y1], [x2, y2]] = [interp.p1, interp.p2];
   const xa = timeToXPx(seg.aTUs, g);
   const xb = timeToXPx(seg.bTUs, g);
   const dv = seg.bVal - seg.aVal;

@@ -1,19 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PRESETS, interpToCoeffs, handleToCoeff, coeffToHandle } from "./curve";
+import { interpToCoeffs, handleToCoeff, coeffToHandle } from "./curve";
 
-describe("curve presets", () => {
-  it("has the expected preset ids", () => {
-    expect(PRESETS.map((p) => p.id)).toEqual([
-      "linear", "ease", "ease_in", "ease_out", "ease_in_out", "hold",
-    ]);
-  });
-});
-
-describe("interpToCoeffs", () => {
-  it("maps named eases to CSS cubics", () => {
-    expect(interpToCoeffs({ kind: "EaseIn" })).toEqual([0.42, 0, 1, 1]);
-    expect(interpToCoeffs({ kind: "EaseOut" })).toEqual([0, 0, 0.58, 1]);
+describe("interpToCoeffs (spline-only)", () => {
+  it("maps Linear and Hold to the identity diagonal", () => {
     expect(interpToCoeffs({ kind: "Linear" })).toEqual([0, 0, 1, 1]);
+    expect(interpToCoeffs({ kind: "Hold" })).toEqual([0, 0, 1, 1]);
   });
   it("passes Bezier through", () => {
     expect(interpToCoeffs({ kind: "Bezier", p1: [0.2, 0.3], p2: [0.7, 0.9] }))

@@ -4,7 +4,6 @@
 // layer-local microseconds (the keyframe `t_us` base).
 import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
 import { resolveAnimated } from "../render/animated";
-import { interpToCoeffs } from "./curve";
 
 function newId(): string {
   return crypto.randomUUID();
@@ -96,6 +95,24 @@ export function setKeyframeInterp(
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/// Control coords smoothing reads back from the UNTOUCHED side of a segment.
+/// Elastic/Bounce map to the identity diagonal ON PURPOSE: smoothing bakes a
+/// spline segment, deliberately replacing a procedural curve. Exhaustive — no
+/// default arm — so a new kind decides its smoothing read-back explicitly.
+/// TWIN: `native/src/state/keyframe_edits.rs::interp_to_coeffs` (golden-locked
+/// through keyframeEditsGolden.fixture.json).
+function smoothCoeffs(interp: Interpolation): [number, number, number, number] {
+  switch (interp.kind) {
+    case "Bezier":
+      return [interp.p1[0], interp.p1[1], interp.p2[0], interp.p2[1]];
+    case "Hold":
+    case "Linear":
+    case "Elastic":
+    case "Bounce":
+      return [0, 0, 1, 1];
+  }
+}
+
 /// Monotone-clamped tangent (value per microsecond) at interior key `i`.
 /// 0 at a local extremum (or when a neighbour delta is 0).
 function tangentAt(keys: Keyframe<number>[], i: number): number {
@@ -113,8 +130,9 @@ function tangentAt(keys: Keyframe<number>[], i: number): number {
 /// Bake monotone (no-overshoot) tangents at key `id` into the outgoing segment
 /// (this key's interp.p1) and the incoming segment (previous key's interp.p2),
 /// giving C1-continuous velocity through the key. The control point on the
-/// untouched side is read back through `interpToCoeffs`, so a Linear/Hold
-/// neighbour comes through as the identity diagonal. Returns a NEW track.
+/// untouched side is read back through `smoothCoeffs`, so a Linear/Hold (or
+/// procedural) neighbour comes through as the identity diagonal. Returns a NEW
+/// track.
 export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<number> {
   if (track.mode === "Static") return track;
   const keys = track.value;
@@ -130,7 +148,7 @@ export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<
     if (dv === 0 || dt <= 0) {
       out[i] = { ...keys[i]!, interp: { kind: "Linear" } };
     } else {
-      const [, , x2, y2] = interpToCoeffs(keys[i]!.interp);
+      const [, , x2, y2] = smoothCoeffs(keys[i]!.interp);
       const y1 = clamp01((m * dt) / (3 * dv));
       out[i] = { ...keys[i]!, interp: { kind: "Bezier", p1: [1 / 3, y1], p2: [x2, y2] } };
     }
@@ -143,7 +161,7 @@ export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<
     if (dv === 0 || dt <= 0) {
       out[i - 1] = { ...keys[i - 1]!, interp: { kind: "Linear" } };
     } else {
-      const [x1, y1] = interpToCoeffs(out[i - 1]!.interp);
+      const [x1, y1] = smoothCoeffs(out[i - 1]!.interp);
       const y2 = clamp01(1 - (m * dt) / (3 * dv));
       out[i - 1] = { ...out[i - 1]!, interp: { kind: "Bezier", p1: [x1, y1], p2: [2 / 3, y2] } };
     }

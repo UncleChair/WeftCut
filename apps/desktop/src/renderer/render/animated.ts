@@ -12,13 +12,9 @@ import {
   type KfColor,
 } from "../eval";
 import type { Rgba } from "../ipc";
+import type { Interpolation } from "../../shared/easing";
 
-export type Interpolation =
-  | { kind: "Hold" }
-  | { kind: "Linear" }
-  | { kind: "EaseIn" }
-  | { kind: "EaseOut" }
-  | { kind: "Bezier"; p1: [number, number]; p2: [number, number] };
+export type { EaseDir, Interpolation } from "../../shared/easing";
 
 export interface Keyframe<T> {
   id: string;
@@ -30,54 +26,6 @@ export interface Keyframe<T> {
 export type AnimTrack<T> =
   | { mode: "Static"; value: T }
   | { mode: "Keyframed"; value: Keyframe<T>[] };
-
-/// Evaluate `cubic-bezier(x1,y1,x2,y2)` at normalized progress `x` ∈ [0,1].
-///
-/// INTENTIONAL JS copy — the ONLY remaining hand-mirror. The keyframe-eval path
-/// (`resolveAnimated`) now runs the wasm `weftcut-eval::unit_bezier`; this copy
-/// stays for the curve-graph editor overlay (`keyframe/curveGraph.ts`), a
-/// UI-only use with no Rust hot-path twin. It still mirrors the leaf
-/// (`native/eval/src/lib.rs::unit_bezier`); keep them in sync if either changes.
-export function unitBezier(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  x: number,
-): number {
-  const EPS = 1e-7;
-  const cx = 3 * x1;
-  const bx = 3 * (x2 - x1) - cx;
-  const ax = 1 - cx - bx;
-  const cy = 3 * y1;
-  const by = 3 * (y2 - y1) - cy;
-  const ay = 1 - cy - by;
-  const sampleX = (t: number) => ((ax * t + bx) * t + cx) * t;
-  const sampleY = (t: number) => ((ay * t + by) * t + cy) * t;
-  const sampleDX = (t: number) => (3 * ax * t + 2 * bx) * t + cx;
-
-  let t = x;
-  for (let i = 0; i < 8; i++) {
-    const xt = sampleX(t) - x;
-    if (Math.abs(xt) < EPS) return sampleY(t);
-    const d = sampleDX(t);
-    if (Math.abs(d) < 1e-6) break;
-    t -= xt / d;
-  }
-  let lo = 0;
-  let hi = 1;
-  t = x;
-  if (t < lo) return sampleY(lo);
-  if (t > hi) return sampleY(hi);
-  while (lo < hi) {
-    const xt = sampleX(t);
-    if (Math.abs(xt - x) < EPS) return sampleY(t);
-    if (x > xt) lo = t;
-    else hi = t;
-    t = (hi - lo) * 0.5 + lo;
-  }
-  return sampleY(t);
-}
 
 // Per-track identity for the resident wasm cache. IPC re-materializes a track's
 // keyframe array whenever its data changes, so the array REFERENCE changes
@@ -101,8 +49,8 @@ function handleFor(kfs: object): number {
 ///
 /// Genuinely-keyframed tracks (≥2 keys) delegate to the wasm
 /// `weftcut-eval::eval_f64` — the SAME crate the actor + export run — so preview,
-/// export, and the Rust side interpolate identically (Hold / Linear /
-/// EaseIn/EaseOut/Bezier). Static / empty / single-key tracks short-circuit in
+/// export, and the Rust side interpolate identically (Hold / Linear / Bezier /
+/// Elastic / Bounce). Static / empty / single-key tracks short-circuit in
 /// JS to avoid a wasm call for the common case. `initEval()` must have resolved
 /// (the renderer bootstrap awaits it before mount).
 export function resolveAnimated<T extends number>(

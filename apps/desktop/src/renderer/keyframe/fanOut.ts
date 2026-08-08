@@ -3,13 +3,8 @@
 // `update_layer_param_tracks` call (one commit, one undo). Pairs with the
 // main-side twin invariant (main/state/mutations/scaleLink.ts): the batch
 // result is twins, so a linked layer STAYS linked.
-import type { AnimTrack, Interpolation } from "../ipc";
-
-function cloneInterp(i: Interpolation): Interpolation {
-  return i.kind === "Bezier"
-    ? { kind: "Bezier", p1: [i.p1[0], i.p1[1]], p2: [i.p2[0], i.p2[1]] }
-    : { kind: i.kind };
-}
+import type { AnimTrack } from "../ipc";
+import { cloneInterp } from "../../shared/easing";
 
 /// Structural copy with fresh keyframe ids. Ids are per-track identities (the
 /// twin comparison ignores them) and the linked UI never surfaces the copy's

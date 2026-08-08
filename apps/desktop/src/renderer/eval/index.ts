@@ -6,6 +6,7 @@
 // scalar-only calls. `initEval()` must be awaited before any wrapper is called
 // (the renderer bootstrap does so).
 import { EVAL_WASM_BASE64 } from './evalWasm.generated'
+import type { Interpolation } from '../../shared/easing'
 
 interface Exports {
   snap_round(tUs: number, num: number, den: number): number
@@ -48,7 +49,49 @@ interface Exports {
 }
 
 let ex: Exports | null = null
-const interpCode: Record<string, number> = { Hold: 0, Linear: 1, EaseIn: 2, EaseOut: 3, Bezier: 4 }
+
+/// `(interp code, p1x, p1y, p2x, p2y)` — the wasm `set_kf`/`set_kf_rgba` slots
+/// for one keyframe's interpolation.
+///
+/// Code table — KEEP in lockstep with `native/eval/src/wasm.rs::decode_interp`:
+///   0 = Hold, 1 = Linear, 4 = Bezier, 5 = Elastic, 6 = Bounce.
+/// Codes 2/3 are RETIRED (the removed named EaseIn/EaseOut variants) and must
+/// never be reassigned — a stale caller sending them must not get a different
+/// curve than it asked for. Param-slot layout mirrors `decode_interp`:
+///   Bezier:  p1 = (p1x, p1y), p2 = (p2x, p2y)
+///   Elastic: p1x = dir, p1y = amplitude, p2x = period (p2y unused)
+///   Bounce:  p1x = dir
+/// Dir codes (`decode_dir`): 0 = In, 1 = Out, 2 = InOut.
+///
+/// An unrecognized kind (only reachable through a cast hole — the wire type is
+/// closed) falls back to Linear: visible motion rather than a silently wrong
+/// curve, the same deliberate policy as the Rust side's debug assert.
+function encodeInterp(interp: Interpolation): [number, number, number, number, number] {
+  switch (interp.kind) {
+    case 'Hold':
+      return [0, 0, 0, 0, 0]
+    case 'Linear':
+      return [1, 0, 0, 0, 0]
+    case 'Bezier':
+      return [4, interp.p1[0], interp.p1[1], interp.p2[0], interp.p2[1]]
+    case 'Elastic':
+      return [5, dirCode(interp.dir), interp.amplitude, interp.period, 0]
+    case 'Bounce':
+      return [6, dirCode(interp.dir), 0, 0, 0]
+    default:
+      console.assert(false, `weftcut-eval: unknown interp kind, evaluating as Linear`, interp)
+      return [1, 0, 0, 0, 0]
+  }
+}
+
+/// `EaseDir` → ABI dir code. Unknown (cast hole) → In, mirroring `decode_dir`.
+function dirCode(dir: string): number {
+  if (dir === 'In') return 0
+  if (dir === 'Out') return 1
+  if (dir === 'InOut') return 2
+  console.assert(false, `weftcut-eval: unknown ease dir '${dir}', evaluating as In`)
+  return 0
+}
 
 function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
   // Back the view with an explicit `ArrayBuffer` so the type resolves to
@@ -146,7 +189,7 @@ export function usToFrame(us: number, rate: number): number {
 export interface Kf {
   t_us: number
   value: number
-  interp: { kind: string; p1?: [number, number]; p2?: [number, number] }
+  interp: Interpolation
 }
 
 /** Resident keyframe-buffer capacity — mirrors `MAXKF` in
@@ -179,10 +222,8 @@ export function loadTrack(handle: number, kfs: Kf[]): void {
   const n = Math.min(kfs.length, MAX_KEYFRAMES)
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
-    const c = interpCode[k.interp.kind] ?? 1
-    const p1 = k.interp.p1 ?? [0, 0]
-    const p2 = k.interp.p2 ?? [0, 0]
-    e.set_kf(i, k.t_us, k.value, c, p1[0], p1[1], p2[0], p2[1])
+    const [c, p1x, p1y, p2x, p2y] = encodeInterp(k.interp)
+    e.set_kf(i, k.t_us, k.value, c, p1x, p1y, p2x, p2y)
   }
   e.set_n(n)
   loadedHandle = handle
@@ -211,7 +252,7 @@ export interface RgbaLike {
 export interface KfColor {
   t_us: number
   value: RgbaLike
-  interp: { kind: string; p1?: [number, number]; p2?: [number, number] }
+  interp: Interpolation
 }
 
 // Pack/unpack MUST be byte-identical to the Rust shim (`wasm.rs`): r in the HIGH
@@ -241,10 +282,8 @@ export function loadColorTrack(handle: number, kfs: KfColor[]): void {
   const n = Math.min(kfs.length, MAX_KEYFRAMES)
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
-    const c = interpCode[k.interp.kind] ?? 1
-    const p1 = k.interp.p1 ?? [0, 0]
-    const p2 = k.interp.p2 ?? [0, 0]
-    e.set_kf_rgba(i, k.t_us, packRgba(k.value), c, p1[0], p1[1], p2[0], p2[1])
+    const [c, p1x, p1y, p2x, p2y] = encodeInterp(k.interp)
+    e.set_kf_rgba(i, k.t_us, packRgba(k.value), c, p1x, p1y, p2x, p2y)
   }
   e.set_n_rgba(n)
   loadedColorHandle = handle

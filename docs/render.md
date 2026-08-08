@@ -85,21 +85,25 @@ track + within-track index that the project summary already carries.
 `render(tUs)` walks the mounted sprites in z-order. For each layer the
 Compositor first resolves the view's `AnimTrack<T>` properties at the
 layer-local time via `render/resolveView.ts` — numeric tracks through
-`render/animated.ts`'s `resolveAnimated`, which calls the shared
-`weftcut-eval` wasm (the SAME crate Rust links natively, so there is one
-keyframe engine, not a hand-mirrored pair; [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md));
-color tracks statically until `Animated<Rgba>` lands in the leaf — then
+`render/animated.ts`'s `resolveAnimated`, color tracks through its
+`resolveAnimatedColor` twin (OkLab + premultiplied alpha), both calling
+the shared `weftcut-eval` wasm (the SAME crate Rust links natively, so
+there is one keyframe engine, not a hand-mirrored pair;
+[ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) — then
 hands the resolved scalar view to the sprite to update its texture /
-position / opacity / transform / blend mode. The leaf resolves `EaseIn`,
-`EaseOut`, and `Bezier{p1,p2}` through one WebKit-`UnitBezier` cubic
-solver (Newton–Raphson with binary-search fallback), so named CSS eases
-and arbitrary per-segment timing functions are identical in preview,
-export, and Rust by construction. The golden-vector fixture
-(`render/animatedGolden.fixture.json`) is now a single-source regression:
+position / opacity / transform / blend mode. The leaf resolves
+`Bezier{p1,p2}` segments (including every baked named preset — see
+`src/shared/easing.ts`) through one WebKit-`UnitBezier` cubic solver
+(Newton–Raphson with binary-search fallback), and the procedural
+`Elastic`/`Bounce` segments through closed-form Penner math on the same
+libm-only discipline, so spline and parameter curves alike are identical
+in preview, export, and Rust by construction. The curve-graph editor
+overlay samples its curves through the same wasm eval — there is no JS
+solver copy anywhere. The golden-vector fixture
+(`render/animatedGolden.fixture.json`) is a single-source regression:
 the TS suite (`animated.golden.test.ts`, through wasm) and the Rust leaf
-test both assert the wasm/native engine reproduces it. (One JS
-`unitBezier` copy remains in `animated.ts` for the curve-graph editor
-overlay only.)
+test both assert the wasm/native engine reproduces it, spline and
+procedural cases alike.
 
 **Known limit:** the wasm preview holds at most 256 keyframes **per animated
 property** (one `AnimTrack` — e.g. a single layer's opacity or x, NOT a whole

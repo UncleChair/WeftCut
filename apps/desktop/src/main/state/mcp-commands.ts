@@ -4,10 +4,11 @@
 // The byte-exact mcp.differential gate (vs Rust dispatch_tool) is the backstop.
 // Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
-import type { Animated, Interpolation, Keyframe, Rgba, TransitionDirection, TransitionKind } from './model'
+import type { Animated, EaseDir, Interpolation, Keyframe, Rgba, TransitionDirection, TransitionKind } from './model'
 import type { EffectPatch } from './mutations/effects'
 import type { MarkerPatch } from './mutations/markers'
 import { sortKeys } from './canonical'
+import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForInterp } from '../../shared/easing'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
 export type McpToolErrorJson = { code: McpErrorCode; message: string; data?: unknown }
@@ -27,28 +28,77 @@ export function parseUuid(s: unknown, field: string): string {
   return s
 }
 
-const INTERP_SIMPLE = new Set(['Hold', 'Linear', 'EaseIn', 'EaseOut'])
+const INTERP_KINDS = `'Hold' | 'Linear' | 'Bezier' | 'Elastic' | 'Bounce'`
+const EASE_DIRS = new Set<string>(['In', 'Out', 'InOut'])
 const isPair = (v: unknown): v is [number, number] =>
   Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number'
 
-/** Validate an Interpolation (model.ts) — mirrors the Rust serde form in
- *  state/animated.rs. Throws McpArgError on malformed input → invalid_params. */
+function parseEaseDir(v: unknown, kind: string): EaseDir {
+  if (typeof v !== 'string' || !EASE_DIRS.has(v))
+    throw new McpArgError(`invalid interp: ${kind} needs dir 'In' | 'Out' | 'InOut', got ${String(v)}`)
+  return v as EaseDir
+}
+
+/** Validate an Interpolation — the closed wire union single-sourced in
+ *  src/shared/easing.ts (Hold | Linear | Bezier | Elastic | Bounce). Elastic
+ *  amplitude/period may be omitted and take the shared authoring defaults, so
+ *  the parsed value is always a complete wire object. Bezier control-point x
+ *  is gated to [0, 1] — x is segment time, and the solver is single-valued
+ *  only on that range. Throws McpArgError on malformed input → invalid_params. */
 export function parseInterp(v: unknown): Interpolation {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid interp: not an object`)
   const o = v as Record<string, unknown>
   const kind = o.kind
-  if (typeof kind !== 'string') throw new McpArgError(`invalid interp: missing 'kind'`)
-  if (INTERP_SIMPLE.has(kind)) return { kind } as Interpolation
-  if (kind === 'Bezier') {
-    if (!isPair(o.p1) || !isPair(o.p2)) throw new McpArgError(`invalid interp: Bezier needs p1/p2 as [number, number]`)
-    return { kind: 'Bezier', p1: o.p1, p2: o.p2 }
+  if (typeof kind !== 'string') {
+    if (typeof o.preset === 'string')
+      throw new McpArgError(`invalid interp: preset ids are a set_keyframe_easing payload — this argument takes a raw kind ${INTERP_KINDS}`)
+    throw new McpArgError(`invalid interp: missing 'kind' (${INTERP_KINDS})`)
   }
-  throw new McpArgError(`invalid interp: unknown kind '${kind}'`)
+  if (kind === 'Hold' || kind === 'Linear') return { kind }
+  if (kind === 'Bezier') {
+    const p1 = o.p1
+    const p2 = o.p2
+    if (!isPair(p1) || !isPair(p2)) throw new McpArgError(`invalid interp: Bezier needs p1/p2 as [number, number]`)
+    if (!(p1[0] >= 0 && p1[0] <= 1)) throw new McpArgError(`invalid interp: Bezier p1[0] (x) must be within [0, 1], got ${p1[0]} — x is segment time; only y may overshoot`)
+    if (!(p2[0] >= 0 && p2[0] <= 1)) throw new McpArgError(`invalid interp: Bezier p2[0] (x) must be within [0, 1], got ${p2[0]} — x is segment time; only y may overshoot`)
+    return { kind: 'Bezier', p1, p2 }
+  }
+  if (kind === 'Elastic') {
+    const dir = parseEaseDir(o.dir, 'Elastic')
+    const amplitude = o.amplitude === undefined || o.amplitude === null ? ELASTIC_DEFAULT_AMPLITUDE : parseNum(o.amplitude, 'interp.amplitude')
+    if (amplitude < 1) throw new McpArgError(`invalid interp: Elastic amplitude must be >= 1, got ${amplitude} (omit it for the default ${ELASTIC_DEFAULT_AMPLITUDE})`)
+    const period = o.period === undefined || o.period === null ? ELASTIC_DEFAULT_PERIOD : parseNum(o.period, 'interp.period')
+    if (period <= 0) throw new McpArgError(`invalid interp: Elastic period must be > 0, got ${period} (omit it for the default ${ELASTIC_DEFAULT_PERIOD})`)
+    return { kind: 'Elastic', dir, amplitude, period }
+  }
+  if (kind === 'Bounce') return { kind: 'Bounce', dir: parseEaseDir(o.dir, 'Bounce') }
+  if (kind === 'EaseIn' || kind === 'EaseOut')
+    throw new McpArgError(`invalid interp: '${kind}' is not a kind — named eases are presets (set_keyframe_easing takes {"preset":"${kind === 'EaseIn' ? 'ease_in' : 'ease_out'}"}); kinds: ${INTERP_KINDS}`)
+  throw new McpArgError(`invalid interp: unknown kind '${kind}' — expected ${INTERP_KINDS}`)
 }
 
 /** Optional variant: undefined passes through (set_keyframe's interp is Option). */
 export function parseInterpOpt(v: unknown): Interpolation | undefined {
   return v === undefined ? undefined : parseInterp(v)
+}
+
+/** set_keyframe_easing's payload union: {"preset":"<id>"} bakes to a fresh
+ *  copy of the canonical table entry's params (cloneInterp — the table IS the
+ *  params, nothing is re-derived here); anything else parses as a raw
+ *  Interpolation. Exactly one of preset/kind: both together is ambiguous and
+ *  rejects. The unknown-preset error carries the full live id list in the
+ *  MESSAGE — the client drops error.data, so options must ride the message. */
+export function parseEasing(v: unknown): Interpolation {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid interp: not an object`)
+  const o = v as Record<string, unknown>
+  if (o.preset === undefined || o.preset === null) {
+    if (o.kind === undefined) throw new McpArgError(`invalid interp: send {"preset":"<id>"} or a raw kind ${INTERP_KINDS}`)
+    return parseInterp(v)
+  }
+  if (o.kind !== undefined) throw new McpArgError(`invalid interp: send either {"preset":"<id>"} or a raw {"kind":...}, not both`)
+  const hit = typeof o.preset === 'string' ? EASING_PRESETS.find((p) => p.id === o.preset) : undefined
+  if (!hit) throw new McpArgError(`invalid interp: unknown preset '${String(o.preset)}' — presets: ${EASING_PRESETS.map((p) => p.id).join(', ')}`)
+  return cloneInterp(hit.interp)
 }
 
 /** Validate an Animated<number> (model.ts) — mirrors the Rust serde form of
@@ -235,13 +285,19 @@ export function toolJson(v: unknown): ToolResultJson { return { content: [{ type
 
 /** get_param_track result shape (NOT the raw Animated serde): Static →
  *  {mode,value}; Keyframed → {mode, keyframes:[{id, t_us (timeline-absolute =
- *  local + t_start), t_local_us (stored base), value, interp}]}. Caller wraps in
- *  toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
-export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { mode: 'Keyframed'; value: Array<{ id: string; t_us: number; value: number; interp: unknown }> }, tStartUs: number): unknown {
+ *  local + t_start), t_local_us (stored base), value, interp, preset_id?}]}.
+ *  preset_id is the exact-match reverse lookup against the canonical easing
+ *  table — present only when the stored params ARE a table entry's (a
+ *  hand-tuned curve carries none; the field is omitted, never null). Caller
+ *  wraps in toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
+export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { mode: 'Keyframed'; value: Array<{ id: string; t_us: number; value: number; interp: Interpolation }> }, tStartUs: number): unknown {
   if (track.mode === 'Static') return { mode: 'Static', value: track.value }
   return {
     mode: 'Keyframed',
-    keyframes: track.value.map((k) => ({ id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value, interp: k.interp })),
+    keyframes: track.value.map((k) => {
+      const presetId = presetIdForInterp(k.interp)
+      return { id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value, interp: k.interp, ...(presetId === undefined ? {} : { preset_id: presetId }) }
+    }),
   }
 }
 
@@ -389,13 +445,29 @@ export interface McpToolDef {
 const RGBA_SCHEMA = { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] }
 const INTERP_SCHEMA = {
   type: 'object',
-  description: 'Easing: {"kind":"Hold"|"Linear"|"EaseIn"|"EaseOut"} or {"kind":"Bezier","p1":[x,y],"p2":[x,y]}.',
+  description: 'Easing: {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]} | {"kind":"Elastic","dir",amplitude?,period?} | {"kind":"Bounce","dir"}.',
   properties: {
-    kind: { type: 'string', enum: ['Hold', 'Linear', 'EaseIn', 'EaseOut', 'Bezier'] },
-    p1: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: first control point [x, y].' },
-    p2: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: second control point [x, y].' },
+    kind: { type: 'string', enum: ['Hold', 'Linear', 'Bezier', 'Elastic', 'Bounce'] },
+    p1: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: first control point [x, y]; x within [0, 1].' },
+    p2: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: second control point [x, y]; x within [0, 1].' },
+    dir: { type: 'string', enum: ['In', 'Out', 'InOut'], description: 'Elastic/Bounce only: easing direction.' },
+    amplitude: { type: 'number', description: `Elastic only: overshoot amplitude, >= 1. Omit for the default ${ELASTIC_DEFAULT_AMPLITUDE}.` },
+    period: { type: 'number', description: `Elastic only: oscillation period, > 0. Omit for the default ${ELASTIC_DEFAULT_PERIOD}.` },
   },
   required: ['kind'],
+}
+// set_keyframe_easing's interp: the raw INTERP_SCHEMA kinds PLUS the preset
+// form. `required` is empty — the two forms share no mandatory field; the
+// exactly-one-of rule is parseEasing's. The preset enum derives from the
+// canonical table, so the advertised ids can never drift from what bakes.
+const EASING_SCHEMA = {
+  type: 'object',
+  description: 'Either {"preset":"<id>"} — a canonical named preset, baked to its params — or a raw kind (same forms as set_keyframe interp).',
+  properties: {
+    preset: { type: 'string', enum: EASING_PRESETS.map((p) => p.id), description: 'Preset id from the canonical easing table (e.g. "ease_in_out", "ease_out_expo", "ease_in_out_bounce").' },
+    ...INTERP_SCHEMA.properties,
+  },
+  required: [],
 }
 const ANIM_TRACK_SCHEMA = {
   type: 'object',
@@ -687,12 +759,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseDedicated: (_a) => ({}) },
   { name: 'set_keyframe', exec: 'dedicated',
-    description: 'Insert or update a keyframe on a layer param. `t_us` is timeline-absolute. A Static track is lifted to Keyframed. An existing key at the same frame is updated in place. `interp` (optional) sets the easing for the segment leaving this key (e.g. {"kind":"Linear"}, {"kind":"EaseIn"}, {"kind":"Bezier","p1":[x,y],"p2":[x,y]}); omit to inherit the preceding key\'s easing (or Linear). Keying only scale_x or scale_y on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
+    description: 'Insert or update a keyframe on a layer param. `t_us` is timeline-absolute. A Static track is lifted to Keyframed. An existing key at the same frame is updated in place. `interp` (optional) sets the easing for the segment leaving this key as a raw kind (e.g. {"kind":"Linear"}, {"kind":"Bezier","p1":[x,y],"p2":[x,y]}, {"kind":"Elastic","dir":"Out"}; named presets go through set_keyframe_easing); omit to inherit the preceding key\'s easing (or Linear). Keying only scale_x or scale_y on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' }, value: { type: 'number' } }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       t_us: parseNum(a.t_us, 't_us'), value: parseNum(a.value, 'value'), interp: parseInterpOpt(a.interp) }) },
   { name: 'get_param_track', exec: 'dedicated',
-    description: 'Read a layer param\'s animation track, flattened for editing. Returns {"mode":"Static","value":n} or {"mode":"Keyframed","keyframes":[{id, t_us, t_local_us, value, interp}]}. `t_us` is timeline-absolute; `t_local_us` is layer-local (the stored base). Use this to discover keyframe ids before editing.',
+    description: 'Read a layer param\'s animation track, flattened for editing. Returns {"mode":"Static","value":n} or {"mode":"Keyframed","keyframes":[{id, t_us, t_local_us, value, interp, preset_id?}]}. `t_us` is timeline-absolute; `t_local_us` is layer-local (the stored base). `preset_id` names the canonical easing preset whose params exactly match the key\'s interp; a hand-tuned curve carries none. Use this to discover keyframe ids before editing.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
   { name: 'remove_keyframe', exec: 'dedicated',
@@ -706,10 +778,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
       param_key: parseStr(a.param_key, 'param_key'), t_us: parseNum(a.t_us, 't_us') }) },
   { name: 'set_keyframe_easing', exec: 'dedicated',
-    description: 'Set the easing of the segment leaving a keyframe. `interp`: {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"EaseIn"} | {"kind":"EaseOut"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]}.',
-    inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['interp', 'keyframe_id', 'layer_id', 'param_key'] },
+    description: 'Set the easing of the segment leaving a keyframe. `interp` is {"preset":"<id>"} — a named preset from the canonical easing table, baked to its params at write time (get_param_track reads the params back plus the matching preset_id) — or a raw kind: {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]} (x within [0,1]) | {"kind":"Elastic","dir":"In"|"Out"|"InOut","amplitude"?,"period"?} | {"kind":"Bounce","dir":"In"|"Out"|"InOut"}.',
+    inputSchema: { type: 'object', properties: { interp: EASING_SCHEMA, keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['interp', 'keyframe_id', 'layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
-      param_key: parseStr(a.param_key, 'param_key'), interp: parseInterp(a.interp) }) },
+      param_key: parseStr(a.param_key, 'param_key'), interp: parseEasing(a.interp) }) },
   { name: 'smooth_keyframes', exec: 'dedicated',
     description: 'Bake monotone (no-overshoot) smooth tangents. With `keyframe_id`, smooths that one key; without it, smooths the whole track.',
     inputSchema: { type: 'object', properties: { keyframe_id: { type: ['string', 'null'] }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['layer_id', 'param_key'] },

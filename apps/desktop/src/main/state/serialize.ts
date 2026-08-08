@@ -263,6 +263,42 @@ function staticAnchor(v: unknown): Animated<number> {
   return { mode: 'Static', value: typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_ANCHOR }
 }
 
+/** Rewrite the RETIRED named-ease interp kinds to their baked cubic-bezier
+ *  params in every keyframe track: `EaseIn` → Bezier (0.42,0),(1,1) and
+ *  `EaseOut` → Bezier (0,0),(0.58,1) — the exact params the engine always used
+ *  for them, so eval results are numerically identical before and after
+ *  (.scratch/keyframe-easing/spec.md §Migration). Additive-with-conversion
+ *  rather than a schema bump, for the same reason as the anchor conversion
+ *  above: `schemaGate` has no forward-migration path, so a bump would refuse
+ *  to OPEN the very projects this rewrite exists for. The params are frozen
+ *  literals on purpose — a migration must stay byte-stable even if the preset
+ *  table ever (wrongly) retunes its `ease_in`/`ease_out` entries.
+ *
+ *  SHAPE-DRIVEN walk, not a field enumeration: anything matching the
+ *  `{mode:"Keyframed", value:[...]}` wire shape is rewritten, wherever it
+ *  lives (transform fields, opacity, color, gain/pan, effect params), so an
+ *  animatable added later cannot dodge the ONE rewrite site. Idempotent —
+ *  a rewritten project holds no named kinds. Defensive like the other
+ *  backfills (runs before the cast; malformed entries are left for validate). */
+function convergeNamedEases(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const v of node) convergeNamedEases(v)
+    return
+  }
+  if (node === null || typeof node !== 'object') return
+  const o = node as Record<string, unknown>
+  if (o.mode === 'Keyframed' && Array.isArray(o.value)) {
+    for (const k of o.value as Array<Record<string, unknown> | null>) {
+      if (k === null || typeof k !== 'object') continue
+      const kind = (k.interp as { kind?: unknown } | null | undefined)?.kind
+      if (kind === 'EaseIn') k.interp = { kind: 'Bezier', p1: [0.42, 0], p2: [1, 1] }
+      else if (kind === 'EaseOut') k.interp = { kind: 'Bezier', p1: [0, 0], p2: [0.58, 1] }
+    }
+    return // keyframe values are leaves — no tracks nest inside a track
+  }
+  for (const v of Object.values(o)) convergeNamedEases(v)
+}
+
 /** Every transform object on the WIRE shape, for the backfills above. Shares one
  *  defensive walk so a new transform-field backfill can't disagree with the
  *  existing ones about what counts as a layer. */
@@ -330,6 +366,10 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // scale_linked it CONVERTS a legacy value rather than deriving one, because the
   // old tuple holds authored data (see the function's landmine note).
   backfillAnchorTracks(o)
+  // The retired EaseIn/EaseOut interp kinds converge to their baked Bezier
+  // params here, in the SAME single normalize pass — every consumer downstream
+  // (validator, eval, UI) only ever sees the five-variant schema.
+  convergeNamedEases(o)
   // Grid repair belongs in THIS pass, beside the additive-field backfill above:
   // one normalize site, so the validator that `replaceState` shares with
   // `project_open` only ever sees already-canonical input. A second repair site is

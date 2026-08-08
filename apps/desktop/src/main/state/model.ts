@@ -1,6 +1,7 @@
 // apps/desktop/src/main/state/model.ts
 import type { IdGen } from './ids'
 import type { DecodeRoute } from '../../shared/decode-route'
+import type { Interpolation } from '../../shared/easing'
 
 export const SCHEMA_VERSION = 10
 
@@ -14,9 +15,7 @@ export type TrackRole = 'ARoll' | 'BRoll' | 'AudioA' | 'AudioB' | 'Caption'
 export type BlendMode =
   | 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten' | 'Add' | 'Difference'
 
-export type Interpolation =
-  | { kind: 'Hold' } | { kind: 'Linear' } | { kind: 'EaseIn' } | { kind: 'EaseOut' }
-  | { kind: 'Bezier'; p1: [number, number]; p2: [number, number] }
+export type { EaseDir, Interpolation } from '../../shared/easing'
 export interface Keyframe<T> { id: Uuid; t_us: TimeUs; value: T; interp: Interpolation }
 export type Animated<T> = { mode: 'Static'; value: T } | { mode: 'Keyframed'; value: Keyframe<T>[] }
 

@@ -1,35 +1,32 @@
-// Pure helpers for the easing editor: the named-preset table, interp→coeff
-// mapping, and pixel-handle ↔ normalized-coefficient conversion for the curve
-// canvas. The canvas is a `size`×`size` px box; x maps left→right [0,1]; y is
-// inverted (top = 1, bottom = 0) and NOT clamped (overshoot allowed). Handle x
-// IS clamped to [0,1] so the bezier X stays monotone (solver single-valued).
-import type { Interpolation } from "../ipc";
+// Pure helpers for the easing editor: spline-only interp→coeff mapping and
+// pixel-handle ↔ normalized-coefficient conversion for the curve canvas. The
+// canvas is a `size`×`size` px box; x maps left→right [0,1]; y is inverted
+// (top = 1, bottom = 0) and NOT clamped (overshoot allowed). Handle x IS
+// clamped to [0,1] so the bezier X stays monotone (solver single-valued).
+// The preset gallery reads the canonical table (src/shared/easing.ts)
+// directly — this module owns no preset data.
+import type { Interpolation } from "../../shared/easing";
 
-export interface Preset {
-  id: "linear" | "ease" | "ease_in" | "ease_out" | "ease_in_out" | "hold";
-  labelKey: string;
-  interp: Interpolation;
+/// The segment kinds whose curve IS a cubic spline — the only kinds with
+/// draggable tangent handles. Procedural kinds (Elastic/Bounce) have no
+/// coefficient representation and must never reach `interpToCoeffs`;
+/// they render as a read-only sampled curve (curveGraph.ts).
+export type SplineInterpolation = Extract<Interpolation, { kind: "Hold" | "Linear" | "Bezier" }>;
+
+export function isSplineInterp(i: Interpolation): i is SplineInterpolation {
+  return i.kind === "Hold" || i.kind === "Linear" || i.kind === "Bezier";
 }
 
-export const PRESETS: Preset[] = [
-  { id: "linear", labelKey: "keyframe.interp_linear", interp: { kind: "Linear" } },
-  { id: "ease", labelKey: "keyframe.interp_ease", interp: { kind: "Bezier", p1: [0.25, 0.1], p2: [0.25, 1] } },
-  { id: "ease_in", labelKey: "keyframe.interp_ease_in", interp: { kind: "EaseIn" } },
-  { id: "ease_out", labelKey: "keyframe.interp_ease_out", interp: { kind: "EaseOut" } },
-  { id: "ease_in_out", labelKey: "keyframe.interp_ease_in_out", interp: { kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] } },
-  { id: "hold", labelKey: "keyframe.interp_hold", interp: { kind: "Hold" } },
-];
-
-export function interpToCoeffs(interp: Interpolation): [number, number, number, number] {
+/// Spline interp → cubic-bezier control coords for handle placement.
+/// Exhaustive over `SplineInterpolation` — no default arm, so a new kind is a
+/// compile error here rather than a silent identity diagonal.
+export function interpToCoeffs(interp: SplineInterpolation): [number, number, number, number] {
   switch (interp.kind) {
     case "Bezier":
       return [interp.p1[0], interp.p1[1], interp.p2[0], interp.p2[1]];
-    case "EaseIn":
-      return [0.42, 0, 1, 1];
-    case "EaseOut":
-      return [0, 0, 0.58, 1];
-    default:
-      return [0, 0, 1, 1]; // Linear / Hold → diagonal (Hold canvas is disabled)
+    case "Hold":
+    case "Linear":
+      return [0, 0, 1, 1]; // identity diagonal (Hold canvas is disabled)
   }
 }
 
