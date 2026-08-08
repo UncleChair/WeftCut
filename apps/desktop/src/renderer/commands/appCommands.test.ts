@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { buildAppCommands } from "./appCommands";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts";
+import { setTool } from "../state/toolStore";
 import en from "../i18n/locales/en-US";
 
 const noop = () => {};
@@ -12,7 +13,7 @@ const handlers: HandlerMap = {
   save: noop, saveAs: noop, closeProject: noop, undo: noop, redo: noop,
   togglePlay: noop, deleteSelected: noop, copySelected: noop, pasteAtPlayhead: noop,
   importMedia: noop, export: noop,
-  toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
+  selectTool: noop, toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop,
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,
   seekSecondForward: noop, seekPrevEdit: noop, seekNextEdit: noop,
@@ -77,6 +78,23 @@ describe("buildAppCommands", () => {
     expect(by("redo").enabled!()).toBe(false);
     expect(by("export").enabled!()).toBe(false);
     expect(by("togglePlay").enabled).toBeUndefined();
+  });
+
+  describe("tool checkmarks", () => {
+    afterEach(() => setTool("select"));
+
+    it("read toolStore live, not a build-time snapshot", () => {
+      // Built BEFORE the tool switch: a snapshot would freeze on "select".
+      const defs = buildAppCommands(handlers, menu, flags);
+      const by = (id: string) => defs.find((d) => d.id === id)!;
+      expect(by("selectTool").checked!()).toBe(true);
+      expect(by("toggleBladeMode").checked!()).toBe(false);
+      setTool("blade");
+      expect(by("selectTool").checked!()).toBe(false);
+      expect(by("toggleBladeMode").checked!()).toBe(true);
+      // Non-modal commands are not checkable at all.
+      expect(by("save").checked).toBeUndefined();
+    });
   });
 
   it("shortcut-backed commands reuse ACTION_DEFS labelKeys", () => {

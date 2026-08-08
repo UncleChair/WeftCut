@@ -3,12 +3,9 @@ import { useTranslation } from "react-i18next";
 import { GlobeIcon, SearchIcon } from "lucide-react";
 
 import { WindowControls } from "../components/WindowControls";
-import {
-  Menu,
-  MenuBar,
-  MenuItem,
-  MenuSeparator,
-} from "../menu/Menu";
+import { Menu, MenuBar, MenuItem } from "../menu/Menu";
+import { CommandMenu } from "../menu/CommandMenu";
+import { EDIT_MENU, FILE_MENU, INSERT_MENU } from "../menu/menuSpec";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import {
@@ -20,34 +17,15 @@ import { setLocale } from "../settings/appSettingsStore";
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
 import { HelpMenu } from "./HelpMenu";
 import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
-import type { Tool } from "../state/toolStore";
 import type {
   DockWorkspaceController,
   DockWorkspaceSnapshot,
 } from "../workspace/dockWorkspaceAdapter";
 
 interface AppMenuBarProps {
-  busy: boolean;
   pong: string;
-  canUndo: boolean;            // !!summary?.history.can_undo
-  canRedo: boolean;            // !!summary?.history.can_redo
-  canBlade: boolean;           // !!summary && summary.layer_count > 0
-  exportLocked: boolean;       // busy || exportState.kind is starting|progress
-  /** Armed modal timeline tool — drives the tool items' checkmarks. */
-  activeTool: Tool;
-  onImportMedia: () => void;
-  onSave: () => void;
-  onSaveAs: () => void;
-  onSaveAndClose: () => void;
-  onUndo: () => void;
-  onRedo: () => void;
-  onSelectTool: () => void;
-  onToggleBladeMode: () => void;
-  onAddColorLayer: () => void;
-  onAddTextLayer: () => void;
-  onOpenMotifPicker: () => void;
-  onOpenExport: () => void;
-  onOpenSettings: () => void;
+  /// Palette open lives here rather than in the registry — the palette
+  /// deliberately excludes "open the palette" (appCommands.ts).
   onOpenSearch: () => void;
   onEnterAgentMode: () => void;
   workspaceController: DockWorkspaceController | null;
@@ -84,32 +62,13 @@ export function DevMenu({
 }
 
 /// The frameless-window header: app title, menu bar, core-status pill,
-/// locale toggle, window controls. Pure chrome — every menu action
-/// arrives as an `on*` prop and the `disabled` flags come pre-derived
-/// from App (`canUndo`/`canRedo`/`canBlade`/`exportLocked`), so no
-/// project state is read here. Locale cycling lives here because it
-/// only touches i18n.
+/// locale toggle, window controls. Pure chrome — the File/Edit/Insert
+/// dropdowns are `menuSpec.ts` projected through the command registry
+/// (labels, handlers, enabled/checked state and shortcut hints all come
+/// from the catalog), so no project state is read here. Locale cycling
+/// lives here because it only touches i18n.
 export function AppMenuBar({
-  busy,
   pong,
-  canUndo,
-  canRedo,
-  canBlade,
-  exportLocked,
-  activeTool,
-  onImportMedia,
-  onSave,
-  onSaveAs,
-  onSaveAndClose,
-  onUndo,
-  onRedo,
-  onSelectTool,
-  onToggleBladeMode,
-  onAddColorLayer,
-  onAddTextLayer,
-  onOpenMotifPicker,
-  onOpenExport,
-  onOpenSettings,
   onOpenSearch,
   onEnterAgentMode,
   workspaceController,
@@ -158,83 +117,8 @@ export function AppMenuBar({
           <h1 data-drag-region>{t("app.title")}</h1>
         </span>
         <MenuBar>
-          <Menu label={t("menu.file")}>
-            <MenuItem
-              actionId="importMedia"
-              label={t("actions.import_media")}
-              onSelect={onImportMedia}
-              disabled={busy}
-            />
-            <MenuSeparator />
-            <MenuItem
-              actionId="save"
-              label={t("actions.save")}
-              onSelect={onSave}
-              disabled={busy}
-            />
-            <MenuItem
-              actionId="saveAs"
-              label={t("actions.save_as")}
-              onSelect={onSaveAs}
-              disabled={busy}
-            />
-            <MenuItem
-              actionId="closeProject"
-              label={t("actions.save_and_close")}
-              hint={t("actions.save_and_close_hint")}
-              onSelect={onSaveAndClose}
-              disabled={busy}
-            />
-            <MenuSeparator />
-            <MenuItem
-              actionId="export"
-              label={t("actions.export")}
-              onSelect={onOpenExport}
-              disabled={exportLocked}
-            />
-            <MenuSeparator />
-            {/* Stays here on every platform for cross-platform consistency,
-                even though macOS ALSO projects it into the App menu under
-                Cmd+, — the two dispatch the same action (ADR 0031). */}
-            <MenuItem
-              actionId="openSettings"
-              label={t("actions.settings")}
-              hint={t("actions.settings_hint")}
-              onSelect={onOpenSettings}
-            />
-          </Menu>
-
-          <Menu label={t("menu.edit")}>
-            <MenuItem
-              actionId="undo"
-              label={t("actions.undo")}
-              onSelect={onUndo}
-              disabled={busy || !canUndo}
-            />
-            <MenuItem
-              actionId="redo"
-              label={t("actions.redo")}
-              onSelect={onRedo}
-              disabled={busy || !canRedo}
-            />
-            <MenuSeparator />
-            {/* Modal tools: checkmarks make the armed tool visible here too,
-                so blade mode isn't discoverable only by the timeline cursor.
-                Selection is always available; the Blade needs a layer to cut. */}
-            <MenuItem
-              actionId="selectTool"
-              label={t("actions.select_tool")}
-              checked={activeTool === "select"}
-              onSelect={onSelectTool}
-            />
-            <MenuItem
-              actionId="toggleBladeMode"
-              label={t("actions.toggle_blade_mode")}
-              checked={activeTool === "blade"}
-              onSelect={onToggleBladeMode}
-              disabled={busy || !canBlade}
-            />
-          </Menu>
+          <CommandMenu section={FILE_MENU} />
+          <CommandMenu section={EDIT_MENU} />
 
           <ViewMenu
             workspaceController={workspaceController}
@@ -243,22 +127,7 @@ export function AppMenuBar({
             onEnterAgentMode={onEnterAgentMode}
           />
 
-
-          <Menu label={t("menu.insert")}>
-            <MenuItem
-              label={t("actions.add_color_layer")}
-              onSelect={onAddColorLayer}
-            />
-            <MenuItem
-              label={t("actions.add_text_layer")}
-              onSelect={onAddTextLayer}
-            />
-            <MenuItem
-              label={t("actions.motifs")}
-              hint={t("actions.motifs_hint")}
-              onSelect={onOpenMotifPicker}
-            />
-          </Menu>
+          <CommandMenu section={INSERT_MENU} />
 
           <HelpMenu />
 

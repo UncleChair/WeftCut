@@ -14,6 +14,9 @@ export interface CommandDef {
   actionId?: ActionId;
   /// Evaluated at palette render time; absent = always enabled.
   enabled?: () => boolean;
+  /// Current state of a checkable command (armed tool, active mode).
+  /// Evaluated at render time, like `enabled`; absent = not checkable.
+  checked?: () => boolean;
   run: () => void | Promise<void>;
 }
 
@@ -21,9 +24,19 @@ type Provider = () => CommandDef[];
 
 const providers = new Set<Provider>();
 const listeners = new Set<() => void>();
+let version = 0;
 
 function notify(): void {
+  version++;
   for (const l of listeners) l();
+}
+
+/// Monotonic registry version — `useSyncExternalStore` snapshot for consumers
+/// that must re-render when providers mount/unmount (the command menus).
+/// `listCommands()` itself can't be the snapshot: it builds a fresh array per
+/// call, which useSyncExternalStore would read as "changed every render".
+export function commandRegistryVersion(): number {
+  return version;
 }
 
 export function registerCommandProvider(p: Provider): () => void {

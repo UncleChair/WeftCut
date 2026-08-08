@@ -15,7 +15,7 @@
 // `event.key`, while those names explicitly describe a physical key.
 
 import { isMac } from "@/platform";
-import { chordModifier, type ChordModifier } from "../../shared/chords";
+import { chordModifier } from "../../shared/chords";
 
 export interface ParsedBinding {
   ctrl: boolean;
@@ -100,33 +100,79 @@ export function isChord(spec: ParsedBinding): boolean {
   return spec.ctrl || spec.meta || spec.alt;
 }
 
-/// How each modifier prints. Untranslated — keyboard labels are universal.
-const MODIFIER_LABELS: Record<ChordModifier, string> = {
-  mod: isMac ? "Cmd" : "Ctrl",
-  ctrl: "Ctrl",
-  meta: "Cmd",
-  shift: "Shift",
-  alt: isMac ? "Option" : "Alt",
+/// Arrow keys read better as glyphs on every platform (VS Code, Premiere and
+/// Resolve all render them this way), and named punctuation prints as the
+/// character it types. Untranslated — keyboard labels are universal.
+const UNIVERSAL_KEY_GLYPHS: Record<string, string> = {
+  ArrowLeft: "←",
+  ArrowRight: "→",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  Period: ".",
+  Comma: ",",
+  Backquote: "`",
 };
 
-/// Display the binding as a human-readable label — `"Mod+Shift+S"` →
-/// `"Ctrl+Shift+S"` on Windows/Linux and `"Cmd+Shift+S"` on macOS.
-export function resolveAccelerator(spec: string): string {
+/// The named-key glyphs the macOS menu bar itself uses. Other named keys
+/// (Home, End, F-keys) stay textual on every platform — macOS has glyphs for
+/// some of them too (↖ ↘), but they're obscure enough to hurt more than help.
+const MAC_KEY_GLYPHS: Record<string, string> = {
+  ...UNIVERSAL_KEY_GLYPHS,
+  Backspace: "⌫",
+  Delete: "⌦",
+  Enter: "↩",
+  Escape: "⎋",
+  Tab: "⇥",
+};
+
+function displayKey(k: string, mac: boolean): string {
+  if (k === " " || k === "Space") return "Space";
+  if (k.length === 1) return k.toUpperCase();
+  return (mac ? MAC_KEY_GLYPHS[k] : UNIVERSAL_KEY_GLYPHS[k]) ?? k;
+}
+
+/// Display the binding in the platform's native shortcut convention —
+/// `"Mod+Shift+S"` → `"Ctrl+Shift+S"` on Windows/Linux and the compact glyph
+/// run `"⇧⌘S"` on macOS.
+///
+/// Modifier order is normalised to each platform's canon (macOS ⌃⌥⇧⌘,
+/// elsewhere Ctrl+Alt+Shift+Win) regardless of how the spec spells it, the
+/// same way the OS-native menus print chords. `mac` is a parameter for the
+/// same reason `classifyOS` is a pure function — tests exercise both branches
+/// without a DOM.
+export function resolveAccelerator(spec: string, mac: boolean = isMac): string {
   const parts = spec.split("+").map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0) return "";
-  const out: string[] = [];
+  const mods = { ctrl: false, alt: false, shift: false, meta: false };
+  const unknown: string[] = [];
   for (const raw of parts.slice(0, -1)) {
     const modifier = chordModifier(raw);
+    // The one token whose meaning is platform-dependent; see the header.
+    if (modifier === "mod") mods[mac ? "meta" : "ctrl"] = true;
+    else if (modifier) mods[modifier] = true;
     // An unknown token is shown verbatim rather than dropped — a hint that
     // reads oddly beats one that quietly omits half the chord.
-    out.push(modifier ? MODIFIER_LABELS[modifier] : raw);
+    else unknown.push(raw);
   }
   // Non-empty (guarded above), so the last element is defined.
-  const last = parts[parts.length - 1]!;
-  if (last === " " || last === "Space") out.push("Space");
-  else if (last.length === 1) out.push(last.toUpperCase());
-  else out.push(last);
-  return out.join("+");
+  const key = displayKey(parts[parts.length - 1]!, mac);
+  if (mac) {
+    const run =
+      (mods.ctrl ? "⌃" : "") +
+      (mods.alt ? "⌥" : "") +
+      (mods.shift ? "⇧" : "") +
+      (mods.meta ? "⌘" : "") +
+      key;
+    return [...unknown, run].join("+");
+  }
+  return [
+    ...(mods.ctrl ? ["Ctrl"] : []),
+    ...(mods.alt ? ["Alt"] : []),
+    ...(mods.shift ? ["Shift"] : []),
+    ...(mods.meta ? ["Win"] : []),
+    ...unknown,
+    key,
+  ].join("+");
 }
 
 /// Two bindings collide iff they parse to the exact same modifier

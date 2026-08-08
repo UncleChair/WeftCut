@@ -77,7 +77,7 @@ import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
 import { toggleDisplayMode } from "./settings/appSettingsStore";
-import { setTool, useActiveTool } from "./state/toolStore";
+import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import {
   DockWorkspace,
@@ -114,12 +114,6 @@ export function App({ onCloseProject }: AppProps) {
   // setError call sites), not rendered here, so we keep only the setter.
   const [, setError] = useState<string | null>(null);
   const primaryLayerId = usePrimaryLayerId();
-  // Modal timeline tool. Lives in `toolStore` (not App state) so the Quick
-  // Actions Panel can read it without threading through
-  // `dockPanelContracts` — which would rebuild that memo, and re-render every
-  // open Panel, on each tool switch. Subscribed here only for the Edit menu's
-  // checkmark; the shortcut handlers write through `setTool` imperatively.
-  const activeTool = useActiveTool();
   // R.7 inline-reveal: track id the user surfaced from the right-panel peek
   // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
   // selecting a layer on a different track, or by clicking another peek
@@ -797,30 +791,7 @@ export function App({ onCloseProject }: AppProps) {
     <div className="app">
       <div className="app-top-chrome">
         <AppMenuBar
-          busy={busy}
           pong={pong}
-          canUndo={!!summary?.history.can_undo}
-          canRedo={!!summary?.history.can_redo}
-          canBlade={!!summary && summary.layer_count > 0}
-          exportLocked={
-            busy ||
-            exportState?.kind === "starting" ||
-            exportState?.kind === "progress"
-          }
-          onImportMedia={importMediaFiles}
-          onSave={saveProjectNow}
-          onSaveAs={saveProject}
-          onSaveAndClose={saveAndClose}
-          onUndo={() => run(projectUndo)}
-          onRedo={() => run(projectRedo)}
-          activeTool={activeTool}
-          onSelectTool={() => setTool("select")}
-          onToggleBladeMode={() => setTool("blade")}
-          onAddColorLayer={handleAddColorLayer}
-          onAddTextLayer={handleAddTextLayer}
-          onOpenMotifPicker={() => setMotifPickerOpen(true)}
-          onOpenExport={() => setExportDialogOpen(true)}
-          onOpenSettings={() => openSettings("general")}
           onOpenSearch={() => setPaletteOpen(true)}
           onEnterAgentMode={handleEnterAgentMode}
           workspaceController={workspaceController}
