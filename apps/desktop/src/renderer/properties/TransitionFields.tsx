@@ -5,18 +5,17 @@ import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import {
-  logEmit,
   removeTransition,
   updateTransition,
   type TransitionDirection,
   type TransitionSummary,
 } from "../ipc";
+import { logMutationFailure } from "../errors/tryMutate";
 import { clearTransitionSelection } from "../state/selectionStore";
 import {
   TRANSITION_DIRECTIONS,
   TRANSITION_KIND_NAMES,
   buildTransitionKindArgs,
-  parseTransitionCommandError,
   transitionDirectionOf,
   type TransitionKindName,
 } from "../timeline/transitions";
@@ -53,27 +52,11 @@ export function TransitionFields({
   }, [transition.id, transition.duration_us, fpsNum, fpsDen]);
 
   // Surface structured backend errors through the status bar / log — the
-  // app's error path. TransitionInsufficientHandle includes `available_us`
-  // as a timecode; NO silent clamping anywhere.
+  // app's error path (errors/formatCommandError.ts owns the copy;
+  // TransitionInsufficientHandle renders `available_us` with the layer's
+  // name). NO silent clamping anywhere.
   const surfaceError = (err: unknown) => {
-    const parsed = parseTransitionCommandError(String(err));
-    const message =
-      parsed?.name === "TransitionInsufficientHandle"
-        ? t("transitions.insufficient_handle", {
-            available: formatTimecode(parsed.availableUs ?? 0, fpsNum, fpsDen),
-            defaultValue:
-              "Not enough tail media on the outgoing clip for this transition — available: {{available}}",
-          })
-        : t("transitions.update_failed", {
-            detail: String(err),
-            defaultValue: "Update transition failed: {{detail}}",
-          });
-    void logEmit({
-      level: "error",
-      category: { kind: "Project" },
-      source: { kind: "User" },
-      message,
-    });
+    logMutationFailure(err, "Update transition");
   };
 
   const commitKind = async (nextKind: TransitionKindName): Promise<void> => {

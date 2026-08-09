@@ -91,7 +91,8 @@ Notes:
 
 | Producer | Category | Level | Notes |
 |---|---|---|---|
-| Shortcuts | `Shortcut` | `Info` on success, `Error` on failure | Start logged only when handler is async AND runs > 250 ms. No-ops (e.g. `deleteSelected` with nothing selected) at `Debug`. |
+| Shortcuts | `Shortcut` | `Info` on success, `Error` on failure | Start logged only when handler is async AND runs > 250 ms. No-ops (e.g. `deleteSelected` with nothing selected, `NothingToUndo` refusals) at `Debug`. Failures render as refusal lines (see § Refusals). |
+| Direct commits (inspector fields, drag commits, timeline context menus) | `Project` | `Error` (`Debug` for no-op refusals) | One entry per refused mutation via `renderer/errors/tryMutate.ts`; `details` carries the structured `CommandError`. Components with their own inline error slot (media-removal dialog, effects section, project settings) keep it and render the same refusal copy there instead. |
 | Import | `Import` | `Info`/`Error` | Started → Progress (byte copy) → Ok/Err. Grouped by `op_id`. |
 | Export | `Export` | `Info`/`Error` | Started → Progress(%) → Ok/Err. Existing backend events stay; `LogBus` is an additional sink. |
 | Derivative jobs (proxy, thumbnails, waveform) | `Job` | `Info`/`Error` | Started → Ok/Err. Progress omitted for thumbnails. |
@@ -174,14 +175,42 @@ Defaults: level `Info+`, ops collapsed.
 - `Esc` collapses the overlay when focused. In the search box, first
   `Esc` clears the query; second `Esc` collapses.
 
+### Refusals
+
+A refused mutation crosses IPC as `Error(JSON.stringify(CommandError))`
+(the actor serializes the structure into `message` because Electron's
+`invoke` drops custom Error props). The renderer parses it back
+(`renderer/errors/parseCommandError.ts`) and renders it through a
+type-locked copy map (`renderer/errors/formatCommandError.ts` — a
+`Record` over the full error union, so adding a variant without filing
+its tier fails to compile). Three tiers:
+
+- **suppress** — no-op refusals (`NothingToUndo`/`NothingToRedo`) log at
+  `Debug`; a native NLE does nothing on an empty undo.
+- **generic** — plumbing / not user-reachable variants; the code is
+  humanized mechanically, English only.
+- **curated** — refusals a user can hit from the editor surface
+  (`LayerOverlap`, `TrackLocked`, `FpsLockedByContent`, …): hand-written
+  copy under the `errors.*` keys (en-US + zh-CN), uuids resolved to the
+  display names the timeline shows (fallback: short id, never a raw
+  uuid).
+
+The copy map carries an unused `actions?` slot per variant: if real
+usage shows the status line gets missed, remedy buttons can be added as
+map entries on a richer surface without re-architecting (a toast layer
+was explicitly declined for v1 — prevention and the status bar are the
+NLE-convention answer).
+
 ### i18n
 
 - Producers emit canonical English `message`. Selected high-frequency
   producers (shortcut names, MCP tool names, export/import status
-  verbs, project mutation summaries) additionally emit `i18n_key` +
-  `i18n_args`. Plumbing errors and `tracing`-bridged messages stay
-  raw English.
-- Frontend prefers `i18n_key` if present; falls back to `message`.
+  verbs, project mutation summaries, curated refusal lines) additionally
+  emit `i18n_key` + `i18n_args`. Plumbing errors and `tracing`-bridged
+  messages stay raw English.
+- Frontend prefers `i18n_key` if present; falls back to `message`
+  (`renderer/logs/renderMessage.ts`, used by the bar, the console rows,
+  and the search haystack).
 - UI chrome (chips, buttons, level labels) is translated.
 - Untranslated entries in zh-CN render verbatim (no `[en]` tag).
 - Search matches raw English + translated rendering.

@@ -9,6 +9,7 @@ import {
   type ParsedBinding,
 } from "./match";
 import { logEmit } from "../ipc";
+import { describeRefusal } from "../errors/tryMutate";
 import { usePickSessionStore } from "../colorpick/pickColor";
 import { activeRegion } from "../focus/focusRegionStore";
 import type { PanelKind } from "../workspace/panelRegistry";
@@ -225,14 +226,7 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
   try {
     result = fn();
   } catch (err) {
-    void logEmit({
-      level: "error",
-      category: { kind: "Shortcut" },
-      source: { kind: "User" },
-      message: `Shortcut ${actionId} failed: ${String(err)}`,
-      i18n_key: "log.shortcut_failed",
-      i18n_args: { actionId, label_key: labelKey, error: String(err) },
-    });
+    emitActionFailure(actionId, labelKey, err);
     return;
   }
   if (!result || typeof (result as Promise<void>).then !== "function") {
@@ -279,18 +273,47 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
     (err) => {
       resolved = true;
       window.clearTimeout(startedTimer);
-      void logEmit({
-        level: "error",
-        category: { kind: "Shortcut" },
-        source: { kind: "User" },
-        message: `Shortcut ${actionId} failed: ${String(err)}`,
-        op_id: opId,
-        op_state: { state: "Err" },
-        i18n_key: "log.shortcut_failed",
-        i18n_args: { actionId, label_key: labelKey, error: String(err) },
-      });
+      emitActionFailure(actionId, labelKey, err, opId);
     },
   );
+}
+
+/// One failed dispatch → one log entry. A structured refusal renders as its
+/// curated/generic line (suppressed no-ops like NothingToUndo land at Debug —
+/// a native NLE does nothing on an empty undo); anything else keeps the raw
+/// `String(err)` framing. `opId` is set when a Started entry may already be
+/// out — the terminal `op_state` must follow even for a Debug line, or the
+/// running-ops spinner never clears.
+function emitActionFailure(
+  actionId: ActionId,
+  labelKey: string,
+  err: unknown,
+  opId?: string,
+) {
+  const refusal = describeRefusal(err);
+  if (refusal) {
+    void logEmit({
+      level: refusal.level,
+      category: { kind: "Shortcut" },
+      source: { kind: "User" },
+      message: refusal.message,
+      ...(refusal.i18n_key
+        ? { i18n_key: refusal.i18n_key, i18n_args: refusal.i18n_args ?? null }
+        : {}),
+      ...(opId ? { op_id: opId, op_state: { state: "Err" as const } } : {}),
+      details: { action: actionId, error: refusal.error },
+    });
+    return;
+  }
+  void logEmit({
+    level: "error",
+    category: { kind: "Shortcut" },
+    source: { kind: "User" },
+    message: `Shortcut ${actionId} failed: ${String(err)}`,
+    ...(opId ? { op_id: opId, op_state: { state: "Err" as const } } : {}),
+    i18n_key: "log.shortcut_failed",
+    i18n_args: { actionId, label_key: labelKey, error: String(err) },
+  });
 }
 
 /// RFC 4122 UUID. Required because the backend's `LogEntryInput.op_id`

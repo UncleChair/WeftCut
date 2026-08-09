@@ -32,6 +32,7 @@ import {
   removeMedia,
 } from "../ipc";
 import { formatTimecode } from "../frames";
+import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
@@ -137,21 +138,14 @@ function mediaReferencesFor(
   return references;
 }
 
-/// Electron may wrap an `Error(JSON.stringify(CommandError))` in IPC prose.
-/// Regex only the stable structured fields so prefixes/suffixes do not matter.
+/// `MediaInUse` refusal → the authoritative referencing-layer ids, via the
+/// shared IPC-rejection parser. Null when the failure is anything else.
 function parseMediaInUseLayerIds(error: unknown): string[] | null {
-  const raw = error instanceof Error ? error.message : String(error);
-  if (!/"error"\s*:\s*"MediaInUse"/.test(raw)) return null;
-  const match = /"referenced_by"\s*:\s*(\[[^\]]*\])/.exec(raw);
-  if (!match?.[1]) return [];
-  try {
-    const parsed = JSON.parse(match[1]) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === "string")
-      : [];
-  } catch {
-    return [];
-  }
+  const parsed = parseCommandError(error);
+  if (parsed?.error !== "MediaInUse") return null;
+  return Array.isArray(parsed.referenced_by)
+    ? parsed.referenced_by.filter((id): id is string => typeof id === "string")
+    : [];
 }
 
 function mediaDragVisual(

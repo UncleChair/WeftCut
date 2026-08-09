@@ -25,6 +25,7 @@ import {
   type EffectView,
   type LayerSummary,
 } from "../ipc";
+import { refusalText } from "../errors/tryMutate";
 import { listEffects, getDescriptor } from "../render/effects/effectRegistry";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { hexToRgb01 } from "../colorpick/pixel";
@@ -170,7 +171,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
       if (isNoopGap(gap, fromIndex)) return;
       const newIndex = gap > fromIndex ? gap - 1 : gap;
       setErr(null);
-      moveEffect(layerId, effectId, newIndex).then(onMutated).catch((e) => setErr(String(e)));
+      moveEffect(layerId, effectId, newIndex).then(onMutated).catch((e) => setErr(refusalText(e)));
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setChainDrag(null);
@@ -211,7 +212,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
 
   const add = (kind: string) => {
     setErr(null);
-    addEffect(layer.id, kind).then(onMutated).catch((e) => setErr(String(e)));
+    addEffect(layer.id, kind).then(onMutated).catch((e) => setErr(refusalText(e)));
   };
 
   return (
@@ -303,7 +304,7 @@ function EffectRow({
   const descriptor = getDescriptor(effect.kind);
   const run = (fn: () => Promise<unknown>) => () => {
     setErr(null);
-    fn().then(onMutated).catch((e) => setErr(String(e)));
+    fn().then(onMutated).catch((e) => setErr(refusalText(e)));
   };
 
   /// Reset every catalog param to its registry default as ONE undoable batch.

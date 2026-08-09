@@ -2,6 +2,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import {
+  runWithLogging,
   useShortcuts,
   type HandlerMap,
   type OverrideMap,
@@ -425,5 +426,66 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     expect(restoreMaximizedPanel).not.toHaveBeenCalled();
     input.remove();
     dialog.remove();
+  });
+});
+
+describe("runWithLogging — refusal rendering", () => {
+  const wire = (err: Record<string, unknown>) =>
+    new Error(
+      `Error invoking remote method 'backend:invoke': Error: ${JSON.stringify(err)}`,
+    );
+
+  it("renders a structured refusal as the human line, not String(err)", async () => {
+    const { logEmit } = await import("../ipc");
+    const logEmitMock = vi.mocked(logEmit);
+    logEmitMock.mockClear();
+
+    runWithLogging("togglePlay", () =>
+      Promise.reject(wire({ error: "TrackLocked", track: "t-9" })),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(logEmitMock).toHaveBeenCalledTimes(1);
+    const entry = logEmitMock.mock.calls[0]![0];
+    expect(entry.level).toBe("error");
+    expect(entry.category).toEqual({ kind: "Shortcut" });
+    expect(entry.message).toBe("#t-9 is locked.");
+    expect(entry.i18n_key).toBe("errors.track_locked");
+    expect(entry.details).toMatchObject({
+      action: "togglePlay",
+      error: { error: "TrackLocked", track: "t-9" },
+    });
+  });
+
+  it("suppressed no-ops (NothingToUndo) log at debug — no error noise", async () => {
+    const { logEmit } = await import("../ipc");
+    const logEmitMock = vi.mocked(logEmit);
+    logEmitMock.mockClear();
+
+    runWithLogging("undo", () =>
+      Promise.reject(wire({ error: "NothingToUndo" })),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    const entry = logEmitMock.mock.calls[0]![0];
+    expect(entry.level).toBe("debug");
+    expect(entry.message).toBe("Nothing to undo");
+  });
+
+  it("non-refusal failures keep the raw shortcut framing", async () => {
+    const { logEmit } = await import("../ipc");
+    const logEmitMock = vi.mocked(logEmit);
+    logEmitMock.mockClear();
+
+    runWithLogging("togglePlay", () => {
+      throw new Error("plain boom");
+    });
+
+    const entry = logEmitMock.mock.calls[0]![0];
+    expect(entry.level).toBe("error");
+    expect(entry.message).toBe(
+      "Shortcut togglePlay failed: Error: plain boom",
+    );
+    expect(entry.i18n_key).toBe("log.shortcut_failed");
   });
 });

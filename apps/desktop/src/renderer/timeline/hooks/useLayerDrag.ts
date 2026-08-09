@@ -12,6 +12,7 @@ import {
   boundaryDisplayFrameUs,
   snapFrameRound,
 } from "../../frames";
+import { logMutationFailure } from "../../errors/tryMutate";
 import { transportPause, transportSeek } from "../../state/playbackStore";
 import { setPlayheadTimeUs } from "../../state/playheadStore";
 import {
@@ -643,7 +644,7 @@ export function useLayerDrag(opts: {
         await onMutated();
       } catch (err) {
         setPendingPlacements(null);
-        console.error("timeline commit failed:", err);
+        logMutationFailure(err, "Timeline drag commit");
       }
     },
     [

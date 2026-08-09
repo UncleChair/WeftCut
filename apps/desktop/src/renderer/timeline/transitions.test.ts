@@ -5,7 +5,6 @@ import {
   chipSliceSlot,
   defaultTransitionDurationUs,
   findCutNear,
-  parseTransitionCommandError,
   transitionChipsForTrack,
   transitionDirectionOf,
 } from "./transitions";
@@ -265,28 +264,6 @@ describe("transitionDirectionOf", () => {
   });
 });
 
-// ── structured-error extraction ──────────────────────────────────────────────
-
-describe("parseTransitionCommandError", () => {
-  it("extracts name + available_us from an Electron-wrapped JSON error", () => {
-    const raw =
-      "Error invoking remote method 'backend:invoke': Error: " +
-      '{"error":"TransitionInsufficientHandle","layer":"l-1","available_us":433333}';
-    expect(parseTransitionCommandError(raw)).toEqual({
-      name: "TransitionInsufficientHandle",
-      availableUs: 433_333,
-    });
-  });
-
-  it("extracts a name-only error without available_us", () => {
-    expect(
-      parseTransitionCommandError(
-        'Error: {"error":"TransitionLayersNotAdjacent","from":"a","to":"b","duration":1}',
-      ),
-    ).toEqual({ name: "TransitionLayersNotAdjacent" });
-  });
-
-  it("returns null for unstructured prose", () => {
-    expect(parseTransitionCommandError("network hiccup")).toBeNull();
-  });
-});
+// Structured-error extraction moved to the app-wide parser; its coverage
+// (Electron-wrapped, bare, unstructured) lives in
+// errors/parseCommandError.test.ts.

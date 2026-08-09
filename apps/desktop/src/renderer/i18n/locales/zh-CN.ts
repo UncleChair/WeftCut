@@ -408,10 +408,7 @@ const zhCN: Resources = {
     direction_right: "向右",
     direction_up: "向上",
     direction_down: "向下",
-    insufficient_handle:
-      "出点片段的尾部素材余量不足，无法创建该转场——可用：{{available}}",
-    add_failed: "添加转场失败：{{detail}}",
-    update_failed: "更新转场失败：{{detail}}",
+    // 失败文案已迁移至 `errors.*`（errors/formatCommandError.ts）。
   },
   peek: {
     heading: "播放头附近（{{count}}）",
@@ -451,6 +448,21 @@ const zhCN: Resources = {
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",
+    layer_overlap:
+      "无法把“{{incoming}}”放到该位置——会与{{track}}上的“{{blocking}}”重叠。",
+    track_locked: "{{track}}已锁定。",
+    track_not_empty: "{{track}}上仍有片段。",
+    track_not_removable: "{{track}}是保留轨道，不能删除。",
+    group_locked_member: "“{{layer}}”与已锁定的图层“{{locked}}”在同一分组。",
+    trim_edge_out_of_range: "无法将“{{layer}}”裁剪到 {{time}}——超出片段范围。",
+    split_outside_layer: "无法在 {{time}} 分割“{{layer}}”——该位置不在片段内。",
+    transition_insufficient_handle:
+      "“{{layer}}”的素材余量只有 {{available}}，不足以放置该转场。",
+    transition_layers_not_adjacent: "“{{from}}”与“{{to}}”必须相邻才能添加转场。",
+    fps_locked_by_content:
+      "帧率保持 {{current}} fps——时间线上仍有 {{layers}} 个片段。",
+    fps_locked_by_content_history:
+      "帧率保持 {{current}} fps——撤销历史中仍有片段（重新打开项目可清除）。",
   },
   language: {
     switch_label: "语言",

@@ -33,6 +33,7 @@ import {
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { formatTimecode, parseTimecode, wallClockAside } from "../frames";
+import { refusalText } from "../errors/tryMutate";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -1007,7 +1008,9 @@ export function CanvasSection({
       await onChanged();
       setDraft(null);
     } catch (e) {
-      onError(String(e));
+      // The refusal line in the panel's own error slot — notably
+      // FpsLockedByContent when the timeline (or its history) holds layers.
+      onError(refusalText(e));
     } finally {
       setBusy(false);
     }
@@ -1224,7 +1227,7 @@ function CompositionSection({
       }
       await onChanged();
     } catch (e) {
-      onError(String(e));
+      onError(refusalText(e));
     } finally {
       setBusy(false);
     }
@@ -1251,7 +1254,7 @@ function CompositionSection({
       await onChanged();
       setDraft(null);
     } catch (e) {
-      onError(String(e));
+      onError(refusalText(e));
     } finally {
       setBusy(false);
     }

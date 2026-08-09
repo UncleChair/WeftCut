@@ -14,8 +14,13 @@ const { updateLayerParamTracks } = vi.hoisted(() => ({
   updateLayerParamTracks: vi.fn(async (_layerId: string, _entries: [string, unknown][]) => {}),
 }));
 vi.mock("../ipc", () => ({ addEffect, updateEffect, moveEffect, removeEffect, updateLayerParamTracks }));
+// `initReactI18next` is part of the mock because the real i18n singleton
+// (`../i18n`, reached through errors/tryMutate's refusal copy) calls
+// `.use(initReactI18next)` at import time — a mock missing it fails the whole
+// file at load, before any test runs.
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string, o?: { defaultValue?: string }) => o?.defaultValue ?? k }),
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 vi.mock("../render/effects/effectRegistry", () => ({
   listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name", category: "blur" }],

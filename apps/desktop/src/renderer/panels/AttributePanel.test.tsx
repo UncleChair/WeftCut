@@ -124,7 +124,9 @@ describe("AttributePanel boundary", () => {
         color: { r: 255, g: 0, b: 0, a: 255 },
       }),
     );
-    expect(onMutated).toHaveBeenCalledOnce();
+    // waitFor: the commit path resolves through tryMutate's refusal guard, so
+    // the refresh lands a microtask after the command call.
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
   });
 
   it("shows the existing empty state without an Effect surface", () => {
@@ -271,7 +273,7 @@ describe("AttributePanel envelope command routing", () => {
     fireEvent.click(within(advanced()).getByRole("switch", { name: "Locked" }));
     await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledWith("layer-1", { locked: true }));
 
-    expect(onMutated).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalledTimes(3));
     expect(moveLayer).not.toHaveBeenCalled();
     expect(trimLayer).not.toHaveBeenCalled();
   });
@@ -290,7 +292,7 @@ describe("AttributePanel envelope command routing", () => {
       expect(moveLayer).toHaveBeenCalledWith("layer-1", "track-1", 1_000_000, false),
     );
     expect(trimLayer).not.toHaveBeenCalled();
-    expect(onMutated).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
   });
 
   // ── Sub-frame audio entry (ADR 0038 / ticket 11) ─────────────────────────────
@@ -325,7 +327,7 @@ describe("AttributePanel envelope command routing", () => {
       // not follow (it would land off its own grid).
       expect(moveLayer).toHaveBeenCalledWith("layer-a1", "track-a", 33_500, true),
     );
-    expect(onMutated).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
   });
 
   it("reads the same audio time in milliseconds when the unit is switched", () => {
@@ -357,7 +359,7 @@ describe("AttributePanel envelope command routing", () => {
     await vi.waitFor(() => expect(trimLayer).toHaveBeenCalledWith("layer-1", "out", 1_000_000));
 
     expect(moveLayer).not.toHaveBeenCalled();
-    expect(onMutated).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
   });
 
   it("issues no command when an edit re-enters the current value (no no-op undo)", async () => {
@@ -628,7 +630,7 @@ describe("AttributePanel Audio fields", () => {
       expect(updateLayerParams).toHaveBeenCalledWith("layer-a1", { kind: "Audio", fade_out_us: 2_000_000 }),
     );
 
-    expect(onMutated).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalledTimes(2));
   });
 });
 

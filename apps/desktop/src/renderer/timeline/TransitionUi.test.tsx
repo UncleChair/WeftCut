@@ -271,8 +271,9 @@ describe("cut context menu", () => {
       expect(ipcMocks.logEmit).toHaveBeenCalledWith(
         expect.objectContaining({
           level: "error",
-          // 433_333 µs at 30 fps = 13 frames.
-          message: expect.stringContaining("00:00:00:13"),
+          // 433_333 µs rendered as seconds by the curated refusal copy
+          // (errors/formatCommandError.ts).
+          message: expect.stringContaining("0.43s"),
         }),
       );
     });

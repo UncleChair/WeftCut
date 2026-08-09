@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { tryMutate } from "../errors/tryMutate";
 import { useProjectSummary } from "../state/projectStore";
 import { AppColorField } from "../components/AppColorField";
 import { AppNumberField } from "../components/AppNumberField";
@@ -127,10 +128,16 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
     };
   }, []);
 
-  const commitText = (layerId: string, content: string) =>
-    updateLayerParams(layerId, { kind: "Text", content })
-      .then(onMutated)
-      .catch((e) => console.warn("update caption text failed:", e));
+  const commitText = async (layerId: string, content: string) => {
+    if (
+      await tryMutate(
+        () => updateLayerParams(layerId, { kind: "Text", content }),
+        "Edit caption",
+      )
+    ) {
+      await onMutated();
+    }
+  };
 
   const activateCue = ({ layer, trackId }: CaptionCue) => {
     onActivateCue(layer.id, trackId, layer.t_start_us);

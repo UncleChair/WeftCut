@@ -30,6 +30,7 @@ import {
 import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
+import { tryMutate } from "../errors/tryMutate";
 import { Timeline } from "../timeline/Timeline";
 import { PreviewSection } from "../app/PreviewSection";
 import { MediaDropZone, MediaPool } from "../panels/MediaPool";
@@ -359,8 +360,14 @@ function NearbyDockPanel() {
           contracts.onRevealTrack(trackId, layerId);
         }}
         onRename={async (layerId, nextLabel) => {
-          await updateLayer(layerId, { label: nextLabel });
-          await contracts.onMutated();
+          if (
+            await tryMutate(
+              () => updateLayer(layerId, { label: nextLabel }),
+              "Rename layer",
+            )
+          ) {
+            await contracts.onMutated();
+          }
         }}
       />
     </div>

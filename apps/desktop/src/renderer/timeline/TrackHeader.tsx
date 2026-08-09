@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { tryMutate } from "../errors/tryMutate";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
 import { updateTrackFlags, type TrackSummary } from "../ipc";
 import { trackHeaderControls } from "./geometry";
@@ -47,11 +48,8 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
   const { t } = useTranslation();
   const kindLabel = t(`kinds.${track.kind.toLowerCase()}`, { defaultValue: track.kind });
   const toggle = (patch: Parameters<typeof updateTrackFlags>[1]) => async () => {
-    try {
-      await updateTrackFlags(track.id, patch);
+    if (await tryMutate(() => updateTrackFlags(track.id, patch), "Update track flag")) {
       await onMutated();
-    } catch (err) {
-      console.error("update_track_flags failed:", err);
     }
   };
   const controls = trackHeaderControls(track);

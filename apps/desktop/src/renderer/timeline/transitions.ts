@@ -169,24 +169,6 @@ export function transitionDirectionOf(
   return kind.kind === "Crossfade" ? null : kind.direction;
 }
 
-/// Structured backend errors arrive as `Error(JSON.stringify(err))`, possibly
-/// wrapped in Electron IPC prose ("Error invoking remote method …"). Extract
-/// the error name + `available_us` by regex — tolerant of any prefix/suffix —
-/// so the UI can branch on TransitionInsufficientHandle instead of parsing
-/// prose. Returns null when no structured `"error"` field is present.
-export interface ParsedTransitionError {
-  name: string;
-  availableUs?: number;
-}
-
-export function parseTransitionCommandError(
-  raw: string,
-): ParsedTransitionError | null {
-  const name = /"error"\s*:\s*"([A-Za-z0-9_]+)"/.exec(raw);
-  if (!name || name[1] === undefined) return null;
-  const available = /"available_us"\s*:\s*(\d+)/.exec(raw);
-  if (available?.[1] !== undefined) {
-    return { name: name[1], availableUs: Number(available[1]) };
-  }
-  return { name: name[1] };
-}
+// Structured backend errors are parsed by the app-wide
+// `errors/parseCommandError.ts` and rendered by `errors/formatCommandError.ts`;
+// transition call sites report failures through `logMutationFailure`.

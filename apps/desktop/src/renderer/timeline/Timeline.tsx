@@ -14,7 +14,6 @@ import {
   addTransition,
   groupsCreate,
   groupsDissolve,
-  logEmit,
   moveLayer,
   removeTransition,
   separateAudioToNewTrack,
@@ -94,11 +93,11 @@ import {
 import { resolveAccelerator } from "../shortcuts/match";
 import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
+import { logMutationFailure } from "../errors/tryMutate";
 import {
   CUT_CLICK_TOLERANCE_PX,
   defaultTransitionDurationUs,
   findCutNear,
-  parseTransitionCommandError,
   type TransitionCut,
   type TransitionKindName,
 } from "./transitions";
@@ -186,7 +185,6 @@ export function Timeline({
   onSeek,
   onMutated,
 }: TimelineProps) {
-  const { t } = useTranslation();
   // Right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.
   // `cut` is non-null when the click landed within the tolerance band of a
@@ -388,7 +386,7 @@ export function Timeline({
       await groupsCreate(Array.from(sel), null, false);
       await onMutatedRef.current();
     } catch (err) {
-      console.error("groups_create failed:", err);
+      logMutationFailure(err, "Group layers");
     }
   }, []);
 
@@ -407,7 +405,7 @@ export function Timeline({
       }
       await onMutatedRef.current();
     } catch (err) {
-      console.error("groups_dissolve failed:", err);
+      logMutationFailure(err, "Dissolve group");
     }
   }, []);
 
@@ -458,7 +456,7 @@ export function Timeline({
           await moveLayer(audio.id, trackId, next, true);
           moved = true;
         } catch (err) {
-          console.error("audio slip move_layer failed:", err);
+          logMutationFailure(err, "Slip audio");
         }
       }
       if (moved) await onMutatedRef.current();
@@ -646,9 +644,9 @@ export function Timeline({
 
   // Create a transition at a cut (context-menu action). Default duration is
   // the hardcoded 1 s snapped DOWN to whole comp frames. Errors surface
-  // through the status bar / log (the app's error path) — notably
-  // TransitionInsufficientHandle carries `available_us`, which the message
-  // includes verbatim as a timecode. NO silent clamping.
+  // through the status bar / log (errors/formatCommandError.ts owns the
+  // copy — TransitionInsufficientHandle renders `available_us` with the
+  // layer's name). NO silent clamping.
   const onAddTransition = useCallback(
     async (
       cut: TransitionCut,
@@ -666,31 +664,10 @@ export function Timeline({
         });
         await onMutated();
       } catch (err) {
-        const parsed = parseTransitionCommandError(String(err));
-        const message =
-          parsed?.name === "TransitionInsufficientHandle"
-            ? t("transitions.insufficient_handle", {
-                available: formatTimecode(
-                  parsed.availableUs ?? 0,
-                  fpsNum,
-                  fpsDen,
-                ),
-                defaultValue:
-                  "Not enough tail media on the outgoing clip for this transition — available: {{available}}",
-              })
-            : t("transitions.add_failed", {
-                detail: String(err),
-                defaultValue: "Add transition failed: {{detail}}",
-              });
-        void logEmit({
-          level: "error",
-          category: { kind: "Project" },
-          source: { kind: "User" },
-          message,
-        });
+        logMutationFailure(err, "Add transition");
       }
     },
-    [fpsNum, fpsDen, onMutated, t],
+    [fpsNum, fpsDen, onMutated],
   );
 
   // Delete/Backspace removes the selected transition chip. Capture phase +
@@ -711,7 +688,7 @@ export function Timeline({
           clearTransitionSelection();
           await onMutatedRef.current();
         } catch (err) {
-          console.error("remove_transition failed:", err);
+          logMutationFailure(err, "Remove transition");
         }
       })();
     };
@@ -725,7 +702,7 @@ export function Timeline({
         await updateLayer(layerId, { label });
         await onMutated();
       } catch (e) {
-        console.warn("update_layer (label) failed:", e);
+        logMutationFailure(e, "Rename layer");
       }
     },
     [onMutated],
@@ -748,7 +725,7 @@ export function Timeline({
         }
         await onMutated();
       } catch (e) {
-        console.warn("commit param track failed:", e);
+        logMutationFailure(e, "Edit keyframes");
       }
     },
     [onMutated, tracks],
@@ -766,7 +743,7 @@ export function Timeline({
         await updateLayer(layerId, { enabled });
         await onMutated();
       } catch (e) {
-        console.warn("update_layer (enabled) failed:", e);
+        logMutationFailure(e, "Toggle layer");
       }
     },
     [onMutated],
@@ -790,7 +767,7 @@ export function Timeline({
         await separateAudioToNewTrack(layerId);
         await onMutated();
       } catch (err) {
-        console.error("separate audio failed:", err);
+        logMutationFailure(err, "Separate audio");
       }
     },
     [onMutated],
@@ -883,7 +860,7 @@ export function Timeline({
         await splitLayerGrouped(layer.id, atUs, false);
         await onMutated();
       } catch (err) {
-        console.error("blade split failed:", err);
+        logMutationFailure(err, "Blade split");
       }
     },
     [bladeCutTimeFromClientX, onMutated],

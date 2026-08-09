@@ -79,6 +79,7 @@ import { buildAppCommands } from "./commands/appCommands";
 import { toggleDisplayMode } from "./settings/appSettingsStore";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
+import { logMutationFailure } from "./errors/tryMutate";
 import {
   DockWorkspace,
   type DockPanelContracts,
@@ -495,7 +496,7 @@ export function App({ onCloseProject }: AppProps) {
       clearLayerSelection();
       await refresh();
     } catch (err) {
-      console.error("delete failed:", err);
+      logMutationFailure(err, "Delete layer");
     }
   }, [primaryLayerId, refresh]);
 
@@ -511,7 +512,9 @@ export function App({ onCloseProject }: AppProps) {
       setPendingRevealLayerId(pastedLayerId);
       await refresh();
     } catch (err) {
-      console.error("paste failed:", err);
+      // Paste at the playhead is the one keyboard path that can genuinely
+      // hit LayerOverlap — the curated line names both clips.
+      logMutationFailure(err, "Paste layer");
     }
   }, [refresh]);
 

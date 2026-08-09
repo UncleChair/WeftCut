@@ -418,10 +418,7 @@ const enUS = {
     direction_right: "Right",
     direction_up: "Up",
     direction_down: "Down",
-    insufficient_handle:
-      "Not enough tail media on the outgoing clip for this transition — available: {{available}}",
-    add_failed: "Add transition failed: {{detail}}",
-    update_failed: "Update transition failed: {{detail}}",
+    // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
   peek: {
     heading: "Near playhead ({{count}})",
@@ -461,6 +458,28 @@ const enUS = {
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",
+    // Curated refusal copy (errors/formatCommandError.ts). Names are resolved
+    // before interpolation — {{incoming}}/{{blocking}}/{{layer}} are display
+    // names, never uuids.
+    layer_overlap:
+      "Can't place “{{incoming}}” there — it would overlap “{{blocking}}” on {{track}}.",
+    track_locked: "{{track}} is locked.",
+    track_not_empty: "{{track}} still has clips on it.",
+    track_not_removable: "{{track}} is reserved and can't be removed.",
+    group_locked_member:
+      "“{{layer}}” is grouped with the locked layer “{{locked}}”.",
+    trim_edge_out_of_range:
+      "Can't trim “{{layer}}” to {{time}} — outside the clip's range.",
+    split_outside_layer:
+      "Can't split “{{layer}}” at {{time}} — the position is outside the clip.",
+    transition_insufficient_handle:
+      "“{{layer}}” has only {{available}} of source handle — not enough for this transition.",
+    transition_layers_not_adjacent:
+      "“{{from}}” and “{{to}}” must touch to add a transition.",
+    fps_locked_by_content:
+      "Frame rate stays {{current}} fps — the timeline still holds {{layers}} clip(s).",
+    fps_locked_by_content_history:
+      "Frame rate stays {{current}} fps — undo history still holds clips (reopen the project to clear it).",
   },
   language: {
     switch_label: "Language",

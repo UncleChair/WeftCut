@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import { listen, type UnlistenFn } from "@/bridge/events";
+import { renderLogMessage } from "./renderMessage";
 import { useLogStore } from "./store";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
@@ -66,7 +67,9 @@ export function StatusBar({
 
   useEffect(() => {
     if (latest && latest.level === "error") {
-      setAnnounce(`${t("status_bar.announce_error_prefix")}: ${latest.message}`);
+      setAnnounce(
+        `${t("status_bar.announce_error_prefix")}: ${renderLogMessage(latest, t)}`,
+      );
     }
   }, [latest, t]);
 
@@ -110,8 +113,11 @@ export function StatusBar({
           <>
             <LevelDot level={latest.level} />
             <span className="status-bar-time">{formatTime(latest.ts)}</span>
-            <span className="status-bar-message" title={latest.message}>
-              {latest.message}
+            <span
+              className="status-bar-message"
+              title={renderLogMessage(latest, t)}
+            >
+              {renderLogMessage(latest, t)}
             </span>
             <SourcePill entry={latest} />
           </>

@@ -14,8 +14,13 @@ vi.mock("@/platform", () => ({ isMac: true }));
 vi.mock("../ipc", () => ({ logEmit: vi.fn(() => Promise.resolve()) }));
 // i18next isn't initialised here; resolve a label key to itself so the
 // assertions can talk about which KEY each item carries.
+// `initReactI18next` is part of the mock because the real i18n singleton
+// (`../i18n`, reached through any module that renders refusal copy) calls
+// `.use(initReactI18next)` at import time — a mock missing it fails the whole
+// file at load, before any test runs.
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en-US" } }),
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 
 const sync = vi.fn(() => Promise.resolve());

@@ -19,6 +19,7 @@ import {
   type LogSource,
   type OpState,
 } from "../ipc";
+import { renderLogMessage } from "./renderMessage";
 import { useLogStore } from "./store";
 
 /// Expanded console overlay — lifts above the editor. Layout decision +
@@ -159,8 +160,12 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
       const srcKind = e.source.kind as SourceKind;
       if (!sourceFilters.has(srcKind)) continue;
       if (term) {
+        // Raw English + translated rendering + details, per the search
+        // contract in docs/status-log.md § i18n.
         const haystack = (
           e.message +
+          " " +
+          renderLogMessage(e, t) +
           " " +
           (e.details ? JSON.stringify(e.details) : "")
         ).toLowerCase();
@@ -180,7 +185,7 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
       }
     }
     return rows;
-  }, [entries, minLevelOrd, categoryFilters, sourceFilters, search]);
+  }, [entries, minLevelOrd, categoryFilters, sourceFilters, search, t]);
 
   // Autoscroll on new entries when enabled; the toolbar's autoscroll toggle
   // suspends it (the user scrolled up to read history).
@@ -387,8 +392,11 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
                     <span className={`log-level-dot level-${row.head.level}`} />
                     <CategoryPill category={row.head.category} />
                     <SourcePill source={row.head.source} />
-                    <span className="log-message" title={row.head.message}>
-                      {row.head.message}
+                    <span
+                      className="log-message"
+                      title={renderLogMessage(row.head, t)}
+                    >
+                      {renderLogMessage(row.head, t)}
                     </span>
                     {row.head.op_state && (
                       <OpStatePill state={row.head.op_state} />
@@ -434,7 +442,9 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
                         <li key={c.id} className={`log-row level-${c.level}`}>
                           <span className="log-time">{formatTime(c.ts)}</span>
                           <span className={`log-level-dot level-${c.level}`} />
-                          <span className="log-message">{c.message}</span>
+                          <span className="log-message">
+                            {renderLogMessage(c, t)}
+                          </span>
                           {c.op_state && <OpStatePill state={c.op_state} />}
                         </li>
                       ))}

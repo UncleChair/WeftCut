@@ -36,6 +36,7 @@ import {
 } from "../ipc";
 import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
 import { layerDisplayName } from "../lib/layerName";
+import { refusalText, tryMutate } from "../errors/tryMutate";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { ScaleFields } from "./ScaleFields";
 
@@ -339,20 +340,16 @@ function useEnvelope({
       setLabel(layer.label ?? "");
       return;
     }
-    try {
-      await updateLayer(layer.id, { label: next });
+    if (await tryMutate(() => updateLayer(layer.id, { label: next }), "Rename layer")) {
       await onMutated();
-    } catch (e) {
-      console.warn("update_layer failed:", e);
+    } else {
+      setLabel(layer.label ?? "");
     }
   };
 
   const commitFlag = async (patch: { enabled: boolean } | { locked: boolean }): Promise<void> => {
-    try {
-      await updateLayer(layer.id, patch);
+    if (await tryMutate(() => updateLayer(layer.id, patch), "Update layer flag")) {
       await onMutated();
-    } catch (e) {
-      console.warn("update_layer failed:", e);
     }
   };
 
@@ -365,14 +362,13 @@ function useEnvelope({
       return;
     }
     if (us === layer.t_start_us || !track) return;
-    try {
-      // `escapeGroup` on an audio layer: a sub-frame start edit is a SLIP, so it must
-      // move this member alone. Dragging the whole group to a sample boundary would
-      // put the video member off its own grid (ADR 0038 / R2-D7).
-      await moveLayer(layer.id, track.id, us, isAudio);
+    // `escapeGroup` on an audio layer: a sub-frame start edit is a SLIP, so it must
+    // move this member alone. Dragging the whole group to a sample boundary would
+    // put the video member off its own grid (ADR 0038 / R2-D7).
+    if (await tryMutate(() => moveLayer(layer.id, track.id, us, isAudio), "Move layer")) {
       await onMutated();
-    } catch (e) {
-      console.warn("move_layer failed:", e);
+    } else {
+      setStartTc(fmtTime(layer.t_start_us));
     }
   };
 
@@ -386,11 +382,10 @@ function useEnvelope({
     }
     const newEnd = layer.t_start_us + us;
     if (newEnd === layer.t_end_us) return;
-    try {
-      await trimLayer(layer.id, "out", newEnd);
+    if (await tryMutate(() => trimLayer(layer.id, "out", newEnd), "Trim layer")) {
       await onMutated();
-    } catch (e) {
-      console.warn("trim_layer failed:", e);
+    } else {
+      setDurTc(fmtTime(layer.t_end_us - layer.t_start_us));
     }
   };
 
@@ -492,14 +487,12 @@ function KindAdvancedFields({
 type Commit = (patch: LayerParamsPatch) => Promise<void>;
 
 /// The field-wise params commit shared by the core and advanced kind
-/// dispatchers: one backend command + one refresh per gesture, warn on failure.
+/// dispatchers: one backend command + one refresh per gesture; a refusal
+/// becomes a status-bar line (errors/tryMutate.ts).
 function commitLayerParams(layerId: string, onMutated: () => Promise<void>): Commit {
   return async (patch) => {
-    try {
-      await updateLayerParams(layerId, patch);
+    if (await tryMutate(() => updateLayerParams(layerId, patch), "Edit layer property")) {
       await onMutated();
-    } catch (e) {
-      console.warn("update_layer_params failed:", e);
     }
   };
 }
@@ -922,7 +915,7 @@ function MotifLifecycleRow({
     try {
       await fn();
     } catch (e) {
-      setErr(String(e));
+      setErr(refusalText(e));
     } finally {
       setBusy(false);
     }
@@ -1122,7 +1115,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
     try {
       await amendMotifDraft(motifId, source);
     } catch (e) {
-      setErr(String(e));
+      setErr(refusalText(e));
     } finally {
       setBusy(false);
     }

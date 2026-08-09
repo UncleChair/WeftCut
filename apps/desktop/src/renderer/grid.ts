@@ -20,6 +20,7 @@
 /// takes for the eval leaf), and the timeline UI imports it directly for nudges and
 /// readouts. A copy on each side would be exactly the drift this file prevents.
 import { frameIndexRound, snapFrameCeil, snapFrameFloor, snapFrameRound, timeUsAtFrame } from './eval'
+import type { GridDomain } from '../shared/commandErrors'
 
 /** The mix lattice, hard-coded in BOTH engines (`native/src/audio/mix.rs`
  *  MIX_SAMPLE_RATE, and the TS twin's `chunkSchedule.ts` framesToUs). Do not add a
@@ -32,8 +33,11 @@ export const AUDIO_SAMPLE_RATE_HZ = 48_000
 /** Samples per millisecond — the coarse nudge tier's step (1 ms = 48 samples). */
 export const AUDIO_SAMPLES_PER_MS = AUDIO_SAMPLE_RATE_HZ / 1000
 
-/** Which lattice a time lives on. Diagnostics only — see the note above. */
-export type GridDomain = 'frame' | 'sample'
+/** Which lattice a time lives on. Diagnostics only — see the note above.
+ *  Declared in shared/commandErrors.ts (the refusal wire contract names it in
+ *  `OffGridLayerBoundary.grid`); re-exported here so grid consumers keep one
+ *  import site for all lattice vocabulary. */
+export type { GridDomain } from '../shared/commandErrors'
 
 /** A rate pair, structurally compatible with the actor's `Rational`. */
 export interface RateLike {
