@@ -263,6 +263,29 @@ jobs:
       - name: Prebuild conformance analyzer
         run: cargo build --manifest-path native/Cargo.toml --bin media_conformance --features jobs,export
 
+      # The MAIN fixture matrix generates itself (playwright globalSetup →
+      # ensureFixtures), but the two software-lane family gates read from the
+      # separate decode-BENCH set, which nothing generates automatically — a
+      # bench run is a local, opt-in measurement. Without these two files
+      # preview-sw-families self-skipped on all three legs, so the ffmpeg
+      # engine's software decode of an intra 4:2:2 (DNxHR) and a long-GOP
+      # MPEG-2 source has never been gated anywhere but a dev machine (issue
+      # #15 layer 1).
+      #
+      # Only the two rows those gates read: the full 12-row matrix is minutes
+      # of encoding and ~10 GB, most of it for cells only the bench opens. Both
+      # are full 60 s clips because the spec far-seeks to 50 s to strand the
+      # ring before its backward-seek assertion — a shortened cut cannot
+      # satisfy it. ~1.8 GB and ~1-2 min on a 4-vCPU runner.
+      #
+      # Deliberately NOT cached. At 1.8 GB × 3 legs it would take over half of
+      # the repo's 10 GB cache budget for media that regenerates from a
+      # committed script in a minute — and evict the two caches that cannot
+      # (ffmpeg-lgpl on macOS is a ~10 min from-source build).
+      - name: Generate software-lane family fixtures (e2e)
+        working-directory: apps/desktop/e2e
+        run: node scripts/gen-decode-bench-fixtures.mjs --only dnxhr-1080,mpeg2-1080
+
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
       # otherwise leave unresolved `napi_*` symbols in a standalone `cargo test`

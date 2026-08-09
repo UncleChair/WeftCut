@@ -9,6 +9,34 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// output is apps/desktop/out/main/index.js → three levels up.
 export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 
+/// The built native-decode component for THIS platform, or null on a platform
+/// the addon has no name for. `DECODE_COMPONENT_PRESENT` is the level-0 probe
+/// every native-lane gate opens with: without the addon the app cannot open a
+/// native session at all, so the gate would time out instead of meaning
+/// anything.
+///
+/// Shared rather than inlined because each of the four gates that needs it had
+/// its own copy, and two of them hardcoded the WINDOWS filename — which reads
+/// as "component missing" on Linux/macOS and silently turned a cross-platform
+/// software-lane gate into a Windows-only one (it cost preview-sw-color its CI
+/// coverage on two of three legs). The Standard engine's software lane ships on
+/// all three desktop platforms (issue #5 block B), so the filename must be
+/// resolved per-OS. A gate that is genuinely platform-bound — d3d11va, say —
+/// says so with its own `process.platform` check next to this one, where the
+/// reason is visible.
+const DECODE_ADDON_FILE = (
+  {
+    win32: 'index.win32-x64-msvc.node',
+    linux: 'index.linux-x64-gnu.node',
+    darwin: 'index.darwin-arm64.node',
+  } as Partial<Record<NodeJS.Platform, string>>
+)[process.platform]
+export const DECODE_ADDON: string | null = DECODE_ADDON_FILE
+  ? path.resolve(__dirname, '../../../native/decode', DECODE_ADDON_FILE)
+  : null
+export const DECODE_COMPONENT_PRESENT: boolean =
+  DECODE_ADDON !== null && fs.existsSync(DECODE_ADDON)
+
 /// Chromium GL switches every launch needs, per platform. Spread these into
 /// `args` BEFORE the app entry (see the switch-ordering note in launchApp);
 /// raw `electron.launch` call sites must include them too, which is why this is

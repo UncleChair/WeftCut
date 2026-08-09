@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, DECODE_ADDON, DECODE_COMPONENT_PRESENT } from './helpers/driver'
 
 // Saturated-chart color gate for the Windows SHARED-TEXTURE hardware lane
 // (d3d11va → GpuTransport) — the A′ color-sovereign path: native decodes on
@@ -29,8 +29,10 @@ const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
 const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000
 
-const DECODE_ADDON = path.resolve(__dirname, '../../native/decode/index.win32-x64-msvc.node')
-const COMPONENT_PRESENT = process.platform === 'win32' && existsSync(DECODE_ADDON)
+// Windows-bound BY THE LANE, not by the addon: d3d11va is the only zero-copy
+// GPU lane, and it is Windows-only. The component probe stays platform-generic
+// (DECODE_ADDON) so a future lane here needs no filename surgery.
+const COMPONENT_PRESENT = process.platform === 'win32' && DECODE_COMPONENT_PRESENT
 
 // Patch-center ceiling in 8-bit code units. The chain pays the H.264 chart's
 // own quantization, its 4:2:0 chroma siting, and the shader's RGBA8 rounding

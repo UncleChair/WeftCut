@@ -14,6 +14,8 @@ import {
   importAndPlaceMedia,
   placeMediaLayer,
   summary,
+  DECODE_ADDON,
+  DECODE_COMPONENT_PRESENT,
 } from './helpers/driver'
 
 // Wedge-scenario gates on the NATIVE export decode path
@@ -56,19 +58,9 @@ const OFFSET_FRAMES = 60
 // uses): without the built addon the app cannot open native sessions, so the
 // gates skip rather than fail. The Standard engine's software lane ships on
 // all three desktop platforms (issue #5 block B; macOS's ffmpeg-lgpl libs are
-// built from source by fetch-ffmpeg-lgpl.mjs), so the gate resolves the
-// per-OS addon filename and admits Windows + Linux + macOS (arm64).
-const ADDON_FILE = (
-  {
-    win32: 'index.win32-x64-msvc.node',
-    linux: 'index.linux-x64-gnu.node',
-    darwin: 'index.darwin-arm64.node',
-  } as Partial<Record<NodeJS.Platform, string>>
-)[process.platform]
-const DECODE_ADDON = ADDON_FILE
-  ? path.resolve(__dirname, '../../native/decode', ADDON_FILE)
-  : null
-const COMPONENT_PRESENT = DECODE_ADDON !== null && existsSync(DECODE_ADDON)
+// built from source by fetch-ffmpeg-lgpl.mjs), so the shared probe resolves
+// the per-OS addon filename and admits Windows + Linux + macOS (arm64).
+const COMPONENT_PRESENT = DECODE_COMPONENT_PRESENT
 
 // Deliberately slow consumer for the credit-stall gate: WebCodecs software AV1
 // encode (same shape as export_codecs.spec.ts's AV1 cell) can't keep up with

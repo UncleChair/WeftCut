@@ -1,8 +1,21 @@
 // Idempotent decode-bench fixture generator. Synthesizes the fixture matrix
 // (docs/decode-bench.md §What it measures) with ffmpeg:
 // 60 s testsrc2, 30 fps, GOP 240, bt709/limited, no audio. Skips existing
-// outputs (delete a file or pass --force to regenerate). Requires ffmpeg +
-// ffprobe on PATH (`npm run ffmpeg:fetch` from apps/desktop).
+// outputs (delete a file or pass --force to regenerate). Uses $FFMPEG/$FFPROBE
+// when set, else ffmpeg + ffprobe on PATH (`npm run ffmpeg:fetch` from
+// apps/desktop).
+//
+// Flags:
+//   --force          regenerate outputs that already exist
+//   --only a,b       generate just these rows (default: the whole matrix). The
+//                    e2e conformance gates that read these fixtures need two of
+//                    twelve rows; a CI leg generating the whole matrix would
+//                    spend minutes and gigabytes on cells nothing there reads.
+//
+// Clip length is fixed at 60 s: the specs are written against it (preview-sw-
+// families far-seeks to 50 s to strand the ring), and the bench derives its
+// expected frame count from `durationUs` below. A shorter cut is not a knob —
+// it silently breaks both readers.
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,6 +23,9 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const BENCH_MEDIA_DIR = path.resolve(HERE, "../fixtures/decode-bench");
+
+const FFMPEG = process.env.FFMPEG || "ffmpeg";
+const FFPROBE = process.env.FFPROBE || "ffprobe";
 
 const DUR_S = 60;
 const COLOR = ["-color_primaries", "bt709", "-color_trc", "bt709",
@@ -67,13 +83,13 @@ export const benchFixturePath = (name) => {
 const run = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8" });
 
 function availableEncoders() {
-  const r = run("ffmpeg", ["-hide_banner", "-encoders"]);
-  if (r.status !== 0) throw new Error("ffmpeg not on PATH — run `npm run ffmpeg:fetch` from apps/desktop");
+  const r = run(FFMPEG, ["-hide_banner", "-encoders"]);
+  if (r.status !== 0) throw new Error(`${FFMPEG} not runnable — run \`npm run ffmpeg:fetch\` from apps/desktop, or set $FFMPEG`);
   return r.stdout;
 }
 
 function validate(row, file) {
-  const r = run("ffprobe", ["-v", "error", "-select_streams", "v:0",
+  const r = run(FFPROBE, ["-v", "error", "-select_streams", "v:0",
     "-show_entries", "stream=codec_name,width,height,pix_fmt", "-show_entries", "format=duration",
     "-of", "json", file]);
   if (r.status !== 0) return `ffprobe failed: ${r.stderr}`;
@@ -87,13 +103,30 @@ function validate(row, file) {
   return null;
 }
 
+/// `--only a,b`, space- or `=`-separated.
+export function parseArgs(argv) {
+  const eq = argv.find((a) => a.startsWith("--only="));
+  const i = argv.indexOf("--only");
+  const only = eq ? eq.slice("--only=".length) : i === -1 ? null : argv[i + 1];
+  return {
+    force: argv.includes("--force"),
+    only: only ? only.split(",").map((s) => s.trim()).filter(Boolean) : null,
+  };
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const force = process.argv.includes("--force");
+  const { force, only } = parseArgs(process.argv.slice(2));
+  const unknown = (only ?? []).filter((n) => !BENCH_MATRIX.some((r) => r.name === n));
+  if (unknown.length) {
+    console.error(`unknown fixture(s): ${unknown.join(", ")}`);
+    process.exit(1);
+  }
+  const rows = only ? BENCH_MATRIX.filter((r) => only.includes(r.name)) : BENCH_MATRIX;
   mkdirSync(BENCH_MEDIA_DIR, { recursive: true });
   const encoders = availableEncoders();
   let failures = 0;
-  for (const row of BENCH_MATRIX) {
+  for (const row of rows) {
     const out = path.join(BENCH_MEDIA_DIR, `${row.name}.${row.ext}`);
     if (existsSync(out) && !force) { console.log(`skip   ${row.name} (exists)`); continue; }
     if (!encoders.includes(row.encoder)) {
@@ -101,7 +134,7 @@ if (isMain) {
       failures += 1; continue;
     }
     console.log(`encode ${row.name} …`);
-    const r = run("ffmpeg", ["-y", "-f", "lavfi",
+    const r = run(FFMPEG, ["-y", "-f", "lavfi",
       "-i", `testsrc2=size=${row.width}x${row.height}:rate=30`,
       "-t", String(DUR_S), "-an", ...row.args, ...COLOR, out]);
     if (r.status !== 0) { console.error(`FAIL   ${row.name}:\n${r.stderr.slice(-2000)}`); rmSync(out, { force: true }); failures += 1; continue; }

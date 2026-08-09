@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook, DECODE_ADDON, DECODE_COMPONENT_PRESENT } from './helpers/driver'
 
 // Saturated-chart color gate for the native software-decode PREVIEW lane
 // (policy ADR 0032). The preview twin of export-prores-fidelity's Gate A: a
@@ -40,9 +40,8 @@ const SEEK_US = 500_000 // mid-chart; the chart is static, any decoded frame sho
 // Component presence (same level-0 probe as export-prores-fidelity.spec.ts):
 // without the built addon the app cannot open native SW sessions, so the
 // native-sw route never commits and the gate would time out rather than
-// mean anything. Windows-only today.
-const DECODE_ADDON = path.resolve(__dirname, '../../native/decode/index.win32-x64-msvc.node')
-const COMPONENT_PRESENT = process.platform === 'win32' && existsSync(DECODE_ADDON)
+// mean anything. The lane itself is cross-platform — see DECODE_ADDON.
+const COMPONENT_PRESENT = DECODE_COMPONENT_PRESENT
 
 // Patch-center app-error ceiling in 8-bit code units, matching the export
 // chart gate (COLOR_APP_MAX): the chain pays the ProRes master's 10-bit→8-bit

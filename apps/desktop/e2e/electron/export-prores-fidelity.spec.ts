@@ -11,6 +11,8 @@ import {
   driveExport,
   importAndPlaceMedia,
   tmpDir,
+  DECODE_ADDON,
+  DECODE_COMPONENT_PRESENT,
 } from './helpers/driver'
 
 // ProRes fidelity gates on the export decode engine
@@ -37,20 +39,10 @@ const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
 const CHART_PRORES = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
 
-// Component presence — same level-0 probe as export-native-wedges.spec.ts,
+// Component presence — the shared level-0 probe (helpers/driver DECODE_ADDON),
 // where the per-OS rationale lives: without the built addon the app cannot
 // open native sessions, so the gates skip rather than fail.
-const ADDON_FILE = (
-  {
-    win32: 'index.win32-x64-msvc.node',
-    linux: 'index.linux-x64-gnu.node',
-    darwin: 'index.darwin-arm64.node',
-  } as Partial<Record<NodeJS.Platform, string>>
-)[process.platform]
-const DECODE_ADDON = ADDON_FILE
-  ? path.resolve(__dirname, '../../native/decode', ADDON_FILE)
-  : null
-const COMPONENT_PRESENT = DECODE_ADDON !== null && existsSync(DECODE_ADDON)
+const COMPONENT_PRESENT = DECODE_COMPONENT_PRESENT
 
 // Identity samples on this ProRes master measure SSIM ≈ 0.57–0.63 against a
 // default-bitrate H.264 re-encode (see export-native-wedges.spec.ts), so the
