@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
-use ffmpeg_sidecar::paths::ffmpeg_path;
+use weftcut_lib::ffmpeg::ffmpeg_path;
 
 /// Generalized Goertzel: DFT magnitude (amplitude estimate) at an arbitrary
 /// `freq` over `samples`. `freq` need not land on a bin. ~O(n), no FFT.

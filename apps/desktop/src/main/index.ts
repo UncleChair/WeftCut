@@ -347,13 +347,15 @@ app.whenReady().then(async () => {
     console.log(`[main] bundled ffmpeg on PATH: ${ffmpegBin}`)
     // ffmpeg-sidecar's ffmpeg_path() prefers a binary ADJACENT to the Electron
     // exe over anything on PATH (paths.rs sidecar_path), so a stale sidecar
-    // auto-download dropped there silently shadows the controlled build above —
-    // the "sidecar version uncontrolled" trap (issue #5). Linux no longer
-    // auto-downloads (native ffmpeg::bootstrap), so this only bites a machine
-    // that did so before; warn loudly rather than delete a file in node_modules.
+    // auto-download dropped there used to silently shadow the controlled build
+    // above — the "sidecar version uncontrolled" trap (issue #5 / issue #7
+    // boundary #7). The native resolver (native/src/ffmpeg) now REFUSES an
+    // exe-adjacent binary whenever a PATH build is reachable, so the shadow can
+    // no longer win a spawn. Still warn: it means the machine is misconfigured,
+    // and anything resolving ffmpeg outside that owner would trip on it.
     const adjacent = path.join(path.dirname(process.execPath), process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
     if (fs.existsSync(adjacent)) {
-      console.warn(`[main] WARNING: ${adjacent} sits beside the Electron binary and will SHADOW the controlled sidecar (${ffmpegBin}); remove it so exports use the version-pinned ffmpeg.`)
+      console.warn(`[main] WARNING: ${adjacent} sits beside the Electron binary; it is REFUSED in favour of the version-pinned sidecar (${ffmpegBin}), but remove it — it should not be there.`)
     }
   }
 

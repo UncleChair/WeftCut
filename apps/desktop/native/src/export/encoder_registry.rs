@@ -15,7 +15,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ffmpeg_sidecar::paths::ffmpeg_path;
+use crate::ffmpeg::ffmpeg_path;
 use serde::Serialize;
 use tokio::process::Command;
 use tokio::sync::Mutex;

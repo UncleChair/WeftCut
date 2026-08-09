@@ -246,8 +246,22 @@ pub async fn export_video_sink_start(
         // (the LogBus tracing bridge forwards errors, not info), so the
         // encoder actually selected at runtime was invisible in packaged
         // builds. Surface it in the status log + session JSONL.
+        //
+        // `ffmpeg` (and, when one exists, `ffmpegShadowRefused`) ride along
+        // because WHICH binary answered the probes is the other half of the
+        // answer: both times an export silently downgraded to a software
+        // encoder, the encoder name alone looked like a hardware failure when
+        // the real cause was an exe-adjacent shadow build (issue #7 boundary
+        // #7). The shadow can no longer win — see crate::ffmpeg — but naming
+        // it here is what makes the misconfiguration self-evident.
+        let ffmpeg_bin = crate::ffmpeg::ffmpeg_path();
+        let refused_shadow = crate::ffmpeg::refused_shadow();
         log_slot.emit(LogEntryInput {
-            level: LogLevel::Info,
+            level: if refused_shadow.is_some() {
+                LogLevel::Warn
+            } else {
+                LogLevel::Info
+            },
             category: LogCategory::Export,
             source: LogSource::System,
             message: format!(
@@ -268,10 +282,12 @@ pub async fn export_video_sink_start(
                 "acceleration": format!("{:?}", plan.acceleration),
                 "pixFmt": args.pix_fmt.clone(),
                 "size": format!("{}x{}", args.width, args.height),
+                "ffmpeg": ffmpeg_bin.display().to_string(),
+                "ffmpegShadowRefused": refused_shadow.as_ref().map(|p| p.display().to_string()),
             })),
             ..Default::default()
         });
-        let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
+        let mut cmd = std::process::Command::new(&ffmpeg_bin);
         cmd.no_console_window();
         for arg in sink_cmd_args(&args, &plan) {
             cmd.arg(arg);
@@ -609,6 +625,25 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         assert!(!encoder.is_empty(), "details.encoder must carry the resolved name");
+        // The binary that answered the probes travels with the encoder name:
+        // an encoder that "failed" because an exe-adjacent shadow build lacks
+        // it (issue #7 boundary #7) is otherwise indistinguishable from one the
+        // hardware genuinely cannot do.
+        let binary = entry
+            .details
+            .as_ref()
+            .and_then(|d| d.get("ffmpeg"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert_eq!(
+            binary,
+            crate::ffmpeg::ffmpeg_path().display().to_string(),
+            "details.ffmpeg must name the binary the sink actually spawned"
+        );
+        assert!(
+            entry.details.as_ref().is_some_and(|d| d.get("ffmpegShadowRefused").is_some()),
+            "details must always carry the shadow slot (null when clean) so its absence is not read as 'not checked'"
+        );
     }
 
     // Unknown codecs are rejected while translating the wire request, before

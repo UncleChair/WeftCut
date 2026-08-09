@@ -29,8 +29,10 @@ mod speech;
 mod vlm;
 #[cfg(feature = "export")]
 mod export;
+// Public because the `media_conformance` bin spawns ffmpeg too and must
+// resolve it through the same owner (issue #7 boundary #7) — see ffmpeg/mod.rs.
 #[cfg(any(feature = "jobs", feature = "export"))]
-mod ffmpeg;
+pub mod ffmpeg;
 mod io;
 #[cfg(feature = "jobs")]
 mod jobs;

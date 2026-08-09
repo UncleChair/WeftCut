@@ -4,7 +4,7 @@
 use std::process::Output;
 
 use anyhow::{Context, Result};
-use ffmpeg_sidecar::paths::ffmpeg_path;
+use crate::ffmpeg::ffmpeg_path;
 use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;

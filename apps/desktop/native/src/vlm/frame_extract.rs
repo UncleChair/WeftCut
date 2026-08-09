@@ -14,7 +14,7 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
+use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
 use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
-use ffmpeg_sidecar::command::ffmpeg_is_installed;
+use crate::ffmpeg::ffmpeg_is_installed;
 // Only the test suite spawns ffmpeg/ffprobe directly; the non-test proxy path
 // spawns through `hwaccel::output_with_hw_decode_fallback`.
 #[cfg(test)]

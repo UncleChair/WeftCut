@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 /// `compare_frames` tool — a pure function, not part of the cut/stats pipeline.
 pub(crate) mod sim;
 use async_trait::async_trait;
-use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
+use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
 use image::RgbImage;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
