@@ -418,6 +418,14 @@ npm run bench:decode:fixtures           # generate the synthetic fixture matrix 
 npm run bench:decode                    # run the full matrix
 ```
 
+The generator takes `--only a,b` to build a subset (the whole matrix is minutes
+of encoding and ~10 GB) and `--force` to regenerate what exists; `$FFMPEG` /
+`$FFPROBE` override the PATH lookup. Clip length is fixed at 60 s — both this
+bench (its expected frame count comes from `durationUs` in the matrix) and the
+e2e gates that share the set (`preview-sw-families` far-seeks to 50 s) are
+written against it. electron-ci generates `dnxhr-1080,mpeg2-1080` this way so
+the software-lane family gates run on all three OSes.
+
 To also measure the **native**, **sw**, or **native-copyback** strategies,
 build the `@weftcut/native-decode` component — it ships on all three platforms
 (Windows, Linux, macOS — each stages its own LGPL-shared FFmpeg runtime; see

@@ -41,6 +41,19 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
   but fails (e.g. ffmpeg missing) — that replaces the old per-spec silent
   skips. `media/` is gitignored; point elsewhere with `WEFTCUT_TEST_MEDIA`
   (the setup honors it too).
+- **Two gates read the decode-BENCH fixture set, not the main matrix.**
+  `preview-sw-families` (DNxHR intra + long-GOP MPEG-2 through the ffmpeg
+  engine's software lane) opens `fixtures/decode-bench/`, which `globalSetup`
+  does NOT populate — a bench run is a local, opt-in measurement, and the full
+  12-row matrix is minutes of encoding and ~10 GB. Generate just what a gate
+  needs with `--only`:
+  `node scripts/gen-decode-bench-fixtures.mjs --only dnxhr-1080,mpeg2-1080`
+  (what electron-ci runs; `$FFMPEG`/`$FFPROBE` override the PATH lookup). The
+  clips are 60 s by design — the spec far-seeks to 50 s to strand the ring
+  before its backward-seek assertion. `preview-sw-conformance`'s 4K ProRes
+  memory-ratchet cell and `preview-gpu-order` also read this dir but stay out
+  of CI: the first is a ~3.5 GB fixture driving a memory measurement a shared
+  runner cannot hold steady, the second needs a GPU that d3d11va-decodes HEVC.
 - **The analyzer-backed gates need a buildable `cargo`.** `lib/analyze.mjs`
   shells `cargo run --bin media_conformance --features jobs,export`; the first
   invocation compiles it (slow), later runs reuse the binary. These gates
