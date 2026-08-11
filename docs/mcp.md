@@ -146,7 +146,7 @@ around 40, organised below.
 | `project://tracks` | tracks + layer envelopes |
 | `project://layers/{id}` | one layer in detail |
 | `project://markers` | all markers |
-| `project://history` | recent ops + checkpoints (snapshot-free) |
+| `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against **that op's own snapshot** so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a resolved name or `{"kind_key": "kinds.color"}` when only the entity's kind is known (the key is translated by the UI) |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |

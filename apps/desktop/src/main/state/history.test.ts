@@ -4,11 +4,15 @@ import { seededGen } from './ids'
 import { blankProject, type Layer, type Project } from './model'
 import { colorParams } from './mutations/add'
 import { History, type HistoryEntry } from './history'
+import { HISTORY_SUMMARY } from './history-labels'
 import type { MediaItem } from './model'
 
 const U = { kind: 'User' as const }
+// `label_key` is required on a HistoryEntry; these fixtures exercise stack
+// mechanics, not labelling, so they all carry the same real key.
+const KEY = HISTORY_SUMMARY.layerAdd.key
 function entry(p: Project, op: string): HistoryEntry {
-  return { op_id: op, actor: U, timestamp: '<TS>', summary: op, affected: [], snapshot: p }
+  return { op_id: op, actor: U, timestamp: '<TS>', summary: op, label_key: KEY, affected: [], snapshot: p }
 }
 function freshProject(name: string): Project { return blankProject(seededGen(), name) }
 
@@ -77,8 +81,63 @@ describe('History', () => {
     h.record(entry(freshProject('1'), 'op1'))
     const v = h.view(10)
     expect(v.len).toBe(2); expect(v.cursor).toBe(1); expect(v.ops.length).toBe(2)
+    expect(v.ops[0]).toMatchObject({ summary: 'Initial', label_key: 'history.initial' })
     const s = h.status()
     expect(s).toMatchObject({ cursor: 1, len: 2, can_undo: true, can_redo: false })
+  })
+
+  /// The whole reason entity names are resolved in main: the layer this entry
+  /// deleted is gone from current state, so a renderer holding only current state
+  /// could print nothing but a uuid.
+  ///
+  /// An entry stores the state AFTER its own op, so a DELETE is nameable only
+  /// from its predecessor — the case that decides whether `Deleted layer` shows
+  /// a name or a uuid, which is the row a user most wants to identify.
+  it('view names each ref from whichever stored snapshot holds it', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'labels')
+    const held: Layer = {
+      id: 'L1', label: 'Clip 01', t_start_us: 0, t_end_us: 1_000_000,
+      enabled: true, locked: false, metadata: {},
+      params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1920, 1080), effects: [],
+    }
+    const withLayer = { ...p0, tracks: p0.tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) }
+    const h = new History(withLayer, U, gen())
+    // The delete entry's own snapshot no longer holds L1 — the PREVIOUS one does,
+    // so the name has to come from there.
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Updated layer', label_key: 'history.layer.update', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: withLayer })
+    const ops = h.view(10).ops
+    expect(ops[1].entity_labels).toEqual([{ text: 'Clip 01' }])  // deleted here → named from the predecessor
+    expect(ops[2].entity_labels).toEqual([{ text: 'Clip 01' }])  // present here → named from its own snapshot
+    expect(ops[0].entity_labels).toEqual([])           // parallel to affected: []
+  })
+
+  /// A ref no stored snapshot holds is the only case that may fall back to a uuid.
+  it('view falls back to the raw id when neither snapshot holds the ref', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'labels')
+    const h = new History(p0, U, gen())
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'ghost' }], snapshot: p0 })
+    expect(h.view(10).ops[1].entity_labels).toEqual([{ text: 'ghost' }])
+  })
+
+  /// The window can start past the entry a delete needs for its name — the
+  /// predecessor lookup is an ABSOLUTE index, not one relative to the slice.
+  it('names a delete from its predecessor even when the predecessor is outside the window', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'labels')
+    const held: Layer = {
+      id: 'L1', label: 'Clip 01', t_start_us: 0, t_end_us: 1_000_000,
+      enabled: true, locked: false, metadata: {},
+      params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1920, 1080), effects: [],
+    }
+    const withLayer = { ...p0, tracks: p0.tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) }
+    const h = new History(withLayer, U, gen())
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
+    const ops = h.view(1).ops // window holds ONLY the delete; its predecessor is the seed
+    expect(ops).toHaveLength(1)
+    expect(ops[0].entity_labels).toEqual([{ text: 'Clip 01' }])
   })
 })
 
@@ -89,7 +148,7 @@ describe('replaceCompositionEverywhere', () => {
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot that differs (a duration change)
     const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000, duration_pinned: true } }
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     const canvas = { width: 1280, height: 720, fps: { num: 24, den: 1 }, background: { r: 10, g: 20, b: 30, a: 255 } }
     h.replaceCompositionEverywhere((p) => ({ ...p, composition: { ...p.composition, ...canvas } }))
     // head (p1): canvas patched, this transform leaves duration alone
@@ -110,7 +169,7 @@ describe('replaceCompositionEverywhere', () => {
     const p0 = blankProject(gen, 'h2')
     const h = new History(p0, { kind: 'User' }, gen())
     const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     h.replaceCompositionEverywhere((p) => ({
       ...p, composition: { ...p.composition, duration_us: Math.max(p.composition.duration_us, 1_000_000) },
     }))
@@ -140,7 +199,7 @@ describe('storedSnapshotsHoldLayer', () => {
   it('is true when only an OLDER snapshot holds a layer', () => {
     const gen = seededGen(); const p0 = blankProject(gen, 's2')
     const h = new History(withLayer(p0), { kind: 'User' }, gen())
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', affected: [], snapshot: p0 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', label_key: KEY, affected: [], snapshot: p0 })
     expect(h.current().tracks.every((t) => t.layers.length === 0)).toBe(true)
     expect(h.storedSnapshotsHoldLayer()).toBe(true)
   })
@@ -151,7 +210,7 @@ describe('storedSnapshotsHoldLayer', () => {
     const h = new History(withLayer(p0), { kind: 'User' }, gen())
     h.checkpoint('has a layer', { kind: 'User' }, gen())
     // Wipe the stack down to a layer-less head; the checkpoint still holds one.
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', affected: [], snapshot: p0 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', label_key: KEY, affected: [], snapshot: p0 })
     expect(h.storedSnapshotsHoldLayer()).toBe(true)
   })
 })
@@ -162,7 +221,7 @@ describe('History.replaceTrackFlagsEverywhere', () => {
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot so there's something to undo to
     const p1 = { ...h.current(), markers: [...h.current().markers] }
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'edit', affected: [], snapshot: p1 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'edit', label_key: KEY, affected: [], snapshot: p1 })
     h.replaceTrackFlagsEverywhere(tid, { locked: true })
     expect(h.current().tracks.find((t) => t.id === tid)!.locked).toBe(true)
     expect(h.len()).toBe(2) // not recorded
@@ -186,7 +245,7 @@ describe('History.replaceRoleFlagsEverywhere', () => {
     const p0 = blankProject(gen, 'h')
     const h = new History(p0, { kind: 'User' }, gen())
     const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     h.replaceRoleFlagsEverywhere('music', { muted: true })
     expect(h.current().audio_roles.music).toEqual({ gain_db: 0, muted: true, solo: false }) // head patched, defaults filled
     const earlier = h.undo()! // back to the Initial snapshot
@@ -215,7 +274,7 @@ describe('History.replaceMediaPoolEverywhere', () => {
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot (an unrelated edit) so there are two entries to patch
     const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
-    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     const id = '00000000-0000-0000-0000-0000000000aa'
     h.replaceMediaPoolEverywhere({ [id]: mediaItem(id) })
     expect(Object.keys(h.current().media_pool)).toEqual([id]) // head patched

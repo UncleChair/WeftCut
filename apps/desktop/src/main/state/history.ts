@@ -1,5 +1,6 @@
 // apps/desktop/src/main/state/history.ts
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
+import { HISTORY_SUMMARY, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -15,10 +16,25 @@ export interface RoleFlagsPatch { muted?: boolean | null; solo?: boolean | null 
 
 export interface HistoryEntry {
   op_id: Uuid; actor: Actor; timestamp: string; summary: string
+  /** The `HistorySummary.key` whose `.text` is `summary` — recorded alongside it
+   *  rather than looked up from it, so a reworded phrase cannot lose its key
+   *  (history-labels.ts). */
+  label_key: string
+  /** i18n interpolation values for `label_key`; absent for the phrases that take
+   *  none. The runtime data `summary` embeds inline travels here instead, so the
+   *  panel can rebuild the row in its own language. */
+  label_args?: Record<string, string | number>
   affected: EntityRef[]; snapshot: Project
 }
 interface NamedCheckpoint { id: Uuid; label: string; actor: Actor; created_at: string; snapshot: Project }
-export interface HistoryEntrySummary { op_id: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[] }
+export interface HistoryEntrySummary {
+  op_id: Uuid; actor: Actor; timestamp: string; summary: string; label_key: string
+  label_args?: Record<string, string | number>
+  affected: EntityRef[]
+  /** Names for `affected`, PARALLEL to it (same length, same order) and resolved
+   *  against this entry's own snapshot. */
+  entity_labels: EntityLabel[]
+}
 export interface HistoryView { ops: HistoryEntrySummary[]; cursor: number; len: number; checkpoints: Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>; lock_reason?: string }
 export interface HistoryStatus {
   cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string
@@ -32,6 +48,12 @@ export interface HistoryStatus {
 
 const DEFAULT_CAP = 200
 
+/** The 'Initial' entry's summary half — shared by the constructor and reset() so
+ *  the seed row is spelled once. */
+function seed(initial: Project): Pick<HistoryEntry, 'summary' | 'label_key' | 'affected' | 'snapshot'> {
+  return { summary: HISTORY_SUMMARY.initial.text, label_key: HISTORY_SUMMARY.initial.key, affected: [], snapshot: initial }
+}
+
 /** Ids/timestamps are injected by the actor (which owns the deterministic
  *  counter) rather than minted here. */
 export class History {
@@ -42,7 +64,7 @@ export class History {
   private lockReasonStr: string | null = null
 
   constructor(initial: Project, actor: Actor, opId: Uuid, timestamp = '<TS>') {
-    this.snapshots.push({ op_id: opId, actor, timestamp, summary: 'Initial', affected: [], snapshot: initial })
+    this.snapshots.push({ op_id: opId, actor, timestamp, ...seed(initial) })
     this.cursor = 0
   }
 
@@ -51,7 +73,7 @@ export class History {
    *  project swap: the prior project's snapshots/checkpoints reference a
    *  different project_id and are incoherent against the new state. */
   reset(initial: Project, actor: Actor, opId: Uuid, timestamp = '<TS>'): void {
-    this.snapshots = [{ op_id: opId, actor, timestamp, summary: 'Initial', affected: [], snapshot: initial }]
+    this.snapshots = [{ op_id: opId, actor, timestamp, ...seed(initial) }]
     this.cursor = 0
     this.checkpoints.clear()
     this.lockReasonStr = null
@@ -92,7 +114,8 @@ export class History {
   restoreCheckpoint(id: Uuid, opId: Uuid, timestamp: string, actor: Actor): Project | null {
     const cp = this.checkpoints.get(id)
     if (!cp) return null
-    this.record({ op_id: opId, actor, timestamp, summary: `Restored checkpoint '${cp.label}'`, affected: [], snapshot: cp.snapshot })
+    const s = restoredCheckpointSummary(cp.label)
+    this.record({ op_id: opId, actor, timestamp, summary: s.text, label_key: s.key, label_args: s.label_args, affected: [], snapshot: cp.snapshot })
     return cp.snapshot
   }
   listCheckpoints(): NamedCheckpoint[] {
@@ -185,7 +208,17 @@ export class History {
   view(limit: number): HistoryView {
     const total = this.snapshots.length
     const take = Math.min(limit, total)
-    const ops = this.snapshots.slice(total - take).map((e) => ({ op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, affected: e.affected }))
+    const start = total - take
+    // entity_labels resolves against STORED snapshots, never current() — an entry
+    // whose layer has since been deleted still names it. An entry stores the state
+    // AFTER its own op, so a delete is nameable only from its PREDECESSOR; the
+    // index is absolute because that predecessor may sit outside this window
+    // (history-labels.ts owns the fallback chain).
+    const ops = this.snapshots.slice(start).map((e, i) => ({
+      op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, label_key: e.label_key,
+      label_args: e.label_args, affected: e.affected,
+      entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[start + i - 1]?.snapshot ?? null, e.affected),
+    }))
     const checkpoints = this.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
     const v: HistoryView = { ops, cursor: this.cursor, len: total, checkpoints }
     if (this.lockReasonStr !== null) v.lock_reason = this.lockReasonStr

@@ -4,6 +4,7 @@ import type { Animated, AudioRole, Composition, Interpolation, LayerParams, Moti
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
+import { HISTORY_SUMMARY, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -128,8 +129,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  — trim/move/split/delete/group ops stay transition-blind — inside the same
    *  produce(), so the drop lands in the SAME snapshot as the edit (one undo
    *  restores both). add/update/remove_transition need no exemption: after
-   *  their apply the invariant holds by construction, so reconcile is a no-op. */
-  function commit<T>(summary: string, affected: EntityRef[], diff: DiffHint, recipe: (draft: Project) => T): T {
+   *  their apply the invariant holds by construction, so reconcile is a no-op.
+   *
+   *  `summary` is a `HistorySummary` (history-labels.ts), not a bare string: the
+   *  entry records its `.text` verbatim AND its `.key`, so the panel can
+   *  translate the row without an English-prose lookup.
+   *
+   *  `affected` takes a FUNCTION form for the add-shaped ops, whose entity ids
+   *  are minted inside the recipe and so cannot be named from the args. It runs
+   *  once, after validate — a rejected commit never sees ids from a draft that
+   *  was discarded. Its parameter must be ANNOTATED (the named `layerRef` /
+   *  markerRefs` helpers already are): arguments are checked left to right, so
+   *  the annotation is what fixes `T` — and the recipe's return type is then
+   *  checked against it, which is what stops a callback naming an id the recipe
+   *  never returned. */
+  function commit<T>(summary: HistorySummary, affected: EntityRef[] | ((value: T) => EntityRef[]), diff: DiffHint, recipe: (draft: Project) => T): T {
     let value!: T
     let droppedTransitions: DroppedTransition[] = []
     // produce: a throw inside the recipe aborts and discards the draft.
@@ -145,10 +159,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // (A no-op recipe can't dirty a transition, so reconcile never blocks this.)
     if (next === current()) return value
     runValidate(next)
+    const refs = typeof affected === 'function' ? affected(value) : affected
     const opId = idGen() // AFTER validate — failed validate consumes no op_id
     const ts = clock()
-    history.record({ op_id: opId, actor, timestamp: ts, summary, affected, snapshot: next })
-    emit({ op_id: opId, actor, timestamp: ts, summary, affected, new_snapshot: next, diff_hint: diff })
+    history.record({ op_id: opId, actor, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: next })
+    emit({ op_id: opId, actor, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: next, diff_hint: diff })
     logDroppedTransitions(droppedTransitions) // after record — a failed validate logs nothing
     return value
   }
@@ -182,9 +197,37 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
+  /** NON-recorded events only — these never reach history, so they carry no
+   *  label key and no affected refs. */
   function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }): void {
     const opId = idGen() // the unrecorded broadcast's own deterministic id
     emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
+  }
+
+  // ── affected-ref helpers. Every recorded commit names the entities it touched,
+  //    so the history panel can label the row and select on click; a ref set read
+  //    from an id-only arg comes off the PRE-mutation snapshot (same rule as
+  //    restyle_captions'). `EntityRef` has three variants and gains none: it is a
+  //    wire type the MCP resource exposes, and the renderer has no
+  //    selected-transition or selected-group model to receive one.
+  //
+  //    The SINGULAR three double as commit()'s function form — `commit(s, layerRef,
+  //    …)` names whatever layer id the recipe returned. ──
+  function layerRef(id: Uuid): EntityRef[] { return [{ kind: 'Layer', id }] }
+  function trackRef(id: Uuid): EntityRef[] { return [{ kind: 'Track', id }] }
+  function markerRef(id: Uuid): EntityRef[] { return [{ kind: 'Marker', id }] }
+  function layerRefs(ids: Uuid[]): EntityRef[] { return ids.map((id) => ({ kind: 'Layer', id })) }
+  function markerRefs(ids: Uuid[]): EntityRef[] { return ids.map((id) => ({ kind: 'Marker', id })) }
+  /** Both side layers of a transition — "this transition sits between these two".
+   *  Absent transition → `[]`; the apply then rejects and nothing records. */
+  function transitionSideRefs(id: Uuid): EntityRef[] {
+    const t = current().transitions.find((x) => x.id === id)
+    return t ? layerRefs([t.from_layer, t.to_layer]) : []
+  }
+  /** A group's member layers. Absent group → `[]` (the apply rejects). */
+  function groupMemberRefs(id: Uuid): EntityRef[] {
+    const g = current().groups.find((x) => x.id === id)
+    return g ? layerRefs(g.members) : []
   }
 
   // ── set_composition — the WHOLE composition envelope is setup, never editing:
@@ -364,7 +407,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function moveTrack(id: Uuid, newPosition: number): void {
     const curIdx = current().tracks.findIndex((t) => t.id === id)
     if (curIdx >= 0 && curIdx === newPosition) return // no-op: no record, no broadcast
-    commit('Moved track', [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
+    commit(HISTORY_SUMMARY.trackMove, [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
   }
 
   // ── update_track_flags — UNRECORDED.
@@ -431,7 +474,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       return
     }
     const affected: EntityRef[] = referencing.map((l) => ({ kind: 'Layer', id: l }))
-    commit(`Removed media ${id} and ${referencing.length} referencing layer(s)`, affected, { kind: 'Coarse' }, (d) => {
+    commit(removedMediaSummary(id, referencing.length), affected, { kind: 'Coarse' }, (d) => {
       for (const layerId of referencing) {
         for (const t of d.tracks) {
           const idx = t.layers.findIndex((l) => l.id === layerId)
@@ -446,7 +489,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    role's mix bus (default-filled when absent), override ONLY gain_db
   //    (muted/solo preserved), reinsert. No affected entities, Coarse hint. ──
   function setRoleGain(role: string, gainDb: number): void {
-    commit(`Set ${role} role gain`, [], { kind: 'Coarse' }, (d) => {
+    commit(roleGainSummary(role), [], { kind: 'Coarse' }, (d) => {
       const cur = d.audio_roles[role]
       d.audio_roles[role] = { gain_db: gainDb, muted: cur?.muted ?? false, solo: cur?.solo ?? false }
     })
@@ -547,20 +590,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'Motif': params = { kind: 'Motif', motif_id: a.motif_id as string, motif_version: a.motif_version as number, props: (a.props ?? {}) as Record<string, unknown>, src_in_us: 0, transform: defaultTransform(), opacity: { mode: 'Static', value: 1 } }; break
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
           }
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
           return { ok: true, value: id }
         }
-        case 'add_track': return { ok: true, value: commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null)) }
-        case 'add_marker': return { ok: true, value: commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
-        case 'move_layer': commit('Moved layer', [], { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
-        case 'trim_layer': commit('Trimmed layer', [], { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
-        case 'delete_layer': commit('Deleted layer', [], { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
-        case 'duplicate_layer': return { ok: true, value: commit('Duplicated layer', [], { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }
+        case 'add_track': return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null)) }
+        case 'add_marker': return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
+        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        case 'delete_layer': commit(HISTORY_SUMMARY.layerDelete, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
+        case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }
         case 'set_composition': setComposition(a); return { ok: true, value: null }
         case 'undo': undo(); return { ok: true, value: null }
         case 'redo': redo(); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
-        case 'split_layer': return { ok: true, value: commit('Split layer', [], { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_group as boolean) ?? false)) }
+        case 'split_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerSplit, (s: { left: Uuid; right: Uuid }) => layerRefs([s.left, s.right]), { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_group as boolean) ?? false)) }
         // split_layer_multi — coalesced multi-split for the auto_split_by_shot
         // hybrid: split `layer` at every ascending, strictly-interior timeline
         // time in `at_t_us_list` inside ONE commit, so a whole shot-split is a
@@ -581,7 +624,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = a.layer as Uuid
           const ats = (a.at_t_us_list as number[]) ?? []
           const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
-          return { ok: true, value: commit('Split layer by shots', [{ kind: 'Layer', id: layer }], { kind: 'Coarse' }, (d) => {
+          return { ok: true, value: commit(HISTORY_SUMMARY.layerSplitByShots, layerRefs, { kind: 'Coarse' }, (d) => {
             let currentId = layer
             const ids: Uuid[] = []
             for (const at of ats) {
@@ -618,44 +661,44 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // default to the shot-marker style. Returns the new marker ids in order.
         case 'add_markers': {
           const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba }>) ?? []
-          return { ok: true, value: commit('Added shot markers', [], { kind: 'Coarse' }, (d) =>
+          return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
             rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }))) }
         }
-        case 'groups_create': return { ok: true, value: commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
-        case 'groups_dissolve': commit('Dissolved group', [], { kind: 'Coarse' }, (d) => applyGroupsDissolve(d, a.group as Uuid)); return { ok: true, value: null }
-        case 'groups_add_members': commit('Added group members', [], { kind: 'Coarse' }, (d) => applyGroupsAddMembers(d, a.group as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
-        case 'groups_remove_members': commit('Removed group members', [], { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
-        case 'groups_rename': commit('Renamed group', [], { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
-        case 'update_layer': commit('Updated layer', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
+        case 'groups_create': return { ok: true, value: commit(HISTORY_SUMMARY.groupCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
+        case 'groups_dissolve': commit(HISTORY_SUMMARY.groupDissolve, groupMemberRefs(a.group as Uuid), { kind: 'Coarse' }, (d) => applyGroupsDissolve(d, a.group as Uuid)); return { ok: true, value: null }
+        case 'groups_add_members': commit(HISTORY_SUMMARY.groupAddMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsAddMembers(d, a.group as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
+        case 'groups_remove_members': commit(HISTORY_SUMMARY.groupRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
+        case 'groups_rename': commit(HISTORY_SUMMARY.groupRename, groupMemberRefs(a.group as Uuid), { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
+        case 'update_layer': commit(HISTORY_SUMMARY.layerUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
         // The three commands below end with the scale-link invariant check
         // (mutations/scaleLink.ts): result-based, so it runs once per COMMIT —
         // the plural batch is legitimately mid-divergence between its scale_x
         // and scale_y entries, and a per-entry check would unlink every linked
         // fan-out write.
-        case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
-        case 'update_layer_param_track': commit('Keyframed layer param', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
-        case 'update_layer_param_tracks': commit('Keyframed layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
-        case 'set_scale_linked': commit((a.linked as boolean) ? 'Linked scale' : 'Unlinked scale', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applySetScaleLinked(d, idGen, a.layer as Uuid, a.linked as boolean)); return { ok: true, value: null }
+        case 'update_layer_params': commit(HISTORY_SUMMARY.layerUpdateParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'update_layer_param_track': commit(HISTORY_SUMMARY.layerKeyframeParam, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'update_layer_param_tracks': commit(HISTORY_SUMMARY.layerKeyframeParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'set_scale_linked': commit((a.linked as boolean) ? HISTORY_SUMMARY.layerScaleLink : HISTORY_SUMMARY.layerScaleUnlink, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applySetScaleLinked(d, idGen, a.layer as Uuid, a.linked as boolean)); return { ok: true, value: null }
         // Clearing the pin is the inverse of set_composition{duration_us} and rides
         // the same unrecorded fan-out. Per snapshot it means "unpin, then refit to
         // MY OWN layer high-water mark" — the snapshot with the long layer keeps its
         // long duration, the one with none collapses to zero. A single fitted value
         // copied everywhere would be wrong for every snapshot but the current.
         case 'fit_composition_to_layers': return { ok: true, value: fitCompositionToLayers() }
-        case 'update_marker': commit('Updated marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
-        case 'remove_marker': commit('Removed marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
-        case 'delete_track': commit('Deleted track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
+        case 'update_marker': commit(HISTORY_SUMMARY.markerUpdate, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
+        case 'remove_marker': commit(HISTORY_SUMMARY.markerRemove, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
+        case 'delete_track': commit(HISTORY_SUMMARY.trackDelete, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
         case 'move_track': moveTrack(a.track as Uuid, parseNum(a.new_position, 'new_position')); return { ok: true, value: null }
         case 'update_track_flags': updateTrackFlags(a.track as Uuid, a.patch as TrackFlagsPatch); return { ok: true, value: null }
-        case 'add_effect': return { ok: true, value: commit('Added effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)) }
-        case 'update_effect': commit('Updated effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
-        case 'move_effect': commit('Reordered effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, parseNum(a.new_index, 'new_index'))); return { ok: true, value: null }
-        case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
+        case 'add_effect': return { ok: true, value: commit(HISTORY_SUMMARY.effectAdd, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)) }
+        case 'update_effect': commit(HISTORY_SUMMARY.effectUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
+        case 'move_effect': commit(HISTORY_SUMMARY.effectReorder, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, parseNum(a.new_index, 'new_index'))); return { ok: true, value: null }
+        case 'remove_effect': commit(HISTORY_SUMMARY.effectRemove, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
         case 'add_transition': {
           // kind/direction parsed BEFORE commit — a bad enum combo burns no
           // op_id. Absent kind defaults to Crossfade.
           const kind = parseTransitionKind(a.kind ?? 'Crossfade', a.direction)
-          return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind)) }
+          return { ok: true, value: commit(HISTORY_SUMMARY.transitionAdd, layerRefs([a.from as Uuid, a.to as Uuid]), { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind)) }
         }
         case 'update_transition': {
           const kind = parseTransitionKindOpt(a.kind, a.direction)
@@ -663,16 +706,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const dur = parseNumOpt(a.duration_us, 'duration_us')
           if (dur !== undefined) patch.duration_us = dur
           if (kind !== undefined) patch.kind = kind
-          commit('Updated transition', [], { kind: 'Coarse' }, (d) => applyUpdateTransition(d, a.transition as Uuid, patch))
+          commit(HISTORY_SUMMARY.transitionUpdate, transitionSideRefs(a.transition as Uuid), { kind: 'Coarse' }, (d) => applyUpdateTransition(d, a.transition as Uuid, patch))
           return { ok: true, value: null }
         }
-        case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
+        case 'remove_transition': commit(HISTORY_SUMMARY.transitionRemove, transitionSideRefs(a.transition as Uuid), { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
         // add_media_item — insert a FULL probed MediaItem (the import_media
         // hybrid: Rust probes/hashes, the TS host applies the write). Distinct from
         // `add_media` (template-only); the caller passes the serialized MediaItem.
         case 'add_media_item': return { ok: true, value: addMediaItem(a.media as MediaItem) }
-        case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
+        case 'separate_audio': return { ok: true, value: commit(HISTORY_SUMMARY.layerSeparateAudio, (audioId: Uuid) => layerRefs([a.layer as Uuid, audioId]), { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
         case 'set_media_hash': setMediaHash(a.media as Uuid, a.file_hash_blake3 as string); return { ok: true, value: null }
@@ -680,19 +723,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
         case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null; prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null }); return { ok: true, value: null }
-        case 'add_caption_track': return { ok: true, value: commit('Added caption track', [], { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
+        case 'add_caption_track': return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
         case 'restyle_captions': {
           // Project-wide: one commit over EVERY caption-role track, so overlapping
           // caption lanes restyle as a single undo entry. Affected refs are read
           // from the pre-mutation snapshot (same tracks the recipe patches).
           const captionRefs: EntityRef[] = current().tracks.filter((t) => t.role === 'Caption').map((t) => ({ kind: 'Track', id: t.id }))
-          commit('Restyled captions', captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch))
+          commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch))
           return { ok: true, value: null }
         }
         case 'rebind_motif': {
           const updates = a.updates as MotifRebindEntry[]
           const affected: EntityRef[] = updates.map((u) => ({ kind: 'Layer', id: u.layer_id }))
-          return { ok: true, value: commit('Rebound motif layers', affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
+          return { ok: true, value: commit(HISTORY_SUMMARY.layerRebindMotif, affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
         }
         case 'replace_state': {
           // Test vehicle — builds a blank from the args; production callers
@@ -731,17 +774,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
           if (trackId !== null) {
             const params = prodColorParams(wireArgs, current().composition)
-            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
           }
           // No free track — create "Overlay" in its OWN commit (the track add is a
           // separate commit, so it gets its own op_id), THEN add the layer in a
           // second commit. Two op_ids.
-          const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
+          const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, 'Overlay'))
           const params = prodColorParams(wireArgs, current().composition)
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
         }
@@ -753,14 +796,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
           const params = prodTextParams(wireArgs)
           if (trackId !== null) {
-            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
           }
           // No free track — same two-commit pattern as add_color_layer above.
-          const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
+          const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, 'Overlay'))
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
         }
@@ -775,20 +818,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // source track and following it with a second move commit.
           if (wireArgs.targetTrackId !== undefined && wireArgs.targetTrackId !== null) {
             const targetTrackId = parseUuid(wireArgs.targetTrackId, 'targetTrackId')
-            const id = commit('Duplicated layer', [], { kind: 'Coarse' }, (d) =>
+            const id = commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) =>
               applyPasteLayer(d, idGen, sourceId, targetTrackId, requestedStart))
             return { ok: true, value: id }
           }
           const interval = pasteLayerInterval(current(), sourceId, requestedStart)
           const trackId = pickFreeOverlayTrack(current(), interval.tStartUs, interval.tEndUs)
           if (trackId !== null) {
-            const id = commit('Pasted layer', [], { kind: 'Coarse' }, (d) =>
+            const id = commit(HISTORY_SUMMARY.layerPaste, layerRef, { kind: 'Coarse' }, (d) =>
               applyPasteLayer(d, idGen, sourceId, trackId, requestedStart))
             return { ok: true, value: id }
           }
-          const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
+          const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, 'Overlay'))
-          const id = commit('Pasted layer', [], { kind: 'Coarse' }, (d) =>
+          const id = commit(HISTORY_SUMMARY.layerPaste, layerRef, { kind: 'Coarse' }, (d) =>
             applyPasteLayer(d, idGen, sourceId, newTrackId, requestedStart))
           return { ok: true, value: id }
         }
@@ -801,12 +844,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const { params, durationUs, autoPairAudio } = prodMediaLayer(wireArgs, current())
           const t1 = t0 + durationUs
-          const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+          const videoId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, trackId, params, t0, t1))
           if (autoPairAudio !== null) {
-            const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            const audioId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, autoPairAudio, t0, t1))
-            commit('Created group', [], { kind: 'Coarse' }, (d) =>
+            commit(HISTORY_SUMMARY.groupCreate, layerRefs([videoId, audioId]), { kind: 'Coarse' }, (d) =>
               applyGroupsCreate(d, idGen, [videoId, audioId], null, false))
           }
           return { ok: true, value: videoId }
@@ -825,13 +868,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
               { color: demoColor(firstTrack.layers.length) },
               snap.composition,
             )
-            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, firstTrack.id, params, t0, t1))
             return { ok: true, value: id }
           }
           // No tracks at all — create "Track" then add layer inside one commit.
           // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one resolves the track in its own commit, so the track add gets its own op_id.
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, 'Track')
             const t0 = 0
             const t1 = 2_000_000
@@ -859,12 +902,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
               shadow: null, outline: null, intro: null, outro: null,
               backend_hint: 'DrawText',
             }
-            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, lastTrack.id, params, t0, t1))
             return { ok: true, value: id }
           }
           // No tracks at all — same unreachable single-commit case as add_demo_color_layer.
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, 'Overlay')
             const params: LayerParams = {
               kind: 'Text', content: 'TEXT',
@@ -901,8 +944,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
           // Two-commit: if no track_id → mint Overlay track FIRST, THEN Motif layer.
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : null
-          const track = trackId ?? commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
-          const layerId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
+          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
+          const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
           return { ok: true, value: layerId }
         }
         default:
@@ -961,7 +1004,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_color_layer': {
           const p = mcpDef('add_color_layer').parseDedicated!(a)
           const params = colorParams(p.color as Rgba, (p.width as number | undefined) ?? 1920, (p.height as number | undefined) ?? 1080)
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, p.track as string, params, p.t_start_us as number, p.t_end_us as number))
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, p.track as string, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolText(id) }
         }
         case 'add_video_layer': {
@@ -975,13 +1018,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const snap = current()
           const item = snap.media_pool[media]
           if (item?.kind === 'Image') {
-            const imageId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
+            const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
             return { ok: true, result: toolText(imageId) }
           }
           const vParams = videoClipParams(media, srcIn, srcOut)
           const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.kind === 'Video') && (item.metadata.audio != null)
           if (!shouldPair) {
-            const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
+            const videoId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
             return { ok: true, result: toolText(videoId) }
           }
           // Paired A/V: ONE commit — video + dialogue audio on the SAME track
@@ -992,7 +1035,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // video on the timeline when the audio placement fails.
           const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
           try {
-            const ids = commit('Added A/V pair', [], { kind: 'Coarse' }, (d) => {
+            const ids = commit(HISTORY_SUMMARY.layerAddAvPair, (r: { video_layer_id: Uuid; audio_layer_id: Uuid; group_id: Uuid }) => layerRefs([r.video_layer_id, r.audio_layer_id]), { kind: 'Coarse' }, (d) => {
               const videoId = applyAddLayer(d, idGen, track, vParams, t0, t1)
               const audioId = applyAddLayer(d, idGen, track, aParams, t0, t1)
               const groupId = applyGroupsCreate(d, idGen, [videoId, audioId], null, false)
@@ -1036,7 +1079,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const tUs = p.t_us as number
           const endT = (p.end_t_us as number | undefined) ?? null
           const label = p.label as string
-          const id = commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color))
+          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color))
           return { ok: true, result: toolText(id) }
         }
         case 'split_layer': {
@@ -1204,8 +1247,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
           const trackId = (p.track_id as string | null | undefined) ?? null
-          const track = trackId ?? commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
-          const layerId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
+          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
+          const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
           return { ok: true, result: toolText(layerId) }
         }
       }

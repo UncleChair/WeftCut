@@ -1176,6 +1176,71 @@ const enUS = {
     op_state_Ok: "Done",
     op_state_Err: "Failed",
   },
+  // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
+  // main/state/history-labels.ts, which owns the English source text. The three
+  // templated summaries (media.remove_cascade, audio.set_role_gain,
+  // checkpoint.restore) take their `{{…}}` values from the entry's `label_args`;
+  // history-labels.test.ts gates the placeholders against what each builder
+  // actually supplies, so one can never render literally.
+  history: {
+    initial: "Initial",
+    layer: {
+      add: "Added layer",
+      paste: "Pasted layer",
+      duplicate: "Duplicated layer",
+      move: "Moved layer",
+      trim: "Trimmed layer",
+      split: "Split layer",
+      split_by_shots: "Split layer by shots",
+      delete: "Deleted layer",
+      update: "Updated layer",
+      update_params: "Updated layer params",
+      keyframe_param: "Keyframed layer param",
+      keyframe_params: "Keyframed layer params",
+      scale_link: "Linked scale",
+      scale_unlink: "Unlinked scale",
+      separate_audio: "Separated audio",
+      add_av_pair: "Added A/V pair",
+      rebind_motif: "Rebound motif layers",
+    },
+    track: {
+      add: "Added track",
+      delete: "Deleted track",
+      move: "Moved track",
+      add_caption: "Added caption track",
+    },
+    marker: {
+      add: "Added marker",
+      add_shots: "Added shot markers",
+      update: "Updated marker",
+      remove: "Removed marker",
+    },
+    effect: {
+      add: "Added effect",
+      update: "Updated effect",
+      reorder: "Reordered effect",
+      remove: "Removed effect",
+    },
+    transition: {
+      add: "Added transition",
+      update: "Updated transition",
+      remove: "Removed transition",
+    },
+    group: {
+      create: "Created group",
+      dissolve: "Dissolved group",
+      add_members: "Added group members",
+      remove_members: "Removed group members",
+      rename: "Renamed group",
+    },
+    caption: { restyle: "Restyled captions" },
+    media: {
+      remove_cascade:
+        "Removed media {{media}} and {{count}} referencing layer(s)",
+    },
+    audio: { set_role_gain: "Set {{role}} role gain" },
+    checkpoint: { restore: "Restored checkpoint “{{label}}”" },
+  },
   // Display labels for Rust-side enum discriminants. Keep keys lowercase so
   // `t("kinds." + value.toLowerCase())` works directly.
   kinds: {
