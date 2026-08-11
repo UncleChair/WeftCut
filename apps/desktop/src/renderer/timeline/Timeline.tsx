@@ -218,6 +218,7 @@ export function Timeline({
     expandedTracks,
     toggleExpanded,
     viewportWidthPx,
+    zoomBySteps,
   } = useTimelineView({ rootRef, tracks, durationUs });
 
   // Horizontal scroll-to-time for palette jumps.
@@ -491,6 +492,21 @@ export function Timeline({
     [slipSelectedAudio],
   );
 
+  // ── Keyboard zoom, anchored on the playhead ────────────────────────────────
+  // Read at press time rather than subscribed: the playhead moves once per
+  // composition frame and this component is the whole timeline tree, so a
+  // subscription here would re-render all of it during playback (the regression
+  // `state/timelineScrollStore.ts` guards). A one-off read is also the only
+  // correct one — the anchor is where the playhead is when the key goes down.
+  const handleZoomTimelineIn = useCallback(
+    () => zoomBySteps(1, playheadTimeUs()),
+    [zoomBySteps],
+  );
+  const handleZoomTimelineOut = useCallback(
+    () => zoomBySteps(-1, playheadTimeUs()),
+    [zoomBySteps],
+  );
+
   useShortcuts({
     overrides: shortcutOverrides,
     handlers: {
@@ -501,6 +517,8 @@ export function Timeline({
       nudgeAudioMsBack: handleNudgeAudioMsBack,
       nudgeAudioMsForward: handleNudgeAudioMsForward,
       resyncAudioToVideo: handleResyncAudioToVideo,
+      zoomTimelineIn: handleZoomTimelineIn,
+      zoomTimelineOut: handleZoomTimelineOut,
     },
   });
 
@@ -546,6 +564,18 @@ export function Timeline({
       actionId: "resyncAudioToVideo",
       labelKey: ACTION_DEFS.resyncAudioToVideo.labelKey,
       run: handleResyncAudioToVideo,
+    },
+    {
+      id: "zoomTimelineIn",
+      actionId: "zoomTimelineIn",
+      labelKey: ACTION_DEFS.zoomTimelineIn.labelKey,
+      run: handleZoomTimelineIn,
+    },
+    {
+      id: "zoomTimelineOut",
+      actionId: "zoomTimelineOut",
+      labelKey: ACTION_DEFS.zoomTimelineOut.labelKey,
+      run: handleZoomTimelineOut,
     },
   ]);
 

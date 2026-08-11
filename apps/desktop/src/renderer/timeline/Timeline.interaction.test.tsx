@@ -1537,3 +1537,64 @@ describe("Timeline follow-playhead", () => {
     expect(timelineScrollLeftPx()).toBe(0);
   });
 });
+
+/// Integration cover for the keyboard-zoom wiring — the step ladder and the
+/// anchor are unit-tested (`zoom.test.ts`, `hooks/useTimelineView.test.ts`).
+/// What only shows up here is whether the keys reach the handler at all: the
+/// action is dispatched by Timeline's own `useShortcuts` instance, and its
+/// effect on the view is a re-laid-out canvas.
+describe("Timeline keyboard zoom", () => {
+  const LANE_VIEWPORT_PX = 1000;
+  let clientWidth: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    clearLayerSelection();
+    // Deliberately left null: these bindings are UNSCOPED, so they have to fire
+    // with no panel owning the focused region.
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    setTimelineScrollLeftPx(0);
+    clientWidth = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);
+  });
+  afterEach(() => {
+    clientWidth.mockRestore();
+    cleanup();
+  });
+
+  // 60 s @ the mocked 80 px/s view state = a 4800 px canvas, plus the post-roll
+  // padding (35 % of the 1000 px lane) = 5150 px. Each press scales the content
+  // half by two; the padding is a function of the lane, so it doesn't move.
+  const LONG = { durationUs: 60_000_000 };
+  const canvasWidth = (container: HTMLElement): string =>
+    (container.querySelector('[data-testid="timeline-canvas"]') as HTMLElement)
+      .style.width;
+  const press = (key: string, target: Element | Window = window) =>
+    fireEvent.keyDown(target, { key, code: key === "=" ? "Equal" : "Minus" });
+
+  it("zooms in on = and back out on -", () => {
+    const { container } = renderTimeline(LONG);
+    expect(canvasWidth(container)).toBe("5150px");
+
+    press("=");
+    expect(canvasWidth(container)).toBe("9950px");
+
+    press("-");
+    expect(canvasWidth(container)).toBe("5150px");
+  });
+
+  // Bare keys must stay typeable: `-` is a character a numeric inspector field
+  // needs, and the dispatcher's default for a non-chord binding is to stand
+  // down inside a text editor. Cheap guard on a property `defs.ts` claims.
+  it("stays out of the way while a text field is focused", () => {
+    const { container } = renderTimeline(LONG);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+
+    press("=", input);
+    expect(canvasWidth(container)).toBe("5150px");
+
+    input.remove();
+  });
+});

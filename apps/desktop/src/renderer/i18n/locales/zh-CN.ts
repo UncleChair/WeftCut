@@ -277,6 +277,8 @@ const zhCN: Resources = {
     focus_log_search: "聚焦活动日志搜索",
     toggle_display_mode: "切换 A/B 轨 / 显示全部",
     toggle_follow_playhead: "切换跟随播放头",
+    zoom_timeline_in: "放大时间线",
+    zoom_timeline_out: "缩小时间线",
     focus_next_panel: "聚焦下一个面板",
     focus_previous_panel: "聚焦上一个面板",
     toggle_maximize_panel: "最大化 / 还原面板",

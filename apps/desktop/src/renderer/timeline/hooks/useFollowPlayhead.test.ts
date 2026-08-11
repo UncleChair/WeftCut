@@ -88,8 +88,8 @@ describe("useFollowPlayhead", () => {
     expect(rootRef.el.scrollLeft).toBe(3920);
   });
 
-  // Zoom is cursor-anchored by design (`useTimelineView`). Re-anchoring on a
-  // pxPerSec change would silently override that on every wheel tick.
+  // Zoom picks its own anchor (`timeline/zoom.ts`). Re-anchoring on a pxPerSec
+  // change would silently override that on every wheel tick.
   it("does not re-anchor when only the zoom changes", () => {
     const rootRef = root();
     const { rerender } = renderHook(

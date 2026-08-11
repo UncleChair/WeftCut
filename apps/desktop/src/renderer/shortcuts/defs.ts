@@ -26,6 +26,8 @@ export type ActionId =
   | "focusLogSearch"
   | "toggleDisplayMode"
   | "toggleFollowPlayhead"
+  | "zoomTimelineIn"
+  | "zoomTimelineOut"
   | "focusNextPanel"
   | "focusPreviousPanel"
   | "toggleMaximizePanel"
@@ -146,6 +148,28 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // hundreds of times a session, and this is a preference they flip when a
   // manual inspection needs the view to hold still.
   toggleFollowPlayhead: { defaultKeys: ["Shift+F"],        labelKey: "actions.toggle_follow_playhead" },
+  // Timeline zoom, at the Premiere/FCP7 key positions. One press is one
+  // doubling, anchored on the playhead (`timeline/zoom.ts`) — the wheel gesture
+  // anchors the cursor, and a key press has no pointer to anchor.
+  //
+  // LANDMINE: these cannot be `Mod+=` / `Mod+-`, the other half of the
+  // convention. `hardenWindow` (main/windows.ts) consumes every Ctrl/Cmd
+  // +/-/0 at `before-input-event` to kill Chromium's page zoom, which shrinks
+  // the whole application — and that `preventDefault()` stops the keydown from
+  // reaching the renderer at all, so the binding would look correct in Settings
+  // → Keyboard and never fire.
+  //
+  // Bare keys, so they stay dead while a text field is focused (the default for
+  // non-chord bindings) and the user can still type a minus into a numeric
+  // field. UNSCOPED like the transport keys rather than timeline-scoped: the
+  // timeline is the only zoomable surface in the app, so `=` means the same
+  // thing with the preview or the media pool focused, and the handler is
+  // registered by Timeline — with the panel closed the key is inert anyway.
+  //
+  // Not `repeatable`: a held key would cross the whole range in a third of a
+  // second. The wheel is the gesture for sweeping through scales.
+  zoomTimelineIn:  { defaultKeys: ["="],                   labelKey: "actions.zoom_timeline_in" },
+  zoomTimelineOut: { defaultKeys: ["-"],                   labelKey: "actions.zoom_timeline_out" },
   focusNextPanel: {
     defaultKeys: ["Ctrl+Shift+Period"],
     labelKey: "actions.focus_next_panel",

@@ -177,6 +177,42 @@ fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
 ops) and the read surface (`groups` on `project://current`; there is no
 `groups_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
 
+## Timeline zoom
+
+Two gestures scale the timeline, differing in one thing — what they hold still.
+**Ctrl+wheel** is continuous and holds the time under the **cursor**. **`=` /
+`-`** step one doubling per press and hold the **playhead**, because a key press
+has no pointer to hold. Geometry in
+`apps/desktop/src/renderer/timeline/zoom.ts`; the state, the bounds and the one
+`scrollLeft` write in `hooks/useTimelineView.ts`.
+
+Both share the same range. The ceiling is a flat 2000 px/s. The floor is
+computed per gesture: **fit-to-project** — the scale at which the project extent
+(before the post-roll padding) exactly fills the lane — so zooming out always
+stops at the whole timeline and never past it, and the stop widens as the
+project grows or the panel resizes. Pressing into a stop is a no-op, not a
+nudge: the view doesn't move.
+
+**When the playhead is off screen**, a keyboard zoom anchors the lane's centre
+instead. A zoom is a magnification, not a seek — a user who scrolled to a
+distant region and pressed `-` to widen it wants *that* region to widen. The
+complement is the property the anchoring exists for: a playhead that is on
+screen **stays** on screen, at every rung, because holding its offset from the
+lane's left edge survives both end-stop clamps.
+
+`=` / `-` rather than the `Mod+=` / `Mod+-` half of the convention, and this is a
+hard constraint rather than a preference: `hardenWindow`
+(`src/main/windows.ts`) consumes every Ctrl/Cmd +/−/0 at `before-input-event` to
+kill Chromium's page zoom, which would otherwise shrink the whole application —
+and that `preventDefault()` stops the keydown from reaching the renderer at all.
+A chorded binding would look right in Settings → Keyboard and never fire. Bare
+keys also stay dead inside text fields, so a minus still types into a numeric
+inspector field.
+
+Both are real commands (search palette, Settings → Keyboard, agent-callable) and
+are **unscoped** — the timeline is the only zoomable surface in the app, so `=`
+means the same thing whichever panel holds focus.
+
 ## Follow playhead
 
 The timeline keeps the playhead on screen by **paging** its view: when the
@@ -202,9 +238,11 @@ repeats, and a lead-sized jump would re-page on the next press.
 edit-point steps, timecode entry, palette navigation) follow. Two things
 deliberately don't: a **ruler scrub drag**, because the user is aiming at a
 point they can see and paging would move the target out from under the pointer;
-and **zoom**, which stays cursor-anchored (`hooks/useTimelineView.ts`) — the
+and **zoom**, which owns its own anchor ([Timeline zoom](#timeline-zoom)) — the
 follow only ever reacts to the playhead moving, never to the view changing
-shape around a stationary one.
+shape around a stationary one. That split is why a wheel tick cannot silently
+re-anchor on the playhead, and why the keyboard zoom's playhead anchor is the
+zoom's decision rather than the follow reaching in.
 
 App-level pref `timeline_follow_playhead` (default on), so it is one answer per
 machine rather than per project: View → Follow playhead, `Shift+F`, or the

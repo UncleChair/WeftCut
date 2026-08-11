@@ -282,6 +282,8 @@ const enUS = {
     focus_log_search: "Focus activity-log search",
     toggle_display_mode: "Toggle A/B Roll / Show All",
     toggle_follow_playhead: "Toggle follow playhead",
+    zoom_timeline_in: "Zoom timeline in",
+    zoom_timeline_out: "Zoom timeline out",
     focus_next_panel: "Focus next Panel",
     focus_previous_panel: "Focus previous Panel",
     toggle_maximize_panel: "Maximize / restore Panel",

@@ -5,14 +5,28 @@ import {
   HEADER_COL_PX,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC_FLOOR,
-  MIN_TIMELINE_SECONDS,
   VIEW_SAVE_DEBOUNCE_MS,
   clamp,
 } from "../geometry";
+import {
+  fitPxPerSec,
+  steppedPxPerSec,
+  zoomAnchorX,
+  zoomedScrollLeft,
+} from "../zoom";
+
+/// The lane's visible width — `clientWidth` minus the sticky header column,
+/// which overlays the left edge and hides content under it. Read off the node
+/// per gesture rather than from `viewportWidthPx` state, so a press or a wheel
+/// tick arriving before the ResizeObserver's re-measure has committed still
+/// anchors against the lane the user is actually looking at.
+function laneWidthPx(root: HTMLDivElement): number {
+  return root.clientWidth - HEADER_COL_PX;
+}
 
 /// Timeline view state: zoom (px/sec) + per-track heights, persisted to
-/// `view.json` via `view_state_get`/`view_state_set`, plus the
-/// Ctrl+wheel cursor-anchored zoom machinery.
+/// `view.json` via `view_state_get`/`view_state_set`, plus both zoom gestures —
+/// Ctrl+wheel anchored on the cursor, keys anchored on the playhead.
 export function useTimelineView(opts: {
   rootRef: React.RefObject<HTMLDivElement | null>;
   tracks: TrackSummary[];
@@ -25,6 +39,10 @@ export function useTimelineView(opts: {
   expandedTracks: Set<string>;
   toggleExpanded: (id: string) => void;
   viewportWidthPx: number;
+  /// Step the zoom by `steps` doublings (negative zooms out), holding
+  /// `anchorTimeUs` still — the keyboard path. Stable identity: safe to hand
+  /// straight to a shortcut handler.
+  zoomBySteps: (steps: number, anchorTimeUs: number) => void;
 } {
   const { rootRef, tracks, durationUs } = opts;
   const [pxPerSec, setPxPerSec] = useState<number>(DEFAULT_PX_PER_SEC);
@@ -131,14 +149,15 @@ export function useTimelineView(opts: {
     // prunes the stale id even if neither zoom nor height changed.
   }, [pxPerSec, trackHeights, expandedTracks, tracks]);
 
-  // -------- Ctrl+wheel zoom (cursor-anchored) --------
+  // -------- Zoom: Ctrl+wheel (cursor-anchored), keys (playhead-anchored) --------
 
   // Re-anchoring happens in a layout effect, after React has re-rendered with
-  // the new px/sec. Doing it inline in the wheel handler reads stale state and
-  // produces a one-frame jitter.
-  const wheelPendingRef = useRef<{
+  // the new px/sec. Doing it inline in the gesture handler reads stale state and
+  // produces a one-frame jitter. Both gestures queue the same record here; all
+  // that distinguishes them is which x they chose to hold.
+  const zoomPendingRef = useRef<{
     scrollLeft: number;
-    cursorXInViewport: number;
+    anchorXInViewport: number;
     oldPxPerSec: number;
   } | null>(null);
 
@@ -157,6 +176,11 @@ export function useTimelineView(opts: {
       // column, which doesn't scroll — measure the cursor from the
       // scrolling body's left edge instead so the re-anchor math
       // holds.
+      //
+      // Taken as the anchor verbatim, NOT through `zoomAnchorX`: the cursor is
+      // the anchor by definition, wherever it is. Over the header column it
+      // reads negative, which anchors a time just left of the lane — and that
+      // is the honest answer for a gesture the user aimed there.
       const cursorXInViewport = e.clientX - rect.left - HEADER_COL_PX;
       // deltaMode varies by device — normalise lines/pages to pixels
       // before computing the zoom factor.
@@ -169,24 +193,14 @@ export function useTimelineView(opts: {
       // ones don't snap-jump. Negative px (scrolling up) zooms in.
       const factor = Math.exp(-px * 0.001);
       const oldPxPerSec = pxPerSecRef.current;
-      // Lower bound = "fit-to-viewport" zoom — the level at which the
-      // project extent (before the deliberate post-roll edit padding)
-      // fills the visible width. Recomputed every tick so it tracks
-      // viewport resize + project growth.
-      const viewportWidth = root.clientWidth - HEADER_COL_PX;
-      const totalSec = Math.max(
-        durationUsRef.current / 1_000_000,
-        MIN_TIMELINE_SECONDS,
-      );
-      const fitMin = Math.max(
-        MIN_PX_PER_SEC_FLOOR,
-        viewportWidth / totalSec,
-      );
+      // Lower bound = "fit-to-viewport" zoom (`zoom.fitPxPerSec`), recomputed
+      // every tick so it tracks viewport resize + project growth.
+      const fitMin = fitPxPerSec(laneWidthPx(root), durationUsRef.current);
       const newPxPerSec = clamp(oldPxPerSec * factor, fitMin, MAX_PX_PER_SEC);
       if (newPxPerSec === oldPxPerSec) return;
-      wheelPendingRef.current = {
+      zoomPendingRef.current = {
         scrollLeft: root.scrollLeft,
-        cursorXInViewport,
+        anchorXInViewport: cursorXInViewport,
         oldPxPerSec,
       };
       setPxPerSec(newPxPerSec);
@@ -197,18 +211,53 @@ export function useTimelineView(opts: {
     };
   }, [rootRef]);
 
-  // Re-anchor scroll position so the time under the cursor stays put.
-  // Runs synchronously after the layout flip so there's no flash.
+  /// Keyboard zoom. Same bounds and same re-anchor as the wheel; the anchor is
+  /// the playhead instead of the cursor, and the step is a doubling instead of
+  /// a wheel delta (`zoom.ts` owns both). The caller passes the time to hold
+  /// rather than the hook reading the playhead store, which keeps the view
+  /// state's one dependency the project and leaves "anchor the playhead" a
+  /// decision the call site can see.
+  const zoomBySteps = useCallback(
+    (steps: number, anchorTimeUs: number) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const oldPxPerSec = pxPerSecRef.current;
+      const viewportPx = laneWidthPx(root);
+      const newPxPerSec = steppedPxPerSec(
+        oldPxPerSec,
+        steps,
+        fitPxPerSec(viewportPx, durationUsRef.current),
+      );
+      // Already parked against the stop this press asks for.
+      if (newPxPerSec === oldPxPerSec) return;
+      const scrollLeft = root.scrollLeft;
+      zoomPendingRef.current = {
+        scrollLeft,
+        anchorXInViewport: zoomAnchorX({
+          anchorPx: (anchorTimeUs / 1_000_000) * oldPxPerSec,
+          scrollLeftPx: scrollLeft,
+          viewportPx,
+        }),
+        oldPxPerSec,
+      };
+      setPxPerSec(newPxPerSec);
+    },
+    [rootRef],
+  );
+
+  // Re-anchor the scroll position so the anchored time stays put. Runs
+  // synchronously after the layout flip so there's no flash.
   useLayoutEffect(() => {
-    const pending = wheelPendingRef.current;
+    const pending = zoomPendingRef.current;
     if (!pending) return;
-    wheelPendingRef.current = null;
+    zoomPendingRef.current = null;
     const root = rootRef.current;
     if (!root) return;
-    const ratio = pxPerSec / pending.oldPxPerSec;
-    root.scrollLeft =
-      (pending.scrollLeft + pending.cursorXInViewport) * ratio -
-      pending.cursorXInViewport;
+    root.scrollLeft = zoomedScrollLeft({
+      scrollLeftPx: pending.scrollLeft,
+      anchorX: pending.anchorXInViewport,
+      ratio: pxPerSec / pending.oldPxPerSec,
+    });
   }, [pxPerSec, rootRef]);
 
   const toggleExpanded = useCallback(
@@ -229,5 +278,6 @@ export function useTimelineView(opts: {
     expandedTracks,
     toggleExpanded,
     viewportWidthPx,
+    zoomBySteps,
   };
 }

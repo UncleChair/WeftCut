@@ -79,9 +79,10 @@ export function useFollowPlayhead(opts: {
     if (!enabled || !measured) return;
     // Catch up on enable — deliberately keyed on the two GATES, never on the
     // geometry. Widening this to `pxPerSec` would re-anchor on the playhead
-    // every wheel tick, and zoom is cursor-anchored by design
-    // (`useTimelineView`); widening it to the width would do the same on every
-    // panel resize.
+    // every wheel tick, and zoom picks its own anchor (`timeline/zoom.ts`: the
+    // cursor on a wheel tick, the playhead on a key press) — including the
+    // deliberate decision NOT to chase an off-screen playhead; widening it to
+    // the width would re-anchor on every panel resize.
     apply(playheadTimeUs());
     return usePlayheadStore.subscribe((s) => apply(s.timeUs));
   }, [apply, enabled, measured]);
