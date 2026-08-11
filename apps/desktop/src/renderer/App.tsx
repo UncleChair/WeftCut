@@ -76,7 +76,10 @@ import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
-import { toggleDisplayMode } from "./settings/appSettingsStore";
+import {
+  toggleDisplayMode,
+  toggleFollowPlayhead,
+} from "./settings/appSettingsStore";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import { logMutationFailure } from "./errors/tryMutate";
@@ -570,6 +573,9 @@ export function App({ onCloseProject }: AppProps) {
     // every subscriber re-renders via `app_settings:changed`.
     toggleDisplayMode: () => {
       void toggleDisplayMode();
+    },
+    toggleFollowPlayhead: () => {
+      void toggleFollowPlayhead();
     },
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),

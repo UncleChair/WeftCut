@@ -58,6 +58,10 @@ export interface AppSettings {
   /// Media-pool card arrangement (see MediaPoolLayout). App-level: it's a
   /// browsing preference of this user, not a property of any project.
   media_pool_layout: MediaPoolLayout;
+  /// Keep the playhead inside the timeline's visible span by paging the view
+  /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). Off means
+  /// the view only ever moves because the user moved it.
+  timeline_follow_playhead: boolean;
   /// Absolute path to the user-configurable data root that owns all large,
   /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
   /// unset means "use the default" — the main-process resolver
@@ -91,6 +95,7 @@ export interface AppSettingsPatch {
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
   playback_resolution?: PlaybackResolution;
   media_pool_layout?: MediaPoolLayout;
+  timeline_follow_playhead?: boolean;
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
   /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
@@ -113,6 +118,9 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   decode_engine: "auto",
   playback_resolution: "full",
   media_pool_layout: "large",
+  // On, like every mainstream NLE ships it: a playhead that walks off-screen
+  // mid-playback is the surprising state, not the followed one.
+  timeline_follow_playhead: true,
   data_root: undefined,
   language: undefined,
 };

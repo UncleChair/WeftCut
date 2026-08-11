@@ -27,6 +27,8 @@ vi.mock("react-i18next", async (importOriginal) => ({
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => "AbRoll",
   toggleDisplayMode: vi.fn(),
+  useFollowPlayheadEnabled: () => true,
+  toggleFollowPlayhead: vi.fn(),
 }));
 
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";

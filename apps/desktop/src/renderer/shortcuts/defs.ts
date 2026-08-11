@@ -25,6 +25,7 @@ export type ActionId =
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
+  | "toggleFollowPlayhead"
   | "focusNextPanel"
   | "focusPreviousPanel"
   | "toggleMaximizePanel"
@@ -139,6 +140,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // `shared/app-settings.ts`). Rebindable through Settings → Keyboard.
   // Bare-letter chords don't fire in text inputs by default.
   toggleDisplayMode: { defaultKeys: ["T"],                 labelKey: "actions.toggle_display_mode" },
+  // Whether the timeline pages its view to keep the playhead on screen
+  // (`timeline/followPlayhead.ts`). Shift+F rather than a bare letter: the
+  // single-key space is reserved for the tools and mark points a user hits
+  // hundreds of times a session, and this is a preference they flip when a
+  // manual inspection needs the view to hold still.
+  toggleFollowPlayhead: { defaultKeys: ["Shift+F"],        labelKey: "actions.toggle_follow_playhead" },
   focusNextPanel: {
     defaultKeys: ["Ctrl+Shift+Period"],
     labelKey: "actions.focus_next_panel",

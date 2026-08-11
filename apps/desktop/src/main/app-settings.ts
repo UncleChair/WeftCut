@@ -83,6 +83,14 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         parsed.media_pool_layout === 'large' || parsed.media_pool_layout === 'grid' || parsed.media_pool_layout === 'list'
           ? parsed.media_pool_layout
           : d.media_pool_layout,
+      // Additive boolean defaulting TRUE — the one shape where "absent" and
+      // "off" must not collapse: every app_settings.json written before the
+      // field existed has no key, and reading that as false would ship the
+      // feature disabled to exactly the users who never chose to disable it.
+      timeline_follow_playhead:
+        typeof parsed.timeline_follow_playhead === 'boolean'
+          ? parsed.timeline_follow_playhead
+          : d.timeline_follow_playhead,
       // Optional path; a non-string, empty, or whitespace-only value degrades to
       // unset (undefined) so the resolver falls back to the default root. Kept
       // out of the on-disk file when unset (JSON.stringify drops undefined).
@@ -124,6 +132,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
       if (patch.playback_resolution !== undefined) current.playback_resolution = patch.playback_resolution
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
+      if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead
       // Empty / whitespace-only clears the field back to unset (→ default root);
       // any other value is stored verbatim. Storing undefined keeps it off disk.
       if (patch.data_root !== undefined) current.data_root = patch.data_root.trim() === '' ? undefined : patch.data_root

@@ -136,6 +136,17 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "media_pool_layout": 3 }' }).get().media_pool_layout).toBe('large')
   })
 
+  it('timeline_follow_playhead defaults to ON on a file written before the field existed', () => {
+    // The additive-boolean trap: an absent key must NOT read as false, or every
+    // existing install silently loses the feature it never turned off.
+    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().timeline_follow_playhead).toBe(true)
+    expect(store().get().timeline_follow_playhead).toBe(true)
+    expect(store().apply({ timeline_follow_playhead: false }).timeline_follow_playhead).toBe(false)
+    expect(store({ [PATH]: '{ "timeline_follow_playhead": false }' }).get().timeline_follow_playhead).toBe(false)
+    // Hand-edited / wrong-typed values degrade to the default.
+    expect(store({ [PATH]: '{ "timeline_follow_playhead": "yes" }' }).get().timeline_follow_playhead).toBe(true)
+  })
+
   it('data_root round-trips, and empty/missing/corrupt degrades to unset', () => {
     // No file → unset (resolver substitutes the default).
     expect(store().get().data_root).toBeUndefined()

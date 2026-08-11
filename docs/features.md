@@ -177,6 +177,39 @@ fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
 ops) and the read surface (`groups` on `project://current`; there is no
 `groups_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
 
+## Follow playhead
+
+The timeline keeps the playhead on screen by **paging** its view: when the
+playhead crosses to within 12 px of a viewport edge, the view jumps so the
+playhead sits one lead (8 % of the viewport, min 12 px) inside the edge it
+crossed. Geometry in
+`apps/desktop/src/renderer/timeline/followPlayhead.ts`; the DOM side —
+transient playhead subscription, one `scrollLeft` write per page — in
+`hooks/useFollowPlayhead.ts`.
+
+**Paging, not tracking.** Pinning the playhead to a fixed column and sliding
+content under it would rewrite `scrollLeft` on every composition frame, and
+each write publishes to `timelineScrollStore` and re-renders the ruler. A page
+touches the view once per screenful.
+
+**Forward vs backward are asymmetric.** Forward pages leave a lead behind the
+playhead and a near-full screen of lookahead. Backward pages jump a full screen
+so the playhead lands near the *right* edge — the gesture that ran it off the
+left edge (stepping back a frame, seeking to the previous edit) is one the user
+repeats, and a lead-sized jump would re-page on the next press.
+
+**What moves the view and what doesn't.** Playback and jumps (shortcut seeks,
+edit-point steps, timecode entry, palette navigation) follow. Two things
+deliberately don't: a **ruler scrub drag**, because the user is aiming at a
+point they can see and paging would move the target out from under the pointer;
+and **zoom**, which stays cursor-anchored (`hooks/useTimelineView.ts`) — the
+follow only ever reacts to the playhead moving, never to the view changing
+shape around a stationary one.
+
+App-level pref `timeline_follow_playhead` (default on), so it is one answer per
+machine rather than per project: View → Follow playhead, `Shift+F`, or the
+search palette. Absent from an older `app_settings.json` reads as **on**.
+
 ## Global search palette
 
 `Mod+K` (also a menu item) opens a Spotlight-style overlay that searches,

@@ -1,7 +1,12 @@
 import { useTranslation } from "react-i18next";
 
 import { Menu, MenuHeading, MenuItem, MenuSeparator, SubMenu } from "../menu/Menu";
-import { toggleDisplayMode, useDisplayMode } from "../settings/appSettingsStore";
+import {
+  toggleDisplayMode,
+  toggleFollowPlayhead,
+  useDisplayMode,
+  useFollowPlayheadEnabled,
+} from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
   PANEL_REGISTRY,
@@ -32,10 +37,10 @@ export interface ViewMenuWorkspaces {
 
 /// The View menu — Panels (open/focus/close) flat at the top, Workspace
 /// profiles + management under the Workspaces submenu (low-frequency ops stay
-/// one level down), then the A/B-roll vs Show-All track-display radio and the
-/// Agent-mode entry. The display setting is the same one the inline pill +
-/// `T` shortcut drive; the checkmark reads the app-pref store so it stays in
-/// sync however it changed.
+/// one level down), then the A/B-roll vs Show-All track-display radio, the
+/// follow-playhead toggle and the Agent-mode entry. Both settings are the ones
+/// the inline pill + `T` and `Shift+F` drive; the checkmarks read the app-pref
+/// store so they stay in sync however the value changed.
 interface ViewMenuProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
@@ -54,6 +59,7 @@ export function ViewMenu({
 }: ViewMenuProps) {
   const { t } = useTranslation();
   const mode = useDisplayMode();
+  const followPlayhead = useFollowPlayheadEnabled();
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
   // rebuild so recovery is never dead.
@@ -158,6 +164,15 @@ export function ViewMenu({
         onSelect={() => {
           if (mode !== "ShowAll") void toggleDisplayMode();
         }}
+      />
+      <MenuSeparator />
+      <MenuItem
+        actionId="toggleFollowPlayhead"
+        label={t("view.follow_playhead", {
+          defaultValue: "Follow playhead",
+        })}
+        checked={followPlayhead}
+        onSelect={() => void toggleFollowPlayhead()}
       />
       <MenuSeparator />
       <MenuItem

@@ -37,6 +37,7 @@ import { fanOutEntries } from "../keyframe/fanOut";
 import { formatTimecode, snapFrameRound } from "../frames";
 import {
   useDisplayMode,
+  useFollowPlayheadEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "../settings/appSettingsStore";
@@ -70,6 +71,7 @@ import { KeyframeLane, KeyframeLaneHeaders } from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { beginRename } from "./renameStore";
 import { useTimelineView } from "./hooks/useTimelineView";
+import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
@@ -281,6 +283,18 @@ export function Timeline({
     durationUs,
     pxPerSec,
     viewportWidthPx,
+  });
+
+  // Page the view to keep the playhead visible (app-level pref, default on).
+  // Also gated on `visible`, like the playhead line itself: a timeline behind
+  // another dock tab has nothing to keep in view.
+  const followEnabled = useFollowPlayheadEnabled();
+  const { setScrubbing: setFollowScrubbing } = useFollowPlayhead({
+    rootRef,
+    pxPerSec,
+    viewportWidthPx,
+    contentWidthPx: widthPx,
+    enabled: followEnabled && visible,
   });
 
   const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
@@ -886,16 +900,21 @@ export function Timeline({
   // from selection — seeking never clears the selected clip.
   const beginRulerScrub = useCallback(
     (clientX: number) => {
+      // Hold the view still for the length of the drag: the user is aiming at a
+      // point they can see, and a follow-page mid-gesture would move the target
+      // out from under the pointer (see `useFollowPlayhead`).
+      setFollowScrubbing(true);
       seekFromClientX(clientX);
       const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX);
       const onUp = () => {
+        setFollowScrubbing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [seekFromClientX],
+    [seekFromClientX, setFollowScrubbing],
   );
 
   return (

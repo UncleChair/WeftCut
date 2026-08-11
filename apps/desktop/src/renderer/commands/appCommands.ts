@@ -1,5 +1,6 @@
 import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
+import { followPlayheadEnabled } from "../settings/appSettingsStore";
 import { hasMarkedRange } from "../state/rangeStore";
 import { activeTool } from "../state/toolStore";
 import type { CommandDef } from "./registry";
@@ -73,6 +74,9 @@ export function buildAppCommands(
   const checkedFor: Partial<Record<ActionId, () => boolean>> = {
     selectTool: () => activeTool() === "select",
     toggleBladeMode: () => activeTool() === "blade",
+    // Same live-read reason as `clearRange` below the flags: App does not
+    // re-render on an app-settings flip, so a captured flag would freeze.
+    toggleFollowPlayhead: () => followPlayheadEnabled(),
   };
 
   const defs: CommandDef[] = [];

@@ -50,6 +50,7 @@ const FALLBACK: AppSettings = {
   decode_engine: "auto",
   playback_resolution: "full",
   media_pool_layout: "large",
+  timeline_follow_playhead: true,
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -94,6 +95,9 @@ export const usePlaybackResolution = (): AppSettings["playback_resolution"] =>
 /// (fixed-size cards, adaptive columns), `list` (compact rows).
 export const useMediaPoolLayout = (): AppSettings["media_pool_layout"] =>
   useAppSettingsStore((s) => s.settings.media_pool_layout);
+/// Whether the timeline pages its view to keep the playhead visible.
+export const useFollowPlayheadEnabled = (): boolean =>
+  useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
 /// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
 /// (the renderer auto-detects the OS language). i18next remains the live
 /// language source; this is the persisted user choice.
@@ -121,6 +125,18 @@ export async function toggleDisplayMode(): Promise<AppSettings> {
   const current = useAppSettingsStore.getState().settings.display_mode;
   const next: DisplayMode = current === "AbRoll" ? "ShowAll" : "AbRoll";
   return setAppSettings({ display_mode: next });
+}
+
+export async function toggleFollowPlayhead(): Promise<AppSettings> {
+  const current = useAppSettingsStore.getState().settings.timeline_follow_playhead;
+  return setAppSettings({ timeline_follow_playhead: !current });
+}
+
+/// Imperative read for the command palette's checkmark, which is evaluated
+/// inside `listCommands()` rather than during a render — same reason
+/// `appCommands.ts` reads `toolStore` directly.
+export function followPlayheadEnabled(): boolean {
+  return useAppSettingsStore.getState().settings.timeline_follow_playhead;
 }
 
 /// Change the UI language AND persist it to app_settings.json — the single

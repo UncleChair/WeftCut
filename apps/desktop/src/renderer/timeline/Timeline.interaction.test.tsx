@@ -29,8 +29,13 @@ import {
   useSelectionStore,
 } from "../state/selectionStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
+import {
+  setTimelineScrollLeftPx,
+  timelineScrollLeftPx,
+} from "../state/timelineScrollStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
+import { HEADER_COL_PX } from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -183,6 +188,7 @@ function renderTimeline(overrides: {
   onMutated?: () => Promise<void>;
   fpsNum?: number;
   fpsDen?: number;
+  durationUs?: number;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
   const selectedLayerId = overrides.selectedLayerId ?? null;
@@ -191,7 +197,7 @@ function renderTimeline(overrides: {
     <Timeline
       tracks={overrides.tracks ?? [track]}
       groups={overrides.groups ?? []}
-      durationUs={5_000_000}
+      durationUs={overrides.durationUs ?? 5_000_000}
       keybindings={{}}
       fpsNum={overrides.fpsNum ?? 30}
       fpsDen={overrides.fpsDen ?? 1}
@@ -1460,5 +1466,74 @@ describe("Timeline clip label fallback", () => {
     };
     const { getByText } = renderTimeline({ tracks: [trackWith(noName)] });
     expect(getByText("Video")).toBeTruthy();
+  });
+});
+
+/// Integration cover for the follow wiring — the unit tests
+/// (`followPlayhead.test.ts`, `hooks/useFollowPlayhead.test.ts`) own the page
+/// geometry and the gating; what only shows up here is whether Timeline hands
+/// the hook the RIGHT measurements (lane viewport, canvas width) and the right
+/// scrub boundary.
+describe("Timeline follow-playhead", () => {
+  // jsdom lays nothing out: `clientWidth` is 0 (→ a zero-width viewport, which
+  // the follow correctly declines to page) and a `scrollLeft` write on a box
+  // with no layout is dropped. Stub the width, and read the outcome off the
+  // scroll store, which the hook publishes to on every page.
+  const LANE_VIEWPORT_PX = 1000;
+  let clientWidth: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    setTimelineScrollLeftPx(0);
+    clientWidth = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "ShowAll", timeline_follow_playhead: true },
+    }));
+  });
+  afterEach(() => {
+    clientWidth.mockRestore();
+    cleanup();
+  });
+
+  // 60 s @ the mocked 80 px/s view state = a 4800 px canvas, so a playhead at
+  // 13 s (1040 px) is off the right edge of the opening [0, 1000) window and
+  // the page target is not clamped by either end stop.
+  const LONG = { durationUs: 60_000_000 };
+
+  it("pages the view when the playhead leaves the right edge", () => {
+    renderTimeline(LONG);
+
+    act(() => setPlayheadTimeUs(5_000_000)); // 400 px — inside the window
+    expect(timelineScrollLeftPx()).toBe(0);
+
+    act(() => setPlayheadTimeUs(13_000_000)); // 1040 px — past it
+    expect(timelineScrollLeftPx()).toBe(960);
+  });
+
+  it("holds the view still across a ruler scrub drag", () => {
+    const { container } = renderTimeline(LONG);
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+
+    fireEvent.pointerDown(ruler, { button: 0, clientX: 200 });
+    act(() => setPlayheadTimeUs(13_000_000));
+    expect(timelineScrollLeftPx()).toBe(0);
+
+    fireEvent.pointerUp(window, { clientX: 200 });
+    act(() => setPlayheadTimeUs(13_100_000));
+    expect(timelineScrollLeftPx()).toBe(968);
+  });
+
+  it("leaves the view alone when the pref is off", () => {
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, timeline_follow_playhead: false },
+    }));
+    renderTimeline(LONG);
+
+    act(() => setPlayheadTimeUs(13_000_000));
+    expect(timelineScrollLeftPx()).toBe(0);
   });
 });
