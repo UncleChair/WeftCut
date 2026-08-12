@@ -103,7 +103,10 @@ export function launchTarget(se: ShimEnv): { path: string; launchable: boolean }
   if (override) return { path: override, launchable: true }
   const appimage = se.env.APPIMAGE
   if (appimage) return { path: appimage, launchable: true }
-  const base = path.basename(se.execPath).toLowerCase()
+  // Basename per se.platform, not the host's: POSIX finds no separator in a
+  // win32 execPath and returns the whole string.
+  const platformPath = se.platform === 'win32' ? path.win32 : path.posix
+  const base = platformPath.basename(se.execPath).toLowerCase()
   const isPlainNode = base === 'node' || base === 'node.exe'
   return { path: se.execPath, launchable: !isPlainNode }
 }
