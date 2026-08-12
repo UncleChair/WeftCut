@@ -26,12 +26,18 @@ describe('helpers', () => {
     p.tracks[0].layers = [color('a', 0, 12_000_000)]
     applyDurationAutofit(p); expect(p.composition.duration_us).toBe(12_000_000) // pinned: overflow grows
   })
-  it('pruneEmptiedTrack removes only empty+removable+roleless+unlocked tracks when the setting is on', () => {
+  it('pruneEmptiedTrack removes only empty+transient+unlocked tracks', () => {
     const p = blankProject(seededGen(), 't')
-    // A-roll is removable:false (role stamped) → survives even when empty.
+    // A-roll belongs to the reserved skeleton (transient:false) → survives empty.
     expect(pruneEmptiedTrack(p, p.tracks[0].id)).toBeNull()
-    const added = { id: 'tx', label: null, enabled: true, locked: false, muted: false, solo: false, removable: true, role: null, transient: false, height_px: 64, layers: [] }
-    p.tracks.push(added as Project['tracks'][number])
+    const lane = (id: string, over: Partial<Project['tracks'][number]>) => ({
+      id, label: null, enabled: true, locked: false, muted: false, solo: false,
+      removable: true, role: null, transient: true, height_px: 64, layers: [], ...over,
+    } as Project['tracks'][number])
+    p.tracks.push(lane('tlocked', { locked: true }), lane('tfull', { layers: [color('a', 0, 1)] }), lane('tx', {}))
+    expect(pruneEmptiedTrack(p, 'tlocked')).toBeNull() // lock out-ranks cleanup
+    expect(pruneEmptiedTrack(p, 'tfull')).toBeNull()   // still holds a layer
+    expect(pruneEmptiedTrack(p, 'gone')).toBeNull()    // unknown id
     expect(pruneEmptiedTrack(p, 'tx')).toBe('tx')
     expect(p.tracks.find((t) => t.id === 'tx')).toBeUndefined()
   })

@@ -14,7 +14,6 @@ import {
   dataRootPickAndMigrate,
   dataRootRelaunch,
   fitCompositionToLayers,
-  getProjectSettings,
   recentsGetReopenOnLaunch,
   recentsSetReopenOnLaunch,
   setComposition,
@@ -28,7 +27,6 @@ import {
   type SpeechBackendInfo,
   type SpeechBackendsView,
   type PreferredEngine,
-  updateProjectSettings,
 } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { open as openFileDialog } from "@/bridge/dialog";
@@ -315,11 +313,6 @@ export function SettingsPanel({
               </section>
 
               <section className="settings-section">
-                <h3>{t("settings.tracks_heading")}</h3>
-                <AutoDeleteEmptyTracksSection onError={setError} />
-              </section>
-
-              <section className="settings-section">
                 <h3>{t("settings.playback_heading")}</h3>
                 <PreferProxiesToggle onError={setError} />
               </section>
@@ -523,58 +516,12 @@ function PreviewSnapSection({
   );
 }
 
-/// Per-project toggle (`Project.settings.auto_delete_empty_tracks`),
-/// unlike the app-level sections around it — it travels with the .vproj
-/// because the actor's delete mutation reads it. Fetch-on-mount +
-/// optimistic flip with rollback, same shape as the reopen-on-launch row.
-function AutoDeleteEmptyTracksSection({
-  onError,
-}: {
-  onError: (msg: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    getProjectSettings()
-      .then((s) => setEnabled(s.auto_delete_empty_tracks))
-      .catch((e) => onError(String(e)));
-  }, [onError]);
-
-  return (
-    <label className="settings-toggle-row">
-      <AppSwitch
-        checked={enabled === true}
-        disabled={enabled === null}
-        onCheckedChange={async (next) => {
-          setEnabled(next);
-          onError("");
-          try {
-            await updateProjectSettings({ auto_delete_empty_tracks: next });
-          } catch (err) {
-            onError(String(err));
-            setEnabled(!next);
-          }
-        }}
-      />
-      <span>
-        <span className="settings-toggle-label">
-          {t("settings.auto_delete_empty_tracks")}
-        </span>
-        <span className="settings-toggle-hint">
-          {t("settings.auto_delete_empty_tracks_hint")}
-        </span>
-      </span>
-    </label>
-  );
-}
-
-/// Per-project toggle (`Project.settings.prefer_proxies`) — same markup as
-/// AutoDeleteEmptyTracksSection above, but the value is already hydrated
-/// and kept in sync by `proxyPreferenceStore` (PixiPreview reads it live
-/// per `ensureClip`), so this reads the store directly instead of
-/// fetch-on-mount, and writes through `setPreferProxies` instead of the
-/// generic `updateProjectSettings` call.
+/// Per-project toggle (`Project.settings.prefer_proxies`) — it travels with
+/// the .vproj rather than the app settings. The value is already hydrated and
+/// kept in sync by `proxyPreferenceStore` (PixiPreview reads it live per
+/// `ensureClip`), so this reads the store directly instead of fetching on
+/// mount, and writes through `setPreferProxies` instead of the generic
+/// `updateProjectSettings` call.
 function PreferProxiesToggle({
   onError,
 }: {

@@ -4,7 +4,7 @@ import { seededGen } from './ids'
 import { blankProject } from './model'
 import type { Project } from './model'
 import { colorParams } from './mutations/add'
-import { createActor } from './actor'
+import { createActor, type DispatchResult } from './actor'
 
 function fresh() {
   const idGen = seededGen()
@@ -802,14 +802,6 @@ describe('dispatch: role gain + flags + project settings', () => {
     expect(actor.snapshot().tracks[0].layers).toHaveLength(0) // edit undone
     expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 0, muted: false, solo: true }) // flag persists
   })
-  it('update_project_settings flips auto_delete_empty_tracks (unrecorded, survives undo)', () => {
-    const { actor, a } = setup()
-    actor.dispatch('update_project_settings', { patch: { auto_delete_empty_tracks: false } })
-    expect(actor.snapshot().settings.auto_delete_empty_tracks).toBe(false)
-    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
-    actor.dispatch('undo', {})
-    expect(actor.snapshot().settings.auto_delete_empty_tracks).toBe(false) // preference persists across undo
-  })
   it('update_project_settings sets prefer_proxies + proxy_overrides (unrecorded, survives undo)', () => {
     const { actor, a } = setup()
     actor.dispatch('update_project_settings', { patch: { prefer_proxies: true } })
@@ -1060,5 +1052,126 @@ describe('dispatch: attribute-panel timing/envelope ops', () => {
     expect(layer.enabled).toBe(false)
     expect(layer.locked).toBe(true)
     expect(actor.historyStatus().len).toBe(before + 3)
+  })
+})
+
+// A track disappears when its last layer leaves it (ADR 0042). Everything here is
+// read off the snapshot rather than the prune helper, because a prune that never
+// fires passes every helper-level test — which is exactly how the move path spent
+// its whole life as a no-op.
+describe('dispatch: emptied-track cleanup', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'prune')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, aRoll: initial.tracks[0].id, bRoll: initial.tracks[1].id }
+  }
+  type Actor = ReturnType<typeof createActor>
+  function value(r: DispatchResult): string {
+    if (!r.ok) throw new Error(`dispatch refused: ${JSON.stringify(r.error)}`)
+    return r.value as string
+  }
+  const lanes = (actor: Actor): string[] => actor.snapshot().tracks.map((t) => t.id)
+  const addLane = (actor: Actor): string => value(actor.dispatch('add_track', { label: null }))
+  const addClip = (actor: Actor, track: string, t0 = 0, t1 = 1_000_000): string =>
+    value(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: t0, t_end_us: t1 }))
+  const clipsOn = (actor: Actor, track: string) => actor.snapshot().tracks.find((t) => t.id === track)?.layers ?? []
+
+  it('deleting the last layer removes the lane in the same history entry', () => {
+    const { actor } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane)
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('delete_layer', { layer: clip }).ok).toBe(true)
+    expect(lanes(actor)).not.toContain(lane)
+    expect(actor.historyStatus().len).toBe(before + 1)
+  })
+
+  it('moving the last layer off a lane removes it and leaves the destination standing', () => {
+    const { actor, aRoll } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane)
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 2_000_000 }).ok).toBe(true)
+    expect(lanes(actor)).not.toContain(lane)
+    expect(clipsOn(actor, aRoll).map((l) => l.id)).toEqual([clip])
+    expect(actor.historyStatus().len).toBe(before + 1) // cleanup rode along, not a second entry
+  })
+
+  it('one undo after a move restores the layer to its previous lane and position', () => {
+    const { actor, aRoll } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane, 1_000_000, 2_000_000)
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 5_000_000 }).ok).toBe(true)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(lanes(actor)).toContain(lane)
+    expect(clipsOn(actor, lane).map((l) => [l.id, l.t_start_us])).toEqual([[clip, 1_000_000]])
+    expect(clipsOn(actor, aRoll)).toHaveLength(0)
+  })
+
+  it('a move within one lane leaves it standing — it never stopped holding the layer', () => {
+    const { actor } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane)
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: lane, t_start_us: 3_000_000 }).ok).toBe(true)
+    expect(lanes(actor)).toContain(lane)
+    expect(clipsOn(actor, lane).map((l) => l.t_start_us)).toEqual([3_000_000])
+  })
+
+  it('a lane born empty survives deletions and moves elsewhere in the project', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const untouched = addLane(actor) // created, never filled
+    const doomed = addClip(actor, aRoll)
+    const travelling = addClip(actor, bRoll)
+    expect(actor.dispatch('delete_layer', { layer: doomed }).ok).toBe(true)
+    expect(actor.dispatch('move_layer', { layer: travelling, to_track: aRoll, t_start_us: 0 }).ok).toBe(true)
+    expect(lanes(actor)).toContain(untouched)
+  })
+
+  it('a locked lane survives — the edit that would empty it is refused first', () => {
+    const { actor, aRoll } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane)
+    expect(actor.dispatch('update_track_flags', { track: lane, patch: { locked: true } }).ok).toBe(true)
+    for (const r of [actor.dispatch('delete_layer', { layer: clip }),
+      actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 0 })]) {
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error.error).toBe('TrackLocked')
+    }
+    expect(lanes(actor)).toContain(lane)
+    expect(clipsOn(actor, lane)).toHaveLength(1)
+  })
+
+  it('reserved A/B-roll lanes survive emptying by either path', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const onA = addClip(actor, aRoll)
+    const onB = addClip(actor, bRoll)
+    expect(actor.dispatch('delete_layer', { layer: onA }).ok).toBe(true)
+    expect(actor.dispatch('move_layer', { layer: onB, to_track: aRoll, t_start_us: 0 }).ok).toBe(true)
+    expect(lanes(actor)).toEqual([aRoll, bRoll])
+  })
+
+  it('a coupled move prunes only the lane the target left; the sibling keeps its own', () => {
+    const { actor, aRoll } = setup()
+    const targetLane = addLane(actor)
+    const siblingLane = addLane(actor)
+    const target = addClip(actor, targetLane)
+    const sibling = addClip(actor, siblingLane)
+    expect(actor.dispatch('groups_create', { layers: [target, sibling], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('move_layer', { layer: target, to_track: aRoll, t_start_us: 2_000_000 }).ok).toBe(true)
+    expect(lanes(actor)).not.toContain(targetLane)
+    // The sibling is spliced out of its lane and re-inserted on the SAME lane, so
+    // a coupled move can only ever empty the target's.
+    expect(clipsOn(actor, siblingLane).map((l) => [l.id, l.t_start_us])).toEqual([[sibling, 2_000_000]])
+  })
+
+  it('the lane separate_audio lifts an audio layer onto is a cleanup candidate too', () => {
+    const { actor, aRoll } = setup()
+    const media = '11111111-1111-1111-1111-111111111111'
+    expect(actor.dispatch('add_media', { id: media, kind: 'Audio', duration_us: 1_000_000 }).ok).toBe(true)
+    const audio = value(actor.dispatch('add_layer', { track: aRoll, kind: 'audio', media, src_in_us: 0, src_out_us: 1_000_000, t_start_us: 0, t_end_us: 1_000_000 }))
+    const lifted = value(actor.dispatch('separate_audio', { layer: audio }))
+    expect(lanes(actor)).toContain(lifted)
+    expect(actor.dispatch('delete_layer', { layer: audio }).ok).toBe(true)
+    expect(lanes(actor)).not.toContain(lifted)
   })
 })

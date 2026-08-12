@@ -193,7 +193,7 @@ describe('History', () => {
     const h = new History(freshProject('0'), U, 'op0')
     h.record(entry(freshProject('1'), 'op1'))
     const before = h.cursorIndex()
-    h.replaceSettingsEverywhere({ preview_width: 640, preview_height: 360, autosave_interval_secs: 30, history_capacity: 200, auto_pair_audio_on_import: false, auto_delete_empty_tracks: false, prefer_proxies: false, proxy_overrides: {} })
+    h.replaceSettingsEverywhere({ preview_width: 640, preview_height: 360, autosave_interval_secs: 30, history_capacity: 200, auto_pair_audio_on_import: false, prefer_proxies: false, proxy_overrides: {} })
     expect(h.cursorIndex()).toBe(before)
     expect(h.current().settings.preview_width).toBe(640)
     expect(h.undo()!.settings.preview_width).toBe(640) // applied to the older snapshot too

@@ -815,10 +815,6 @@ const enUS = {
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels.",
-    tracks_heading: "Tracks",
-    auto_delete_empty_tracks: "Auto-delete emptied tracks",
-    auto_delete_empty_tracks_hint:
-      "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays.",
     playback_heading: "Playback",
     prefer_proxies: "Prefer proxies for preview",
     prefer_proxies_hint:

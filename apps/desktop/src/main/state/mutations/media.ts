@@ -146,7 +146,7 @@ export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uui
   const label = srcLabel && srcLabel.length > 0 ? `${srcLabel} (audio)` : 'Audio'
   source.layers.splice(li, 1)
   const newTrack: Track = { id: newId, label, enabled: true, locked: false, muted: false, solo: false,
-    removable: true, role: null, transient: false, height_px: 64, layers: [layer] }
+    removable: true, role: null, transient: true, height_px: 64, layers: [layer] }
   p.tracks.splice(ti, 0, newTrack)
   return newId
 }

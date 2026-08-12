@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/mutations/move.ts
 import type { Layer, Project, Uuid } from '../model'
 import { gridForLayerKind, snapOnGrid } from '../snap'
-import { applyDurationAutofit, locateLayer, pruneEmptyHiddenTracks } from './helpers'
+import { applyDurationAutofit, locateLayer, pruneEmptiedTrack } from './helpers'
 import { groupSiblingsExcluding, checkGroupLock } from './groups'
 import { CommandFailure } from '../errors'
 
@@ -26,6 +26,9 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   const src = locateLayer(p, id)
   if (!src) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [srcTi] = src
+  // Read the source track's ID, not its index: the splices below shift indices,
+  // and pruning has to name the lane the layer LEFT once the move has settled.
+  const srcTrackId = p.tracks[srcTi].id
   const target = p.tracks[srcTi].layers[src[1]]
   // The requested start snaps on the TARGET's own grid — the audio lattice for an
   // Audio layer, the composition frame grid otherwise (spec R2-D6).
@@ -101,5 +104,9 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   }
 
   applyDurationAutofit(p)
-  pruneEmptyHiddenTracks(p)
+  // Cleanup rides in the SAME mutation, so one undo restores the layer's previous
+  // position and its track together. Runs last, on settled state: a same-track move
+  // has already put the layer back. Only the target changes tracks — every sibling
+  // is re-inserted on the one it came from — so this is the only track a move empties.
+  pruneEmptiedTrack(p, srcTrackId)
 }

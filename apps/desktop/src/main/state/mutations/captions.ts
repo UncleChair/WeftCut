@@ -110,9 +110,10 @@ export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], comp
   return newCaptionTrack(p, idGen, label) // empty-cues safety net (Track::new after the loop)
 }
 
-/** Track::new() defaults (track.rs:65) + role=Caption, transient=false; appended
- *  to the END of the track list (push_back). removable=true (Track::new default,
- *  == applyAddTrack). */
+/** Track::new() defaults + role=Caption, appended to the END of the track list
+ *  (push_back). A role stamp makes it part of the reserved skeleton, so
+ *  `transient` is false and emptying it never removes it — unlike every track
+ *  `applyAddTrack` mints. */
 function newCaptionTrack(p: Project, idGen: IdGen, label: string | null): Uuid {
   const id = idGen()
   p.tracks.push({ id, label, enabled: true, locked: false, muted: false, solo: false,

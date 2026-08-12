@@ -37,18 +37,22 @@ export function applyDurationAutofit(p: Project): void {
   else p.composition.duration_us = fitted
 }
 
-/** Drop empty transient (import-spawned) tracks. */
-export function pruneEmptyHiddenTracks(p: Project): void {
-  p.tracks = p.tracks.filter((t) => !(t.transient && t.layers.length === 0))
-}
-
-/** Auto-delete the just-emptied track if eligible. */
+/** A track disappears when its last layer leaves it (ADR 0042). The one prune,
+ *  called by every path that can empty a track, with the track the caller just
+ *  emptied — never a project-wide sweep, so a track that was *born* empty was
+ *  never emptied and survives, and no edit can make a track vanish elsewhere.
+ *
+ *  `transient` reads as "not part of the reserved skeleton": it is stamped on
+ *  every role-less track at creation, so it is the cleanup-candidate flag rather
+ *  than the narrower import-spawned marker its name suggests. `!locked` because
+ *  locking is the user pinning a row, and cleanup does not out-rank that.
+ *
+ *  Returns the removed track id, so a caller can report what went with the edit. */
 export function pruneEmptiedTrack(p: Project, trackId: Uuid): Uuid | null {
-  if (!p.settings.auto_delete_empty_tracks) return null
   const idx = p.tracks.findIndex((t) => t.id === trackId)
   if (idx < 0) return null
   const t = p.tracks[idx]
-  if (t.layers.length !== 0 || !t.removable || t.role !== null || t.locked) return null
+  if (t.layers.length !== 0 || !t.transient || t.locked) return null
   p.tracks.splice(idx, 1)
   return trackId
 }

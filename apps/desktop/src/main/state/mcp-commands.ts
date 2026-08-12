@@ -496,7 +496,7 @@ const ANIM_TRACK_SCHEMA = {
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
-    description: 'Add a new track to the project. Returns the new track id as a UUID string. Tracks are kind-agnostic — any layer kind can be placed on any track.',
+    description: 'Add a new track to the project. Returns the new track id as a UUID string. Tracks are kind-agnostic — any layer kind can be placed on any track. A track disappears when its last layer leaves it, whether deleted or moved away, so place a layer rather than reserving a track for later; a track created empty was never emptied and survives.',
     inputSchema: { type: 'object', properties: { label: { type: ['string', 'null'] } }, required: [] },
     parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label') } }),
     shapeResult: (v) => toolText(v as string) },
@@ -581,7 +581,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_group: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
     parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_group: parseBoolOpt(a.escape_group, 'escape_group', false) } }) },
   { name: 'delete_layer', exec: 'table',
-    description: 'Delete a layer. When the project setting `auto_delete_empty_tracks` is on (default) and this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks always stay.',
+    description: 'Delete a layer. If this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks stay.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
   // ── table-exec: groups ───────────────────────────────────────────────────

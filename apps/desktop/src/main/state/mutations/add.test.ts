@@ -23,11 +23,12 @@ describe('additive mutations', () => {
     // next id is still 4 (none consumed by the rejected add)
     expect(applyAddTrack(p, g, 'L')).toBe('00000000-0000-0000-0000-000000000004')
   })
-  it('applyAddTrack uses Track::new defaults (removable, role null, height 64)', () => {
+  it('applyAddTrack uses Track::new defaults (removable, role null, height 64) and stamps transient', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     const id = applyAddTrack(p, g, 'Track')
     const t = p.tracks.find((x) => x.id === id)!
-    expect(t).toMatchObject({ label: 'Track', enabled: true, locked: false, muted: false, solo: false, removable: true, role: null, transient: false, height_px: 64 })
+    // transient == (role === null): a role-less lane is a cleanup candidate.
+    expect(t).toMatchObject({ label: 'Track', enabled: true, locked: false, muted: false, solo: false, removable: true, role: null, transient: true, height_px: 64 })
   })
   it('applyAddMarker inserts t-sorted', () => {
     const g = seededGen(); const p = blankProject(g, 't')

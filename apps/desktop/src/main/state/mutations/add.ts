@@ -50,10 +50,13 @@ export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: L
   return layerId
 }
 
-/** Insert a new track with Track::new() defaults at `position` (default: end). */
-export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, transient = false, position?: number): Uuid {
+/** Insert a new track with Track::new() defaults at `position` (default: end).
+ *  `role` is always null here, so `transient` — "not part of the reserved
+ *  skeleton" — is always true: every track this mints is a cleanup candidate the
+ *  moment it empties (ADR 0042). */
+export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, position?: number): Uuid {
   const id = idGen()
-  const track = { id, label, enabled: true, locked: false, muted: false, solo: false, removable: true, role: null as TrackRole | null, transient, height_px: 64, layers: [] as Layer[] }
+  const track = { id, label, enabled: true, locked: false, muted: false, solo: false, removable: true, role: null as TrackRole | null, transient: true, height_px: 64, layers: [] as Layer[] }
   const len = p.tracks.length
   const at = Math.min(position ?? len, len)
   p.tracks.splice(at, 0, track)

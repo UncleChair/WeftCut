@@ -460,7 +460,7 @@ struct Track {
     solo: bool,                       // retained for back-compat load; no longer gates audio (mixing is per-role)
     locked: bool,                     // lock toggle: UI prevents edits; actor rejects structural ops on locked tracks
     removable: bool,                  // false → delete_track refuses; default tracks set this
-    transient: bool,                  // auto-prune candidate when emptied
+    transient: bool,                  // not part of the reserved skeleton → cleanup candidate
     role: Option<TrackRole>,          // "a-roll" | "b-roll" | "audio-a" | "audio-b" | None
     height_px: u16,                   // UI display preference
     layers: imbl::Vector<Layer>,      // sorted by t_start; same-class layers never overlap
@@ -501,18 +501,30 @@ answer when they don't have other context. Users can rename them;
 they cannot delete them. `delete_track` returns
 `CommandError::TrackNotRemovable` if invoked on one.
 
-When a layer deletion empties its track, two pruning rules apply.
-`transient` tracks (import-created holding tracks) are always removed.
-Plain tracks — removable, unlocked, no role stamp — are removed too
-when `settings.auto_delete_empty_tracks` is on (the default), folded
-into the same history entry as the layer deletion so a single undo
-restores layer and track together. Role-stamped tracks survive
-emptying unconditionally: legacy projects predate the `removable`
-field (it deserializes `true`), so the role stamp is the load-bearing
-guard for their reserved skeleton. The toggle lives in the Settings
-panel and travels with the project; like all `ProjectSettings`
-fields it is preference-shaped, patched into every history snapshot
-on change rather than recorded, so undo never flips it.
+Cleanup has one rule: **a track disappears when its last layer leaves
+it.** `transient && !locked` is the predicate, and every path that can
+empty a track — `delete_layer` and `move_layer` — calls the same prune
+with the track it just emptied. No preference gates it.
+
+`transient` means "not part of the reserved skeleton", so it is stamped
+on every track whose `role` is `None` — including one an agent creates
+through `add_track`. The invariant is `transient == (role is None)` at
+every creation site. `locked` out-ranks cleanup: locking is the user
+pinning a row.
+
+The prune is scoped to that one track, never a project-wide sweep. Two
+consequences follow. A track that was *born* empty was never emptied, so
+a track an agent creates on purpose survives until the agent's own
+`remove_track` removes it. And an edit in one part of the timeline can
+never make a track vanish in another. Cleanup lands in the same history
+entry as the edit that caused it, so one undo restores layer and track
+together.
+
+Role-stamped tracks — A/B roll, their audio pairs, caption tracks —
+survive emptying unconditionally, because carrying a role is exactly
+what makes a track non-`transient`. The role, not `removable`, is the
+load-bearing discriminant: legacy projects predate `removable` and
+deserialize it as `true`.
 
 ## `Layer`
 
