@@ -1200,7 +1200,6 @@ const zhCN: Resources = {
     redo_hint: "向前跳转到该状态",
     locked_hint: "历史记录已锁定：{{reason}}",
     actor_user: "你",
-    actor_agent: "代理",
     agent_client: "代理：{{client}}",
     group_steps_one: "{{count}} 步",
     group_steps_other: "{{count}} 步",

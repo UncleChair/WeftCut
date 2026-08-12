@@ -1261,7 +1261,6 @@ const enUS = {
     redo_hint: "Jump forward to this state",
     locked_hint: "History is locked: {{reason}}",
     actor_user: "You",
-    actor_agent: "Agent",
     agent_client: "Agent: {{client}}",
     group_steps_one: "{{count}} step",
     group_steps_other: "{{count}} steps",
