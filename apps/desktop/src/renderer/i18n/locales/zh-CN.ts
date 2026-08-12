@@ -1191,7 +1191,6 @@ const zhCN: Resources = {
     checkpoint: { restore: "恢复检查点“{{label}}”" },
   },
   history_panel: {
-    empty: "尚无编辑记录。",
     loading: "正在载入历史记录…",
     // Chinese has no plural forms; both _one and _other collapse.
     evicted_one: "更早的 {{count}} 步已超出范围",
@@ -1227,6 +1226,9 @@ const zhCN: Resources = {
     checkpoint_delete_hint: "删除该检查点",
     checkpoint_delete_title: "删除检查点？",
     checkpoint_delete_body: "“{{label}}”将被移除，它保存的状态将无法再恢复。",
+    checkpoint_delete_owner_user: "这是你创建的检查点。",
+    checkpoint_delete_owner_agent:
+      "这是代理“{{client}}”创建的检查点——它可能是该会话唯一的回退点。",
     checkpoint_delete_note: "删除检查点不会记录任何历史条目——撤销无法把它找回来。",
     checkpoint_delete_confirm: "删除检查点",
     checkpoint_deleting: "正在删除…",
@@ -1241,6 +1243,7 @@ const zhCN: Resources = {
     text: "文本",
     motif: "Motif",
     color: "颜色",
+    marker: "标记",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕…",

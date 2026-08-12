@@ -34,27 +34,29 @@ export interface HistoryAggregateItem {
 
 export interface HistoryEntryItem {
   kind: "entry";
-  /// Absolute index into `ops` — also the `jumpTo` target (click row i →
-  /// cursor = i, the state AFTER op i).
+  /// Absolute STACK index (`window_start + position in ops`) — also the `jumpTo`
+  /// target (click row i → cursor = i, the state AFTER op i).
   index: number;
   entry: HistoryStackEntry;
 }
 
 export interface HistoryGroupItem {
   kind: "group";
-  /// Absolute index of the run's first entry.
+  /// Absolute stack index of the run's first entry.
   startIndex: number;
-  /// Absolute index of the run's last entry (inclusive).
+  /// Absolute stack index of the run's last entry (inclusive).
   endIndex: number;
   /// The `actor.client` every entry in the run shares.
   client: string;
   entries: HistoryStackEntry[];
   /// Cursor target for a header click: the state BEFORE the run, i.e.
-  /// `startIndex - 1`. Null when the run starts at index 0 — eviction does
-  /// not spare the `Initial` entry, so after an overflow there may be no
-  /// stack index left holding "before this run". A null header is rendered
-  /// non-interactive rather than clamped to 0, which would land the cursor
-  /// INSIDE the run and quietly do the wrong thing.
+  /// `startIndex - 1`. Null only when the run starts at absolute STACK index 0 —
+  /// eviction does not spare the `Initial` entry, so after an overflow there may
+  /// be no stack index left holding "before this run". A run that merely starts
+  /// at the top of a narrow WINDOW still has a predecessor the backend holds, so
+  /// it stays clickable. A null header is rendered non-interactive rather than
+  /// clamped to 0, which would land the cursor INSIDE the run and quietly do the
+  /// wrong thing.
   jumpIndex: number | null;
   aggregate: HistoryAggregateItem[];
 }
@@ -95,8 +97,15 @@ export function aggregateLabels(
 ///   - human runs never fold — people have muscle memory for the steps they
 ///     just took, and PS / Premiere don't fold them either;
 ///   - two different agent clients back to back are two runs, not one.
+///
+/// `windowStart` is the view's `window_start`: `ops` is the last N entries of a
+/// longer stack, so every index this emits is `windowStart + position`. It is a
+/// required argument rather than a defaulted one because the two spaces coincide
+/// only while the reader asks for the whole cap — an assumption nothing else
+/// enforces, and one whose failure mode is silently jumping to the wrong state.
 export function buildHistoryItems(
   ops: readonly HistoryStackEntry[],
+  windowStart: number,
 ): HistoryItem[] {
   const items: HistoryItem[] = [];
   let i = 0;
@@ -104,7 +113,7 @@ export function buildHistoryItems(
     const entry = ops[i]!;
     const actor = entry.actor;
     if (actor.kind !== "Agent") {
-      items.push({ kind: "entry", index: i, entry });
+      items.push({ kind: "entry", index: windowStart + i, entry });
       i += 1;
       continue;
     }
@@ -115,18 +124,19 @@ export function buildHistoryItems(
       end += 1;
     }
     if (end - i < 2) {
-      items.push({ kind: "entry", index: i, entry });
+      items.push({ kind: "entry", index: windowStart + i, entry });
       i += 1;
       continue;
     }
     const entries = ops.slice(i, end);
+    const startIndex = windowStart + i;
     items.push({
       kind: "group",
-      startIndex: i,
-      endIndex: end - 1,
+      startIndex,
+      endIndex: windowStart + end - 1,
       client: actor.client,
       entries,
-      jumpIndex: i > 0 ? i - 1 : null,
+      jumpIndex: startIndex > 0 ? startIndex - 1 : null,
       aggregate: aggregateLabels(entries),
     });
     i = end;

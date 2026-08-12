@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/history.ts
 import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
-import { HISTORY_SUMMARY, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
+import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -40,6 +40,17 @@ export interface HistoryEntrySummary {
 }
 export interface HistoryView {
   ops: HistoryEntrySummary[]; cursor: number; len: number
+  /** Absolute stack index of `ops[0]` (= `len - ops.length`). `ops` is the LAST
+   *  `limit` entries, so `ops[i]`'s absolute index is `window_start + i` — the
+   *  index `cursor` is stated in, and the only index `jumpTo` accepts.
+   *
+   *  Without it a windowed read is unreadable: `view(100)` over a 150-entry stack
+   *  reports `cursor: 149` against a 100-element array, and `evicted: 0` while the
+   *  first op returned is the 51st of the project. `window_start === 0 &&
+   *  evicted === 0` is the ONLY combination that means "ops[0] is the start of the
+   *  project"; `window_start > 0` means the window is narrower than the stack, and
+   *  `evicted > 0` means the stack itself is narrower than the project. */
+  window_start: number
   checkpoints: Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
   /** How many entries `record()` has dropped off the FRONT since the stack was
    *  seeded (0 until the cap is first exceeded; back to 0 after `reset()`).
@@ -258,13 +269,18 @@ export class History {
     // AFTER its own op, so a delete is nameable only from its PREDECESSOR; the
     // index is absolute because that predecessor may sit outside this window
     // (history-labels.ts owns the fallback chain).
+    // One flattener for the WHOLE call: adjacent entries share snapshot objects
+    // (entry i's `after` is entry i+1's `before`), so without the memo every
+    // snapshot is flattened twice — synchronous main work on every commit while
+    // the panel is open.
+    const flatten = createLayerFlattener()
     const ops = this.snapshots.slice(start).map((e, i) => ({
       op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, label_key: e.label_key,
       label_args: e.label_args, affected: e.affected,
-      entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[start + i - 1]?.snapshot ?? null, e.affected),
+      entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[start + i - 1]?.snapshot ?? null, e.affected, flatten),
     }))
     const checkpoints = this.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
-    const v: HistoryView = { ops, cursor: this.cursor, len: total, checkpoints, evicted: this.evictedCount }
+    const v: HistoryView = { ops, cursor: this.cursor, len: total, window_start: start, checkpoints, evicted: this.evictedCount }
     if (this.lockReasonStr !== null) v.lock_reason = this.lockReasonStr
     return v
   }

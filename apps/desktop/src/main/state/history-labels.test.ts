@@ -114,10 +114,32 @@ describe('resolveEntityLabels', () => {
     expect(labels({ ...p, tracks: [{ ...t0, label: 'A-Roll' }, t1] }, [{ kind: 'Track', id: t0.id }])).toEqual([{ text: 'A-Roll' }])
     expect(labels({ ...p, tracks: [{ ...t0, label: null }, t1] }, [{ kind: 'Track', id: t0.id }])).toEqual([{ kind_key: 'kinds.video' }])
   })
+  // Every branch trims, not just the Layer one. The panel filters zero-length
+  // names out, so an untrimmed '   ' renders a row with NO entity name at all —
+  // strictly worse than the kind rung the same track would get from `null`.
+  it('treats a blank track label as absent, exactly as the layer chain does', () => {
+    const p = fresh()
+    const [t0, t1] = p.tracks
+    for (const blank of ['', '   ']) {
+      expect(labels({ ...p, tracks: [{ ...t0, label: blank }, t1] }, [{ kind: 'Track', id: t0.id }]))
+        .toEqual([{ kind_key: 'kinds.video' }])
+    }
+  })
+  const marker = (label: string) =>
+    ({ id: 'M', t_us: 0, end_t_us: null, label, color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} })
   it('names a marker by its label', () => {
     const p = fresh()
-    const withMarker = { ...p, markers: [{ id: 'M', t_us: 0, end_t_us: null, label: 'Shot 3', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }] }
-    expect(labels(withMarker, [{ kind: 'Marker', id: 'M' }])).toEqual([{ text: 'Shot 3' }])
+    expect(labels({ ...p, markers: [marker('Shot 3')] }, [{ kind: 'Marker', id: 'M' }])).toEqual([{ text: 'Shot 3' }])
+  })
+  // Markers carry no kind discriminant of their own, so before this rung existed
+  // a blank-labelled marker fell through to the raw uuid — contradicting this
+  // module's "Never the uuid" rule and putting 36 characters in a history row.
+  it('gives a blank-labelled marker its kind rung rather than the uuid', () => {
+    const p = fresh()
+    for (const blank of ['', '   ']) {
+      expect(labels({ ...p, markers: [marker(blank)] }, [{ kind: 'Marker', id: 'M' }]))
+        .toEqual([{ kind_key: 'kinds.marker' }])
+    }
   })
   it('falls back to the raw id for a ref the snapshot does not hold', () => {
     expect(labels(fresh(), [{ kind: 'Layer', id: 'gone' }, { kind: 'Track', id: 'gone-t' }, { kind: 'Marker', id: 'gone-m' }]))

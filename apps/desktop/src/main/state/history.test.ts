@@ -236,6 +236,44 @@ describe('History', () => {
     expect(ops[0].entity_labels).toEqual([])           // parallel to affected: []
   })
 
+  /// Consecutive entries SHARE snapshot objects — entry i's `after` is entry
+  /// i+1's `before` — so a naive resolve flattens every snapshot twice. This is
+  /// synchronous main-process work on every commit while the panel is open, and
+  /// a gizmo drag commits repeatedly.
+  it('flattens each snapshot at most ONCE per view() call', () => {
+    const gen = seededGen()
+    let reads = 0
+    /// A snapshot that counts `.tracks` reads. Only Layer refs are used below,
+    /// so the label chain touches `tracks` for exactly one reason: flattening.
+    const counted = (p: Project): Project => {
+      const clone = { ...p }
+      Object.defineProperty(clone, 'tracks', {
+        get() { reads += 1; return p.tracks },
+        enumerable: true, configurable: true,
+      })
+      return clone
+    }
+    const base = blankProject(gen, 'memo')
+    const h = new History(counted(base), U, gen())
+    // A ref NO snapshot holds, so every entry consults its own snapshot AND its
+    // predecessor's — the double-flatten the memo removes.
+    const ghost = [{ kind: 'Layer' as const, id: 'ghost' }]
+    for (let i = 0; i < 3; i++) {
+      h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer',
+        label_key: HISTORY_SUMMARY.layerDelete.key, affected: ghost, snapshot: counted(base) })
+    }
+
+    reads = 0
+    const v = h.view(10)
+    expect(v.ops).toHaveLength(4)
+    // 4 snapshots are consulted (the seed only as a predecessor — its own entry
+    // has no `affected` and never resolves anything). Un-memoized this is 6:
+    // three entries × (own + predecessor).
+    expect(reads).toBe(4)
+    // …and the answers are unchanged.
+    expect(v.ops[1].entity_labels).toEqual([{ text: 'ghost' }])
+  })
+
   /// A ref no stored snapshot holds is the only case that may fall back to a uuid.
   it('view falls back to the raw id when neither snapshot holds the ref', () => {
     const gen = seededGen()
@@ -243,6 +281,56 @@ describe('History', () => {
     const h = new History(p0, U, gen())
     h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'ghost' }], snapshot: p0 })
     expect(h.view(10).ops[1].entity_labels).toEqual([{ text: 'ghost' }])
+  })
+
+  /// `ops` is the LAST `limit` entries, so its positions are not stack indices
+  /// unless the whole stack fits. `cursor` is absolute, `jumpTo` takes absolute,
+  /// and `window_start` is the only thing that relates the two — without it a
+  /// windowed read reports a cursor that indexes past the end of the array it
+  /// just handed over.
+  describe('window_start', () => {
+    it('is 0 when the whole stack fits and total - take when it does not', () => {
+      const h = new History(freshProject('0'), U, 'op0')
+      for (let i = 1; i < 10; i++) h.record(entry(freshProject(`${i}`), `op${i}`))
+      expect(h.len()).toBe(10)
+
+      const whole = h.view(100)
+      expect(whole.window_start).toBe(0)
+      expect(whole.ops).toHaveLength(10)
+
+      const windowed = h.view(4)
+      expect(windowed.window_start).toBe(6)
+      expect(windowed.ops).toHaveLength(4)
+      // The identity a reader needs: window_start + ops.length === len, and
+      // ops[i]'s absolute index is window_start + i.
+      expect(windowed.window_start + windowed.ops.length).toBe(windowed.len)
+      expect(windowed.ops[0].op_id).toBe('op6')
+      expect(windowed.ops[windowed.cursor - windowed.window_start].op_id).toBe('op9')
+    })
+
+    it('places the cursor OUTSIDE the returned array when the window is narrow', () => {
+      const h = new History(freshProject('0'), U, 'op0')
+      for (let i = 1; i < 10; i++) h.record(entry(freshProject(`${i}`), `op${i}`))
+      const v = h.view(3)
+      // cursor 9 against a 3-element array: absolute, not an offset. Nothing but
+      // window_start can tell a consumer that.
+      expect(v.cursor).toBe(9)
+      expect(v.cursor).toBeGreaterThanOrEqual(v.ops.length)
+      expect(v.window_start).toBe(7)
+    })
+
+    it('is independent of `evicted` — they answer different questions', () => {
+      const h = new History(freshProject('seed'), U, 'op0')
+      for (let i = 0; i < 205; i++) h.record(entry(freshProject(`e${i}`), `op${i}`))
+      // The stack is narrower than the project (evicted) AND the window is
+      // narrower than the stack (window_start). Only both being 0 means
+      // "ops[0] is the start of the project".
+      const v = h.view(50)
+      expect(v.evicted).toBe(6)
+      expect(v.window_start).toBe(150)
+      expect(h.view(500).window_start).toBe(0)
+      expect(h.view(500).evicted).toBe(6)
+    })
   })
 
   /// The window can start past the entry a delete needs for its name — the

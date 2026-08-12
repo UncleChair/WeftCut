@@ -88,6 +88,7 @@ function stackView(
     ops,
     cursor: ops.length - 1,
     len: ops.length,
+    window_start: 0,
     checkpoints,
     evicted: 0,
     ...overrides,
@@ -311,6 +312,62 @@ describe("checkpoint delete", () => {
     expect(mocks.projectHistoryView).toHaveBeenCalledTimes(2);
   });
 
+  // `CheckpointNotFound` is the LIKELIEST failure here, not an exotic one:
+  // delete broadcasts nothing, so the row on screen is stale whenever anything
+  // else removed the checkpoint first. Skipping the refetch on failure pins that
+  // stale row permanently and makes every retry fail identically.
+  it("refetches after a FAILED delete too, so a stale row cannot outlive it", async () => {
+    await mountPanel(stackView([checkpoint()]));
+    expect(mocks.projectHistoryView).toHaveBeenCalledTimes(1);
+
+    mocks.projectDeleteCheckpoint.mockRejectedValueOnce(
+      new Error(JSON.stringify({ error: "CheckpointNotFound", id: "cp-1" })),
+    );
+    // The refetch that follows sees the truth: it was already gone.
+    mocks.projectHistoryView.mockResolvedValue(stackView([]));
+
+    fireEvent.click(button("Delete"));
+    await settle();
+    fireEvent.click(button("Delete checkpoint"));
+    await settle();
+
+    expect(mocks.projectDeleteCheckpoint).toHaveBeenCalledWith("cp-1");
+    expect(mocks.projectHistoryView).toHaveBeenCalledTimes(2);
+    expect(rows()).toHaveLength(0);
+    expect(screen.queryByText("Delete checkpoint?")).toBeNull();
+  });
+
+  // A user can delete an agent session's `Pre-agent:` checkpoint — that
+  // session's only way back. Delete is deliberately NOT gated on the revert lock
+  // (the lock rejects reverts; a delete reverts nothing, and gating it would not
+  // help anyway since the user could delete before or after the session), so the
+  // honest fix is that the dialog says what is being destroyed.
+  it("names the checkpoint's OWNER in the confirmation", async () => {
+    await mountPanel(
+      stackView([
+        checkpoint({
+          id: "cp-2",
+          label: "Pre-agent: tidy the cut",
+          actor: { kind: "Agent", client: "claude" },
+        }),
+      ]),
+    );
+    fireEvent.click(button("Delete"));
+    await settle();
+    expect(
+      screen.getByText(
+        "Agent “claude” created this checkpoint — it may be that session's only way back.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("says so plainly when the checkpoint is the user's own", async () => {
+    await mountPanel(stackView([checkpoint()]));
+    fireEvent.click(button("Delete"));
+    await settle();
+    expect(screen.getByText("You created this checkpoint.")).toBeTruthy();
+  });
+
   it("cancelling the confirmation destroys nothing", async () => {
     await mountPanel(stackView([checkpoint()]));
     fireEvent.click(button("Delete"));
@@ -352,5 +409,19 @@ describe("checkpoint section under lock_reason", () => {
     fireEvent.click(button("Delete checkpoint"));
     await settle();
     expect(mocks.projectDeleteCheckpoint).toHaveBeenCalledWith("cp-1");
+  });
+
+  // An empty reason is a lock: `lock_history('')` passes the MCP parser. Testing
+  // truthiness would disable Restore (its `disabled` already reads `!== null`)
+  // while the tooltip claimed it was available, and let the click handler
+  // through.
+  it("treats an EMPTY lock reason as a lock on Restore", async () => {
+    await mountPanel(stackView([checkpoint()], { lock_reason: "" }));
+    expect(button("Restore").disabled).toBe(true);
+    expect(button("Restore").title).toBe("History is locked: ");
+
+    fireEvent.click(button("Restore"));
+    await settle();
+    expect(mocks.projectRestoreCheckpoint).not.toHaveBeenCalled();
   });
 });

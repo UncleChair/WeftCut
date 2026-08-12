@@ -132,4 +132,80 @@ describe('restore_checkpoint LogBus parity — renderer command path', () => {
       details: expect.objectContaining({ kind: 'Restore', checkpoint_id: cpId }),
     }))
   })
+
+  // The MCP path emits `Checkpoint:` rows for every creation; the renderer path
+  // did not. RecordPanel builds a `checkpoint_id → ts` map from exactly those
+  // rows and pairs each later Restore against it, so a user-created checkpoint
+  // produced a Restore divider whose creation event never existed — and the
+  // rolled-back range it should have hidden stayed on screen.
+  it('emits a Checkpoint log entry with User source on renderer command create', async () => {
+    const emitLog = vi.fn()
+    const host = createTsActorHost({ ...makeInMemoryDeps(), emitLog })
+    host.start()
+    emitLog.mockClear()
+
+    const cpId = await host.handleInvoke('project_create_checkpoint', { label: 'before the recut' })
+
+    expect(emitLog).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'info',
+      category: { kind: 'Project' },
+      source: { kind: 'User' },
+      message: 'Checkpoint: before the recut',
+      details: expect.objectContaining({ kind: 'Checkpoint', id: cpId, label: 'before the recut' }),
+    }))
+  })
+
+  it('pairs a user-created checkpoint with the user restore that follows it', async () => {
+    const emitLog = vi.fn()
+    const host = createTsActorHost({ ...makeInMemoryDeps(), emitLog })
+    host.start()
+    emitLog.mockClear()
+
+    const cpId = await host.handleInvoke('project_create_checkpoint', { label: 'cp' })
+    await host.handleInvoke('project_restore_checkpoint', { checkpointId: cpId })
+
+    // The pairing RecordPanel performs: both halves present, keyed on the SAME
+    // id, so the rolled-back range between them is computable.
+    const details = emitLog.mock.calls.map((c) => (c[0] as { details: { kind: string; id?: string; checkpoint_id?: string } }).details)
+    expect(details.find((d) => d.kind === 'Checkpoint')?.id).toBe(cpId)
+    expect(details.find((d) => d.kind === 'Restore')?.checkpoint_id).toBe(cpId)
+  })
+
+  // Deleting a checkpoint destroys a named recovery point and records NOTHING on
+  // the edit stack — the log ring is the only place it can leave a trace.
+  it('emits a distinct CheckpointDeleted row on renderer command delete', async () => {
+    const emitLog = vi.fn()
+    const host = createTsActorHost({ ...makeInMemoryDeps(), emitLog })
+    host.start()
+    const cpId = host.actor.checkpoint('doomed')
+    emitLog.mockClear()
+
+    await host.handleInvoke('project_delete_checkpoint', { checkpointId: cpId })
+
+    expect(emitLog).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'info',
+      category: { kind: 'Project' },
+      source: { kind: 'User' },
+      // The label is read BEFORE the delete — afterwards there is nothing left
+      // to name it with.
+      message: 'Checkpoint deleted: doomed',
+      details: expect.objectContaining({ kind: 'CheckpointDeleted', id: cpId, label: 'doomed' }),
+    }))
+    // NOT `kind: 'Checkpoint'`: RecordPanel keys its checkpoint→restore map on
+    // that, and reusing it here would overwrite the creation timestamp with the
+    // deletion's, corrupting every rolled-back range computed from it.
+    const kinds = emitLog.mock.calls.map((c) => (c[0] as { details: { kind: string } }).details.kind)
+    expect(kinds).not.toContain('Checkpoint')
+  })
+
+  it('emits nothing when the command itself is refused', async () => {
+    const emitLog = vi.fn()
+    const host = createTsActorHost({ ...makeInMemoryDeps(), emitLog })
+    host.start()
+    emitLog.mockClear()
+
+    await expect(host.handleInvoke('project_delete_checkpoint', { checkpointId: '00000000-0000-7000-8000-00000000dead' })).rejects.toThrow()
+    await expect(host.handleInvoke('project_create_checkpoint', { label: '   ' })).rejects.toThrow()
+    expect(emitLog).not.toHaveBeenCalled()
+  })
 })

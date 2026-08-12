@@ -15,15 +15,20 @@ import { LatestRequestCoordinator } from "./latestRequest";
 
 export interface HistoryStoreState {
   view: HistoryStackView | null;
-  /// True once the first fetch has settled. Distinguishes "no project / read
-  /// refused" (`view === null`, `ready === true`) from "haven't fetched yet"
-  /// (`view === null`, `ready === false`) — the Panel shows a spinner-ish
-  /// placeholder for the second and an empty state for the first.
+  /// True once the first fetch has settled — the Panel's only cue to draw a
+  /// placeholder rather than a bare list on its very first render.
+  ///
+  /// `view === null` therefore means exactly one thing: the seed fetch has not
+  /// landed yet. There is no "fetched but empty" state to tell it apart from —
+  /// the read is served straight off a live actor whose stack always holds at
+  /// least the `Initial` seed.
   ready: boolean;
 }
 
 interface HistoryStoreActions {
-  apply: (view: HistoryStackView | null) => void;
+  /// Non-nullable on purpose: `null` is reachable only through `reset()`, which
+  /// means "not fetched", and nothing else can put the store back there.
+  apply: (view: HistoryStackView) => void;
   /// Back to the pre-fetch state, so a reopened Panel never flashes the stack
   /// as it stood when it was last closed.
   reset: () => void;
@@ -43,18 +48,28 @@ export const useHistoryStore = create<HistoryStoreState & HistoryStoreActions>(
 /// no IPC" is enforced in ONE place rather than at each call site.
 let requests: LatestRequestCoordinator | null = null;
 
+/// A failure here drives NO Panel state. `project_history_view` routes to a read
+/// that returns `actor.historyView(cap)` off a live actor and cannot refuse, so
+/// there is no pre-workspace / no-project branch to render — a "couldn't load"
+/// state would be one no test could ever reach.
+///
+/// It is still caught, because the IPC TRANSPORT can fail even when the handler
+/// cannot (a torn-down main process, a serialization error). Every caller either
+/// discards this promise (`void fetchView()` in the event listener) or awaits it
+/// from a click handler, so an escaping rejection would be an unhandled one. The
+/// last-known view stays on screen instead: stale rows are recoverable — the
+/// next `project:changed` refetches — where a thrown renderer is not.
 async function fetchView(): Promise<void> {
   const coordinator = requests;
   if (!coordinator) return;
-  await coordinator.run(
-    () => projectHistoryView(),
-    (view) => useHistoryStore.getState().apply(view),
-    () => {
-      // Pre-workspace / no project: the read rejects. Mark ready so the Panel
-      // renders its empty state instead of a permanent placeholder.
-      useHistoryStore.getState().apply(null);
-    },
-  );
+  try {
+    await coordinator.run(
+      () => projectHistoryView(),
+      (view) => useHistoryStore.getState().apply(view),
+    );
+  } catch (err) {
+    console.warn("[historyStore] history view fetch failed; keeping the last view", err);
+  }
 }
 
 /// Explicit refetch for the actions that change the view WITHOUT emitting

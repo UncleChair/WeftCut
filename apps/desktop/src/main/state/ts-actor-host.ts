@@ -301,7 +301,14 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (restore)', err) }
   }
 
-  function emitCheckpointLog(id: string, label: string, source: { kind: 'Agent'; client: string }): void {
+  /** The `Checkpoint:` pin-row. Emitted for EVERY checkpoint creation, agent or
+   *  user: RecordPanel builds a `checkpoint_id → ts` map from these rows and
+   *  pairs each later Restore against it, so a creation that never logged leaves
+   *  a Restore divider pointing at nothing. */
+  function emitCheckpointLog(
+    id: string, label: string,
+    source: { kind: 'User' } | { kind: 'Agent'; client: string },
+  ): void {
     try {
       deps.emitLog?.({
         level: 'info',
@@ -311,6 +318,28 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         details: { kind: 'Checkpoint', id, label },
       })
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (checkpoint)', err) }
+  }
+
+  /** Deleting a checkpoint destroys a named recovery point and records NOTHING
+   *  on the edit stack, so the log ring is the only place it can leave a trace.
+   *
+   *  A DISTINCT `details.kind` on purpose: RecordPanel keys its checkpoint→restore
+   *  map on `kind: 'Checkpoint'`, and reusing that here would overwrite the
+   *  creation timestamp with the deletion's and corrupt every rolled-back range
+   *  computed from it. */
+  function emitCheckpointDeletedLog(
+    id: string, label: string | null,
+    source: { kind: 'User' } | { kind: 'Agent'; client: string },
+  ): void {
+    try {
+      deps.emitLog?.({
+        level: 'info',
+        category: { kind: 'Project' },
+        source,
+        message: label != null ? `Checkpoint deleted: ${label}` : `Checkpoint deleted: ${id}`,
+        details: { kind: 'CheckpointDeleted', id, label: label ?? null },
+      })
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (checkpoint delete)', err) }
   }
 
   /** See TsActorHost.mcpCall. */
@@ -342,16 +371,34 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const route = routeChannel(channel)
     switch (route.kind) {
       case 'command': {
+        // Read BEFORE the command runs: delete destroys the row, so afterwards
+        // there is nothing left to name it with.
+        const doomedLabel = channel === 'project_delete_checkpoint'
+          ? actor.listCheckpoints().find((c) => c.id === (args.checkpointId as string | undefined))?.label ?? null
+          : null
         const r = actor.command(channel, args)
         // The renderer surfaces an IPC rejection as `Error.message` (bridge/ipc.ts),
         // so serialize the CommandError as JSON to keep it structured.
         if (!r.ok) throw new Error(JSON.stringify(r.error))
+        // The user-side half of the checkpoint pin-rows the MCP path emits from
+        // mcpCall. All three matter: without CREATE, RecordPanel pairs a later
+        // Restore against a checkpoint it never saw; without DELETE, destroying a
+        // named recovery point leaves no trace anywhere (it records no history
+        // entry either).
         if (channel === 'project_restore_checkpoint') {
           // Emit the Restore pin-row (User source). The checkpoint is kept on restore,
           // so listCheckpoints() still resolves the id → label after the call.
           const cpId = (args.checkpointId as string | undefined) ?? ''
           const label = actor.listCheckpoints().find((c) => c.id === cpId)?.label ?? null
           emitRestoreLog(cpId, label, { kind: 'User' })
+        } else if (channel === 'project_create_checkpoint') {
+          emitCheckpointLog(
+            typeof r.value === 'string' ? r.value : '',
+            typeof args.label === 'string' ? args.label.trim() : '',
+            { kind: 'User' },
+          )
+        } else if (channel === 'project_delete_checkpoint') {
+          emitCheckpointDeletedLog((args.checkpointId as string | undefined) ?? '', doomedLabel, { kind: 'User' })
         }
         return r.value
       }

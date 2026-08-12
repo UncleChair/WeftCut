@@ -75,10 +75,27 @@ function stackView(
     ops,
     cursor: ops.length - 1,
     len: ops.length,
+    window_start: 0,
     checkpoints: [],
     evicted: 0,
     ...overrides,
   };
+}
+
+/// A view whose `ops` are a WINDOW onto a longer stack: `ops[0]` sits at
+/// absolute index `windowStart`, exactly the shape `view(limit)` returns when
+/// the limit is narrower than the stack.
+function windowedView(
+  ops: HistoryStackEntry[],
+  windowStart: number,
+  overrides: Partial<HistoryStackView> = {},
+): HistoryStackView {
+  return stackView(ops, {
+    window_start: windowStart,
+    len: windowStart + ops.length,
+    cursor: windowStart + ops.length - 1,
+    ...overrides,
+  });
 }
 
 function summaryWith(layerIds: string[]): ProjectSummary {
@@ -140,6 +157,17 @@ async function mountPanel(view: HistoryStackView): Promise<void> {
   mocks.projectHistoryView.mockResolvedValue(view);
   render(<HistoryPanel />);
   await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/// Drive a `project:changed` round trip: the store refetches and the Panel
+/// re-renders off the new view — the only way a mounted Panel ever changes.
+async function refetch(view: HistoryStackView): Promise<void> {
+  mocks.projectHistoryView.mockResolvedValue(view);
+  await act(async () => {
+    mocks.onProjectChanged!();
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -263,9 +291,69 @@ describe("HistoryPanel rendering", () => {
     expect(rowAt(0).disabled).toBe(false);
   });
 
-  it("shows an empty state for a project with no recorded edits", async () => {
-    await mountPanel(stackView([]));
-    expect(screen.getByText("No edits recorded yet.")).toBeTruthy();
+  // There is no "empty" state to render — the stack always holds at least the
+  // `Initial` seed and the read cannot refuse — so the one rowless moment is
+  // before the seed fetch settles.
+  it("shows the loading placeholder until the first fetch settles, and never after", async () => {
+    mocks.projectHistoryView.mockResolvedValue(
+      stackView([entry(USER, "history.initial")]),
+    );
+    render(<HistoryPanel />);
+    expect(screen.getByText("Loading history…")).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Loading history…")).toBeNull();
+    expect(rows()).toHaveLength(1);
+  });
+});
+
+// ── Windowed views: `ops` is the last N of the stack ────────────────────────
+
+describe("HistoryPanel window offset", () => {
+  // `ops[i]`'s stack index is `window_start + i`. Reading the array position as
+  // the stack index does not fail loudly — it jumps to a real, reachable, WRONG
+  // state, which is why the offset has to be threaded rather than assumed.
+  it("indexes rows absolutely and jumps to the absolute index", async () => {
+    await mountPanel(
+      windowedView(
+        [
+          entry(USER, "history.layer.add"),
+          entry(USER, "history.layer.trim"),
+          entry(USER, "history.layer.move"),
+        ],
+        50,
+      ),
+    );
+    expect(rows().map((r) => r.dataset.historyIndex)).toEqual(["50", "51", "52"]);
+    // The cursor is stated in the same absolute space.
+    expect(rowAt(52).getAttribute("aria-current")).toBe("true");
+    expect(rowAt(50).dataset.state).toBe("past");
+
+    fireEvent.click(rowAt(50));
+    await act(async () => {});
+    expect(mocks.projectJumpTo).toHaveBeenCalledWith(50);
+  });
+
+  it("lets a group at the window's top jump to the predecessor OUTSIDE the window", async () => {
+    await mountPanel(
+      windowedView(
+        [
+          entry(agent("claude"), "history.layer.split"),
+          entry(agent("claude"), "history.layer.split"),
+          entry(USER, "history.layer.trim"),
+        ],
+        50,
+      ),
+    );
+    const header = groupHeaders()[0]!;
+    // The state before the run is index 49 — the backend holds it, this read
+    // simply did not return it. Disabling here would strand the user.
+    expect(header.disabled).toBe(false);
+    fireEvent.click(header);
+    await act(async () => {});
+    expect(mocks.projectJumpTo).toHaveBeenCalledWith(49);
   });
 });
 
@@ -365,6 +453,35 @@ describe("HistoryPanel lock", () => {
     expect(
       document.querySelector(".history-lock-reason")?.textContent,
     ).toBe("History is locked: agent is reverting");
+
+    fireEvent.click(rows()[0]!);
+    await act(async () => {});
+    expect(mocks.projectJumpTo).not.toHaveBeenCalled();
+  });
+
+  // `lock_history('')` passes the MCP parser — it imposes no non-empty check —
+  // and an empty reason locks the stack exactly as hard as a wordy one. Testing
+  // truthiness anywhere then splits the UI against itself: rows that are
+  // disabled with no badge and a "Jump to this state" tooltip explaining why
+  // they aren't.
+  it("treats an EMPTY lock reason as a lock, badge and tooltips included", async () => {
+    await mountPanel(
+      stackView(
+        [
+          entry(USER, "history.initial"),
+          entry(agent("claude"), "history.layer.split"),
+          entry(agent("claude"), "history.layer.split"),
+        ],
+        { lock_reason: "" },
+      ),
+    );
+    for (const row of rows()) {
+      expect(row.disabled).toBe(true);
+      expect(row.title).toBe("History is locked: ");
+    }
+    expect(groupHeaders()[0]!.disabled).toBe(true);
+    expect(groupHeaders()[0]!.title).toBe("History is locked: ");
+    expect(document.querySelector(".history-lock-badge")).not.toBeNull();
 
     fireEvent.click(rows()[0]!);
     await act(async () => {});
@@ -472,15 +589,6 @@ describe("HistoryPanel sticky cursor follow", () => {
     }
   }
 
-  async function refetch(view: HistoryStackView): Promise<void> {
-    mocks.projectHistoryView.mockResolvedValue(view);
-    await act(async () => {
-      mocks.onProjectChanged!();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-  }
-
   it("follows the cursor, yields when the user scrolls up, resumes at the bottom", async () => {
     // Stable op_ids across refetches (so React reuses the row nodes and the
     // stubbed geometry survives), fresh array identity each time (so the
@@ -512,6 +620,95 @@ describe("HistoryPanel sticky cursor follow", () => {
     stubGeometry(rowAt(0), { offsetTop: 0, offsetHeight: 20 });
     await refetch(stackView([...ops], { cursor: 0 }));
     expect(list.scrollTop).toBe(0);
+  });
+
+  // The bug this test exists for: the follow used to disarm ITSELF. Scrolling a
+  // MID-STACK cursor row into view leaves the list far from its bottom, and a
+  // real browser fires `scroll` for that programmatic move — which a
+  // "sticky = near the bottom" rule reads as the user scrolling away. One click
+  // on any row above the fold and the panel stopped following the cursor for the
+  // rest of its life. jsdom fires no event for a `scrollTop` assignment, so the
+  // fireEvent.scroll below is the whole point of the case.
+  it("keeps following after the cursor lands MID-STACK", async () => {
+    const ops = Array.from({ length: 4 }, () => entry(USER, "history.layer.add"));
+    await mountPanel(stackView([...ops], { cursor: 3 }));
+
+    const list = document.querySelector<HTMLElement>(".history-stack")!;
+    Object.defineProperty(list, "scrollTop", { value: 200, writable: true });
+    stubGeometry(list, { scrollHeight: 300, clientHeight: 100 });
+    stubGeometry(rowAt(1), { offsetTop: 20, offsetHeight: 20 });
+    stubGeometry(rowAt(3), { offsetTop: 250, offsetHeight: 20 });
+
+    // Click row 1 → the cursor lands mid-stack and the follow scrolls it into
+    // view, 180 px from the bottom.
+    await refetch(stackView([...ops], { cursor: 1 }));
+    expect(list.scrollTop).toBe(20);
+    fireEvent.scroll(list);
+
+    // Sticky means "the cursor row is visible", so that event re-affirmed it
+    // rather than cancelling it: the next cursor move is still followed.
+    await refetch(stackView([...ops], { cursor: 3 }));
+    expect(list.scrollTop).toBe(170);
+  });
+
+  it("yields when the user scrolls the cursor row out of view, and re-arms on the way back", async () => {
+    const ops = Array.from({ length: 4 }, () => entry(USER, "history.layer.add"));
+    await mountPanel(stackView([...ops], { cursor: 1 }));
+
+    const list = document.querySelector<HTMLElement>(".history-stack")!;
+    Object.defineProperty(list, "scrollTop", { value: 20, writable: true });
+    stubGeometry(list, { scrollHeight: 300, clientHeight: 100 });
+    stubGeometry(rowAt(1), { offsetTop: 20, offsetHeight: 20 });
+    stubGeometry(rowAt(3), { offsetTop: 250, offsetHeight: 20 });
+
+    // Scrolled DOWN past the cursor row — it is no longer on screen, so the
+    // user is driving and the panel gets out of the way.
+    list.scrollTop = 200;
+    fireEvent.scroll(list);
+    await refetch(stackView([...ops], { cursor: 1 }));
+    expect(list.scrollTop).toBe(200);
+
+    // Scrolled back until the cursor row is visible again → follow resumes.
+    list.scrollTop = 10;
+    fireEvent.scroll(list);
+    await refetch(stackView([...ops], { cursor: 3 }));
+    expect(list.scrollTop).toBe(170);
+  });
+});
+
+// ── Group expansion ─────────────────────────────────────────────────────────
+
+describe("HistoryPanel group expansion", () => {
+  const runView = (ops: HistoryStackEntry[]) =>
+    stackView([entry(USER, "history.initial"), ...ops]);
+
+  it("forgets an expanded run once it leaves the stack, so a re-exposed id is not silently pre-expanded", async () => {
+    const run = [
+      entry(agent("claude"), "history.layer.split"),
+      entry(agent("claude"), "history.layer.split"),
+    ];
+    await mountPanel(runView(run));
+
+    fireEvent.click(screen.getByRole("button", { name: "Show every step" }));
+    expect(rows().map((r) => r.dataset.historyIndex)).toEqual(["0", "1", "2"]);
+
+    // The run is truncated away (a new edit from mid-stack) — its id is no
+    // longer among the live items.
+    await refetch(
+      runView([
+        entry(agent("cursor"), "history.marker.add"),
+        entry(agent("cursor"), "history.marker.add"),
+      ]),
+    );
+    expect(screen.getByRole("button", { name: "Show every step" })).toBeTruthy();
+
+    // …and now those exact op_ids come back (a jump back down the stack, or an
+    // eviction window that re-includes them). They must render COLLAPSED: the
+    // user did not ask for this run to be open, and nothing on screen would
+    // explain why it was.
+    await refetch(runView(run));
+    expect(rows().map((r) => r.dataset.historyIndex)).toEqual(["0"]);
+    expect(screen.getByRole("button", { name: "Show every step" })).toBeTruthy();
   });
 });
 

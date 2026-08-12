@@ -146,7 +146,7 @@ around 40, organised below.
 | `project://tracks` | tracks + layer envelopes |
 | `project://layers/{id}` | one layer in detail |
 | `project://markers` | all markers |
-| `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against **that op's own snapshot** so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a resolved name or `{"kind_key": "kinds.color"}` when only the entity's kind is known (the key is translated by the UI). The envelope also carries `evicted`: how many entries have been dropped off the FRONT of the stack at capacity. Non-zero means the first op returned is **not** the start of the project — eviction does not spare the `Initial` entry, and `len` (the live stack length) cannot tell you |
+| `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a resolved name or `{"kind_key": "kinds.color"}` when only the entity's kind is known (the key is translated by the UI). The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |
@@ -158,6 +158,27 @@ around 40, organised below.
 `media://*` reads return `404` with a hint pointing at the
 `media:job_complete` event when derivatives haven't been generated
 yet, so agents know to wait + retry rather than give up.
+
+#### Reading `project://history` positions
+
+`ops` is a **window** — the last N entries of the stack, currently N = 100 against
+a cap of 200 — and `cursor` is an **absolute stack index**, not an offset into
+`ops`. Two envelope fields place the window, and they answer different questions:
+
+- **`window_start`** — the absolute stack index of `ops[0]`, i.e. `len -
+  ops.length`. `ops[i]`'s absolute index is `window_start + i`, and that is the
+  only index space `jump_to` accepts. On a 150-entry stack the resource returns
+  ops 50..149 with `window_start: 50` and `cursor: 149`; reading `cursor` as an
+  index into the 100-element array lands 50 entries off, or off the end entirely.
+- **`evicted`** — how many entries `record()` has dropped off the FRONT of the
+  stack at capacity. The eviction does not spare the `Initial` entry, and `len`
+  (the live stack length) cannot tell you.
+
+So `window_start === 0 && evicted === 0` is the **only** combination meaning
+"`ops[0]` is the start of the project". `window_start > 0` means the window is
+narrower than the stack (re-read for more); `evicted > 0` means the stack itself
+is narrower than the project, and those states are gone — nothing can jump back
+to them.
 
 ### Analysis tools
 

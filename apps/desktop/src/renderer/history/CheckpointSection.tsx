@@ -46,7 +46,9 @@ export function CheckpointSection({
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const onRestore = async (id: string) => {
-    if (lockReason) return; // belt-and-suspenders; the backend also rejects
+    // `!== null`, not truthiness: `lock_history('')` passes the MCP parser and
+    // locks just as hard. Tested identically in the `disabled` prop below.
+    if (lockReason !== null) return; // belt-and-suspenders; the backend also rejects
     setBusyId(id);
     // No explicit refresh: restore RECORDS an entry, so it broadcasts
     // `project:changed` and the store refetches itself. Create and delete are
@@ -60,16 +62,15 @@ export function CheckpointSection({
 
   const onConfirmDelete = async (id: string) => {
     setBusyId(id);
-    const ok = await tryMutate(
-      () => projectDeleteCheckpoint(id),
-      "project_delete_checkpoint",
-    );
+    await tryMutate(() => projectDeleteCheckpoint(id), "project_delete_checkpoint");
     setBusyId(null);
     setPendingDelete(null);
-    if (!ok) return;
-    // `delete_checkpoint` changes no project state, so nothing broadcasts and
-    // the Panel would keep drawing the row it just destroyed (ticket 02's
-    // constraint on 04).
+    // Refetch on FAILURE as much as on success. `delete_checkpoint` changes no
+    // project state, so nothing broadcasts and the Panel would keep drawing the
+    // row it just destroyed (ticket 02's constraint on 04) — and the likeliest
+    // failure is `CheckpointNotFound`, i.e. the row on screen was already stale.
+    // Skipping the refetch there pins the stale row permanently and makes every
+    // retry fail the same way.
     await refreshHistoryView();
   };
 
@@ -151,7 +152,7 @@ export function CheckpointSection({
                   className="history-checkpoint-restore"
                   disabled={lockReason !== null || busy}
                   title={
-                    lockReason
+                    lockReason !== null
                       ? t("history_panel.locked_hint", { reason: lockReason })
                       : t("history_panel.checkpoint_restore_hint")
                   }
@@ -191,6 +192,13 @@ export function CheckpointSection({
 /// not bring it back and there is no second chance anywhere. Create is cheap
 /// and reversible by exactly this action, which is why only one side asks.
 ///
+/// The dialog names the checkpoint's OWNER, because the destructive case is
+/// cross-actor: a user can delete an agent session's `Pre-agent: <reason>`
+/// checkpoint, which is that session's only way back. Delete is deliberately NOT
+/// gated on the revert lock — the lock rejects revert paths and a delete reverts
+/// nothing, and gating it would not help anyway (the user could delete before or
+/// after the session). Saying whose it is, is the honest fix.
+///
 /// Built on `AppDialog` + a destructive footer button, the same shape
 /// `MediaPool`'s remove-media confirmation uses — the codebase's one
 /// destructive-confirm primitive.
@@ -206,6 +214,8 @@ function DeleteCheckpointDialog({
   onConfirm: () => void;
 }) {
   const { t } = useTranslation();
+  const client =
+    target.actor.kind === "Agent" ? target.actor.client : null;
   return (
     <AppDialog
       title={t("history_panel.checkpoint_delete_title")}
@@ -217,6 +227,11 @@ function DeleteCheckpointDialog({
         <div className="settings-card">
           <p className="settings-blurb">
             {t("history_panel.checkpoint_delete_body", { label: target.label })}
+          </p>
+          <p className="settings-blurb checkpoint-delete-owner">
+            {client === null
+              ? t("history_panel.checkpoint_delete_owner_user")
+              : t("history_panel.checkpoint_delete_owner_agent", { client })}
           </p>
           <p className="settings-warn">
             {t("history_panel.checkpoint_delete_note")}

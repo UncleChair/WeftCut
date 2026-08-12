@@ -65,9 +65,17 @@ export function HistoryPanel() {
   const ops = view?.ops ?? EMPTY_OPS;
   const checkpoints = view?.checkpoints ?? EMPTY_CHECKPOINTS;
   const cursor = view?.cursor ?? 0;
+  const len = view?.len ?? 0;
   const evicted = view?.evicted ?? 0;
   const lockReason = view?.lock_reason ?? null;
-  const items = useMemo(() => buildHistoryItems(ops), [ops]);
+  // `ops` is the last N of the stack; every index below is ABSOLUTE
+  // (`window_start + position`), because that is the space `cursor` is stated in
+  // and the only one `projectJumpTo` accepts.
+  const windowStart = view?.window_start ?? 0;
+  const items = useMemo(
+    () => buildHistoryItems(ops, windowStart),
+    [ops, windowStart],
+  );
 
   // Expanded agent groups, keyed by the run's first op_id so expansion
   // survives a refetch.
@@ -82,6 +90,28 @@ export function HistoryPanel() {
     });
   }, []);
 
+  // Prune the expansion set against the runs that actually exist. Without this
+  // the ids of truncated / evicted runs accumulate for the Panel's lifetime, and
+  // a re-exposed matching id would render pre-expanded for no reason the user
+  // can account for. Adjusting state during render (rather than in an effect) is
+  // what keeps that from flashing expanded for a frame first; the guard makes it
+  // converge in one extra pass.
+  const liveGroupIds = useMemo(
+    () =>
+      new Set(
+        items.flatMap((item) =>
+          item.kind === "group" ? [historyGroupId(item)] : [],
+        ),
+      ),
+    [items],
+  );
+  if (
+    expanded.size > 0 &&
+    ![...expanded].every((id) => liveGroupIds.has(id))
+  ) {
+    setExpanded(new Set([...expanded].filter((id) => liveGroupIds.has(id))));
+  }
+
   // Supersession guard: a second click while the first jump's refetch is still
   // in flight must not let the older linkage land last and select the wrong
   // thing.
@@ -89,12 +119,19 @@ export function HistoryPanel() {
 
   const jumpTo = useCallback(
     async (index: number) => {
-      if (lockReason) return;
-      if (index < 0 || index >= ops.length) return;
+      // `!== null`, not truthiness: `lock_history('')` is accepted by the MCP
+      // parser, and an empty reason locks the stack exactly as hard as a wordy
+      // one. Same test everywhere it is asked (see `disabled` / the titles).
+      if (lockReason !== null) return;
+      // Bounds are the whole STACK, not the window: a group header at the top of
+      // a narrow window targets `window_start - 1`, an index the backend holds
+      // and this read simply did not return.
+      if (index < 0 || index >= len) return;
       // Refs come off the entry the cursor is LANDING on — uniform for rows
       // and for group headers (which target `groupStart - 1`), and it is that
-      // entry's state we are about to be looking at.
-      const refs = ops[index]?.affected ?? [];
+      // entry's state we are about to be looking at. Outside the window there
+      // are none, and the jump still stands: linkage is a courtesy, not the act.
+      const refs = ops[index - windowStart]?.affected ?? [];
       const generation = ++jumpGeneration.current;
       // Armed BEFORE the jump: the refetch can land while `projectJumpTo` is
       // still awaiting, and a subscription registered afterwards would wait
@@ -109,15 +146,42 @@ export function HistoryPanel() {
       if (jumpGeneration.current !== generation) return;
       revealAffected(refs);
     },
-    [lockReason, ops],
+    [lockReason, ops, len, windowStart],
   );
 
-  // Sticky cursor follow, yielding the moment the user scrolls up and resuming
-  // at the bottom — the convention RecordPanel.tsx:22-24 already establishes
-  // for this panel family. 24 px of slack tolerates one overscroll tick.
+  // Sticky cursor follow, yielding the moment the user scrolls the cursor row
+  // out of view and re-arming when they bring it back — the convention
+  // RecordPanel.tsx:22-24 establishes for this panel family, restated for a
+  // cursor that can sit ANYWHERE in the stack rather than only at the end.
+  //
+  // Sticky therefore means "the cursor row is currently visible", NOT "we are
+  // near the bottom". That distinction is load-bearing: this panel scrolls to a
+  // mid-stack row, which leaves the list far from its bottom, and the `scroll`
+  // event the browser fires for that programmatic move would disarm a
+  // bottom-anchored rule permanently — one click on any row above the fold and
+  // the panel stops following forever. Recomputing from the cursor row's own
+  // geometry makes the follow self-consistent instead: it moves the row INTO
+  // view, so the event it provokes can only re-affirm sticky.
+  //
+  // A suppress-the-next-scroll flag was the other candidate and is worse: it is
+  // order-dependent, and a programmatic assignment that does not actually change
+  // `scrollTop` fires no event at all, leaving the flag armed to swallow the
+  // user's next genuine scroll.
   const listRef = useRef<HTMLDivElement | null>(null);
   const cursorRowRef = useRef<HTMLElement | null>(null);
   const stickyRef = useRef(true);
+
+  /// Does the cursor row's box intersect the scrollport? `null` when there is no
+  /// cursor row to measure (an empty stack), which the callers read as "fall
+  /// back to the bottom-anchored rule".
+  const cursorRowVisible = (list: HTMLElement): boolean | null => {
+    const target = cursorRowRef.current;
+    if (!target) return null;
+    const top = target.offsetTop;
+    const bottom = top + target.offsetHeight;
+    return bottom > list.scrollTop && top < list.scrollTop + list.clientHeight;
+  };
+
   useEffect(() => {
     const list = listRef.current;
     if (!list || !stickyRef.current) return;
@@ -137,6 +201,14 @@ export function HistoryPanel() {
   const onScroll = () => {
     const list = listRef.current;
     if (!list) return;
+    const visible = cursorRowVisible(list);
+    if (visible !== null) {
+      stickyRef.current = visible;
+      return;
+    }
+    // No cursor row to hold in view — the follow tails the bottom instead, so
+    // the yield rule has to match it. 24 px of slack tolerates one overscroll
+    // tick.
     const distanceFromBottom =
       list.scrollHeight - list.clientHeight - list.scrollTop;
     stickyRef.current = distanceFromBottom < 24;
@@ -151,7 +223,8 @@ export function HistoryPanel() {
       .join(separator);
 
   const rowTitle = (state: HistoryRowState): string => {
-    if (lockReason) return t("history_panel.locked_hint", { reason: lockReason });
+    if (lockReason !== null)
+      return t("history_panel.locked_hint", { reason: lockReason });
     if (state === "current") return t("history_panel.current_hint");
     return state === "future"
       ? t("history_panel.redo_hint")
@@ -253,7 +326,7 @@ export function HistoryPanel() {
             aria-current={isCursorProxy ? "true" : undefined}
             disabled={lockReason !== null || unreachable}
             title={
-              lockReason
+              lockReason !== null
                 ? t("history_panel.locked_hint", { reason: lockReason })
                 : unreachable
                   ? t("history_panel.group_jump_unavailable")
@@ -293,7 +366,7 @@ export function HistoryPanel() {
           moving the cursor, so drawing them inline would lie about what a
           click does (spec decision 9). */}
       <CheckpointSection checkpoints={checkpoints} lockReason={lockReason} />
-      {lockReason && (
+      {lockReason !== null && (
         <div className="history-lock-badge" title={lockReason}>
           <Lock size={12} aria-hidden="true" />
           <span className="history-lock-reason">
@@ -321,10 +394,12 @@ export function HistoryPanel() {
             ? renderGroup(item)
             : renderEntryRow(item.index, item.entry, false),
         )}
-        {items.length === 0 && (
-          <div className="history-empty">
-            {t(ready ? "history_panel.empty" : "history_panel.loading")}
-          </div>
+        {/* There is no empty state to render: the stack always holds at least
+            the `Initial` seed, and the read cannot fail (main serves it straight
+            off a live actor). The only rowless moment is before the first fetch
+            settles, which is what `ready` distinguishes. */}
+        {!ready && (
+          <div className="history-empty">{t("history_panel.loading")}</div>
         )}
       </div>
     </div>

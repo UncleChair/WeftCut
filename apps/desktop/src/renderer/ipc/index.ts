@@ -95,9 +95,17 @@ export interface HistoryCheckpointSummary {
 
 export interface HistoryStackView {
   ops: HistoryStackEntry[];
-  /// Index into `ops` of the entry whose state is current.
+  /// ABSOLUTE stack index of the entry whose state is current — stated in the
+  /// same space as `jumpTo`, NOT as an offset into `ops`.
   cursor: number;
   len: number;
+  /// Absolute stack index of `ops[0]` (= `len - ops.length`). `ops` is the last
+  /// N entries, so `ops[i]`'s absolute index is `window_start + i` — the only
+  /// index `projectJumpTo` accepts, and the one `cursor` is stated in. Today's
+  /// panel read asks for the whole cap and so always sees 0; deriving indices
+  /// from it anyway is what keeps that an optimisation rather than a load-bearing
+  /// assumption.
+  window_start: number;
   checkpoints: HistoryCheckpointSummary[];
   /// Entries dropped off the FRONT of the stack since it was seeded. Non-zero
   /// means the top row is NOT the start of the project — eviction does not spare

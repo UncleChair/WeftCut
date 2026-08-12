@@ -120,11 +120,14 @@ export type EntityLabel = { text: string } | { kind_key: string }
  *  `t("kinds." + kind.toLowerCase())`. */
 const kindKey = (kind: string): { kind_key: string } => ({ kind_key: `kinds.${kind.toLowerCase()}` })
 
-/** Every `kind_key` a label can carry: the six LayerParams discriminants plus
- *  `deriveTrackKindLabel`'s two outputs. Enumerated so the locale test can check
- *  they all resolve — an unresolvable one renders as a raw key in the panel. */
+/** Every `kind_key` a label can carry: the six LayerParams discriminants,
+ *  `deriveTrackKindLabel`'s two outputs, and `Marker` (markers have no kind
+ *  discriminant of their own — the rung exists so a blank-labelled marker names
+ *  its kind instead of falling through to a 36-char uuid). Enumerated so the
+ *  locale test can check they all resolve — an unresolvable one renders as a raw
+ *  key in the panel. */
 export const ENTITY_KIND_KEYS: readonly string[] =
-  ['VideoClip', 'ImageOverlay', 'Audio', 'Text', 'Color', 'Motif', 'Video'].map((k) => kindKey(k).kind_key)
+  ['VideoClip', 'ImageOverlay', 'Audio', 'Text', 'Color', 'Motif', 'Video', 'Marker'].map((k) => kindKey(k).kind_key)
 
 /** The one name a layer is shown under — the main-side twin of
  *  renderer/lib/layerName.ts `layerDisplayName`: own label (blank counts as
@@ -143,9 +146,13 @@ function layerLabel(p: Project, l: Layer): EntityLabel {
   return kindKey(l.params.kind)
 }
 
-/** One ref's name in ONE snapshot, or null when that snapshot doesn't hold it
- *  (or holds it nameless). `layers` is the caller's pre-flattened `p` — see
- *  resolveEntityLabels. */
+/** One ref's name in ONE snapshot, or null when that snapshot doesn't hold it.
+ *  `layers` is the caller's memoized flattening of `p` — see resolveEntityLabels.
+ *
+ *  Every branch runs the same chain the Layer one does: own label (BLANK COUNTS
+ *  AS ABSENT — the panel filters zero-length names out, so an untrimmed `'  '`
+ *  would render a row with no entity name at all), then the kind rung. Only a ref
+ *  the snapshot does not hold returns null. */
 function labelIn(p: Project, layers: Layer[], ref: EntityRef): EntityLabel | null {
   switch (ref.kind) {
     case 'Layer': {
@@ -154,12 +161,39 @@ function labelIn(p: Project, layers: Layer[], ref: EntityRef): EntityLabel | nul
     }
     case 'Track': {
       const t = p.tracks.find((x) => x.id === ref.id)
-      return t ? (t.label !== null ? { text: t.label } : kindKey(deriveTrackKindLabel(t))) : null
+      if (!t) return null
+      const own = t.label?.trim()
+      return own ? { text: own } : kindKey(deriveTrackKindLabel(t))
     }
     case 'Marker': {
       const m = p.markers.find((x) => x.id === ref.id)
-      return m && m.label.trim() !== '' ? { text: m.label } : null
+      if (!m) return null
+      const own = m.label.trim()
+      // Markers carry no kind discriminant, so the rung is the word itself —
+      // without it a blank-labelled marker fell through to the raw uuid, which
+      // is exactly what this module's "Never the uuid" rule forbids.
+      return own ? { text: own } : kindKey('Marker')
     }
+  }
+}
+
+/** Memoized `tracks.flatMap(t => t.layers)` keyed on snapshot IDENTITY, for the
+ *  span of ONE `view()` call.
+ *
+ *  Consecutive stack entries SHARE snapshot objects — entry i's `after` is entry
+ *  i+1's `before` — so a naive resolve flattens every snapshot twice, and this is
+ *  synchronous main-process work on every commit while the panel is open (a gizmo
+ *  drag commits repeatedly). The Map is per-call and dropped with it, so it can
+ *  never serve a stale flattening: `History` replaces snapshot objects wholesale
+ *  on every patch-everywhere path rather than mutating them. */
+export function createLayerFlattener(): (p: Project) => Layer[] {
+  const cache = new Map<Project, Layer[]>()
+  return (p) => {
+    const hit = cache.get(p)
+    if (hit) return hit
+    const flat = p.tracks.flatMap((t) => t.layers)
+    cache.set(p, flat)
+    return flat
   }
 }
 
@@ -174,15 +208,21 @@ function labelIn(p: Project, layers: Layer[], ref: EntityRef): EntityLabel | nul
  *  and hence `Deleted layer 「Clip 01」` renders a name rather than a uuid.
  *
  *  Returns a PARALLEL array (same length, same order as `affected`) so the two
- *  cannot desync. A ref neither snapshot names falls back to its raw id. */
-export function resolveEntityLabels(after: Project, before: Project | null, affected: EntityRef[]): EntityLabel[] {
+ *  cannot desync. A ref neither snapshot names falls back to its raw id.
+ *
+ *  `flatten` is the caller's memo — `view()` passes ONE flattener across every
+ *  entry so a snapshot shared by two adjacent entries is flattened once, not
+ *  twice. The default keeps a lone call self-contained. */
+export function resolveEntityLabels(
+  after: Project, before: Project | null, affected: EntityRef[],
+  flatten: (p: Project) => Layer[] = createLayerFlattener(),
+): EntityLabel[] {
   if (affected.length === 0) return []
-  // Flatten each snapshot's layers ONCE, not once per ref: view() calls this for
-  // every entry it returns, on every panel refetch.
-  const afterLayers = after.tracks.flatMap((t) => t.layers)
-  const beforeLayers = before !== null ? before.tracks.flatMap((t) => t.layers) : null
+  // `flatten(before)` is reached only when `after` cannot name the ref, so an
+  // entry whose refs all resolve from its own snapshot never touches the
+  // predecessor at all.
   return affected.map((ref): EntityLabel =>
-    labelIn(after, afterLayers, ref)
-      ?? (before !== null && beforeLayers !== null ? labelIn(before, beforeLayers, ref) : null)
+    labelIn(after, flatten(after), ref)
+      ?? (before !== null ? labelIn(before, flatten(before), ref) : null)
       ?? { text: ref.id })
 }

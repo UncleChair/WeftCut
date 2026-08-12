@@ -25,6 +25,30 @@ describe('serveProjectResource', () => {
     const body = JSON.parse(text(serveProjectResource('project://history', actor)))
     expect(Array.isArray(body.ops)).toBe(true)
     expect(body).toMatchObject({ cursor: expect.any(Number), len: expect.any(Number), checkpoints: expect.any(Array) })
+    // Whole stack fits in view(100) → the window IS the stack.
+    expect(body.window_start).toBe(0)
+  })
+
+  /// The resource serves `view(100)` against a cap of 200, so `ops` is routinely
+  /// a WINDOW: `cursor` is an absolute stack index that can sit past the end of
+  /// the array handed over, and `evicted: 0` does NOT mean "the first op is the
+  /// start of the project". `window_start` is the only field that says where the
+  /// window begins — docs/mcp.md promises it.
+  it('reports window_start when the stack is longer than the served window', () => {
+    const actor = mkActor()
+    for (let i = 0; i < 149; i++) {
+      const r = actor.mcpCall('add_track', JSON.stringify({ label: `t${i}` }))
+      expect(r.ok).toBe(true)
+    }
+    const body = JSON.parse(text(serveProjectResource('project://history', actor)))
+    expect(body.len).toBe(150)          // seed + 149, still under the 200 cap
+    expect(body.evicted).toBe(0)        // nothing dropped: the STACK holds it all
+    expect(body.ops).toHaveLength(100)  // …but the WINDOW does not
+    expect(body.window_start).toBe(50)
+    expect(body.cursor).toBe(149)
+    // The two identities a consumer needs to read any of it correctly.
+    expect(body.window_start + body.ops.length).toBe(body.len)
+    expect(body.cursor).toBeGreaterThan(body.ops.length)
   })
   it('serves composition / tracks from the snapshot', () => {
     const actor = mkActor()

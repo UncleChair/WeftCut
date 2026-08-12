@@ -76,6 +76,26 @@ describe('MCP tool table projections', () => {
     }
   })
 
+  // The tool description is the string the AGENT actually reads — the prose docs
+  // are for humans. When `jump_to` joined the revert paths both docs were
+  // updated and this drifted, leaving the agent told it could still be reverted
+  // by the one path the panel makes easiest.
+  const REVERT_PATHS = 'undo / redo / jump_to / restore_checkpoint'
+  it('lock_history ENUMERATES every revert path the lock actually rejects', () => {
+    const def = MCP_TOOL_DEFS.find((d) => d.name === 'lock_history')!
+    // The enumeration itself, not just a mention somewhere in the prose: an
+    // agent reads the list in the parentheses to decide what is still available.
+    expect(def.description).toContain(REVERT_PATHS)
+    // …and it must not re-tell the myth docs/mcp.md used to: the lock rejects
+    // reverts, it never changes what RECORDS (docs/features.md#undo-stack-scope).
+    expect(def.description).toMatch(/never affects what records|does not fold/i)
+  })
+
+  it('unlock_history enumerates the same paths it re-enables', () => {
+    const def = MCP_TOOL_DEFS.find((d) => d.name === 'unlock_history')!
+    expect(def.description).toContain(REVERT_PATHS)
+  })
+
   it('shapeResult tools are the expected 5', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
     expect(shapers).toEqual(['add_effect', 'add_track', 'add_transition', 'duplicate_layer', 'groups_create'])

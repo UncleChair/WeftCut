@@ -1248,7 +1248,9 @@ const enUS = {
   // The History Panel's own chrome. The ROW text comes from `history.*` above
   // (main records the key at commit time); everything here is panel furniture.
   history_panel: {
-    empty: "No edits recorded yet.",
+    // No "empty" string: the stack always holds at least the `Initial` seed and
+    // the read cannot fail, so the only rowless moment is before the first
+    // fetch settles.
     loading: "Loading history…",
     // Eviction header. Non-interactive: those snapshots are gone, so there is
     // nothing to jump to (spec decision 12).
@@ -1298,6 +1300,12 @@ const enUS = {
     checkpoint_delete_title: "Delete checkpoint?",
     checkpoint_delete_body:
       "“{{label}}” will be removed, and the state it holds can no longer be restored.",
+    // Whose checkpoint this is. The destructive case is cross-actor: an agent
+    // session's `Pre-agent:` checkpoint is that session's only way back, and
+    // nothing else in the dialog says the checkpoint isn't yours.
+    checkpoint_delete_owner_user: "You created this checkpoint.",
+    checkpoint_delete_owner_agent:
+      "Agent “{{client}}” created this checkpoint — it may be that session's only way back.",
     checkpoint_delete_note: "Deleting a checkpoint records nothing — Undo will not bring it back.",
     checkpoint_delete_confirm: "Delete checkpoint",
     checkpoint_deleting: "Deleting…",
@@ -1316,6 +1324,10 @@ const enUS = {
     text: "Text",
     motif: "Motif",
     color: "Color",
+    // Markers have no kind discriminant; the history panel's entity-label chain
+    // uses this as their last rung so a blank-labelled marker never renders as a
+    // raw uuid (main/state/history-labels.ts).
+    marker: "Marker",
   },
   search: {
     placeholder: "Search commands, media, clips, captions…",
