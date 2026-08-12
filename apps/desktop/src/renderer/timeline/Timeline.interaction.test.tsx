@@ -1722,7 +1722,18 @@ describe("Timeline seek/selection coupling", () => {
 
     // A duplicate lowers to `pasteLayer`, which needs a lane that exists, so the
     // strip stays dark and the copy lands on the source's own lane.
+    //
+    // The fallback is not a silent surprise, which is what makes it defensible:
+    // the duplicate ghost renders on that source lane at the dragged position
+    // (asserted below), so the row and the time the copy will take are both on
+    // screen before release. Suppressing the release instead would leave the
+    // gesture showing a landing spot it then refuses to use.
     expect(stripState(strip)).toEqual({ armed: "true", lit: "false", hints: 0 });
+    const ghost = container.querySelector(
+      '[data-duplicate-preview="true"]',
+    ) as HTMLElement;
+    expect(ghost).not.toBeNull();
+    expect(ghost.style.left).toBe("320px");
 
     fireEvent.pointerUp(window, { clientX: 320, clientY: 7, altKey: true });
 

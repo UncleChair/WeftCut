@@ -536,6 +536,13 @@ export function useLayerDrag(opts: {
       // and there is no create-and-paste operation — so the strip is simply not a
       // destination for a duplicate. Withheld here rather than refused at
       // release, the same instinct as this gesture's other pre-checks.
+      //
+      // Withholding falls back to the SOURCE lane, and that is honest rather than
+      // a silent surprise: `overTrackId === null` sends the duplicate ghost to the
+      // source lane (TrackLane's `duplicatePreview`), so the copy's landing row and
+      // time are both on screen before release. Do NOT "fix" this by suppressing
+      // the release — the dark strip says the strip is not the target, and the
+      // visible ghost says what is.
       const overTrackId =
         hitTrackId === SPAWN_TRACK_ID && state.duplicate ? null : hitTrackId;
       const destinationTrackId =
