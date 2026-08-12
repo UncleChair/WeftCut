@@ -118,3 +118,72 @@ is editor behavior plus a self-healing flag: any write that diverges the pair
 clears it in the same commit, and re-linking snaps `scale_y` to a copy of
 `scale_x`.
 _Avoid_: uniform-scale mode, scale lock, third keyframe mode
+
+## Track placement
+
+**Track**:
+The kind-agnostic container a layer sits in — the data object (`Project.tracks`,
+ordered bottom-of-z-stack first). Not something the user provisions: tracks
+appear and disappear around where media is placed (ADR 0042), so there is no
+add, remove or reorder surface for one.
+_Avoid_: channel, layer container, timeline row (that is the lane)
+
+**Lane**:
+A track's rendered row in the timeline — the presentation, not the object
+(`TrackLane.tsx`, `laneEls`). Say lane when the subject is the row on screen and
+track when it is the thing holding layers. Unrelated to a decode engine's
+hardware / software lane, which is a decode path.
+_Avoid_: lane as a synonym for track in data-model or command prose
+
+**Reserved skeleton**:
+The role-stamped tracks a blank project ships with — A roll, B roll, and the
+audio-role tracks derived from them. Non-removable, never swept by cleanup, and
+the reason "no tracks exist" is never a case the UI handles. Carrying a `role`
+is exactly what makes a track part of it.
+_Avoid_: default tracks, system tracks, fixed tracks
+
+**Transient**:
+The `Track.transient` flag, read as *not part of the reserved skeleton* —
+stamped on every track whose `role` is `None`, including one an agent creates
+deliberately. The name predates the meaning and reads like "temporary", which it
+is not: the flag says a track is eligible for cleanup, not that it is doomed.
+The invariant is `transient == (role is None)` at every creation site.
+_Avoid_: temporary track, scratch track, auto track
+
+**Derived name**:
+The name a track is shown under when it stores none (`label === null`, blank
+counting as absent) — from its `role` for the reserved skeleton, otherwise a
+positional number that renumbers as tracks come and go. Computed at display time
+in the renderer, never stored, because only the renderer can localize it.
+`trackName.ts` is the single answer for every surface.
+_Avoid_: auto label, placeholder name, default label
+
+**Cleanup**:
+The one rule that removes a track: *a track disappears when its last layer
+leaves it* — `transient && !locked`, applied to the track an edit just emptied,
+never as a project-wide sweep. A track that was born empty was never emptied, so
+one an agent creates on purpose survives.
+_Avoid_: prune (that is the function), auto-delete, garbage collection
+
+**Drop strip**:
+The permanently reserved row above the topmost lane that turns a drag into a new
+track. Its space is held even when idle so a drag never reflows the timeline, and
+it shows itself only while a drag is live so it never reads as an empty lane to
+manage.
+_Avoid_: add-track row, new-track button, ghost lane, phantom track
+
+**Raise**:
+Moving a clip onto a fresh track at the top of the z-stack —
+`move_layers_to_new_track`, reachable by dragging into the drop strip or by the
+*Move to a new track* command. The whole of z-order rearrangement: any order
+composes from a sequence of raises, and each empties its source track, which
+cleanup then removes. One history entry, so one undo restores clip and track
+together.
+_Avoid_: add track and move, promote, bring to front, reorder tracks
+
+**Spawn**:
+The placement verdict meaning *no track can take this, so make one* — the fourth
+`PlacementValidity`, alongside valid, collision and locked. Ranked below
+collision, so a selection that would overlap itself on the one new track still
+refuses.
+_Avoid_: auto-create, insert track, overflow

@@ -28,6 +28,7 @@ add an entry, and Ctrl-Z walks straight past them.
 | `rename_track` | yes — a name is content, and the layer label already records; the two rename surfaces cannot disagree about undo |
 | `update_track_flags` (eye/M/S/lock toggles) | no — patched into every history snapshot; undo never flips a track control |
 | `add_layer`, `update_layer`, `update_layer_params`, `move_layer`, `duplicate_layer`, `split_layer`, `delete_layer` | yes |
+| `move_layers_to_new_track` | yes — **one** entry for the whole raise: the new track, every layer moved onto it, and every source track the raise emptied. Two entries would let one undo return the clips while leaving them on a track that no longer belongs to them |
 | `add_marker`, `update_marker`, `remove_marker` | yes |
 | `add_transition`, `update_transition`, `remove_transition` | yes |
 | `add_media_item` | no |
@@ -187,6 +188,66 @@ fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
 (`groups_create` … `groups_rename`, plus `escape_group` on the structural
 ops) and the read surface (`groups` on `project://current`; there is no
 `groups_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
+
+## Track placement
+
+**There is no add, remove or reorder surface for a track**, and that is the whole
+design rather than a gap: the editor places media and tracks appear and disappear
+around it (ADR 0042). A user who goes looking for a "+ Track" button is looking
+for a second mental model — declare a container, then put something in it — that
+placement already decides for them.
+
+A **drop strip** sits above the topmost lane: a 12–16 px row that turns a drag
+into a new track at the top of the z-stack. Two of its properties look like
+oversights and are neither. Its space is reserved **permanently**, because a row
+that appeared on drag would reflow the timeline under the pointer mid-gesture. And
+it is **visually inert when idle**, lighting up only while a drag is live, because
+anything that looks like an empty lane when nothing is happening reads as a lane
+the editor is supposed to manage. It accepts a media-pool drag and an
+existing-clip drag identically — two different event models, one target, which is
+why both are end-to-end gated (`e2e/electron/timeline-drop-strip.spec.ts`,
+`timeline-raise-to-strip.spec.ts`). A clip dropped on a lane that has room still
+lands there; spawning is the exception.
+
+The top is the **only** spawn point. A lane below A-roll composites underneath it
+and is invisible unless A-roll has a gap, so a bottom entry point would lie about
+what it does. Z-order is therefore rearranged by **raising to the top, repeatedly**
+— any order composes from a sequence of raises, and each one empties its source
+lane, which cleanup then removes, so restacking leaves no residue. Ordering n
+overlapping overlays costs n−1 operations rather than one drag; it is a
+low-frequency operation. **Move to a new track** is the same operation without a
+pointer (search palette and Edit menu, no default binding, disabled when the
+selection would overlap itself on one lane). A drag gesture is unreachable from
+the keyboard, so the command is not a convenience.
+
+**Cleanup is one sentence: a track disappears when its last layer leaves it.** A
+track that was *born* empty was never emptied, so one an agent creates on purpose
+survives until the agent removes it — and no edit in one part of the timeline can
+make a track vanish in another. A locked track survives regardless: locking is the
+editor pinning a row, and cleanup does not out-rank that. There is no preference
+governing any of this, deliberately — one that turned cleanup off would let tracks
+accumulate with no surface able to remove them.
+
+Every track is **named automatically unless the editor names it**: the reserved
+A/B-roll tracks from their role, the rest from a position that renumbers as tracks
+come and go, exactly as Premiere and Resolve renumber. Double-click a track
+header's name to rename it, or use Rename in its context menu; **clearing the field
+gives the automatic name back**, which is the opposite of renaming a clip, where an
+empty value abandons the edit. A track's automatic name is a meaningful default the
+editor needs a route back to, and a clip has no equivalent. A rename is undoable —
+it is content, not a control — while the eye and the lock are not, so undo never
+reveals a track the editor hid.
+
+One consequence worth knowing: **raising a clip out of a track you renamed
+discards that name**, because the track goes with it. One undo restores clip,
+track and name together.
+
+Placement policy and the strip live in
+`apps/desktop/src/renderer/timeline/placement.ts` and `DropStrip.tsx`; the pointer
+drag's hit-test in `hooks/useLayerDrag.ts`; naming in `renderer/lib/trackName.ts`.
+Mutations: `main/state/mutations/move.ts` (`applyMoveLayersToNewTrack`),
+`tracks.ts` (`applyRenameTrack`) and the single prune in `mutations/helpers.ts`.
+Wire shape and the cleanup predicate: [data-model.md](data-model.md).
 
 ## Timeline zoom
 
