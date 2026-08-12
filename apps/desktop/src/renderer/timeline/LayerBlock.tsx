@@ -25,7 +25,7 @@ import { useLayerBakePhase } from "./motifBakeStatusStore";
 import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
-import { useEditingLayerId, beginRename, endRename } from "./renameStore";
+import { useEditingLayerId, beginLayerRename, endRename } from "./renameStore";
 import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
@@ -605,7 +605,7 @@ export function LayerBlock({
       onDoubleClick={(e) => {
         if (layer.locked || trackLocked || bladeMode) return;
         e.stopPropagation();
-        beginRename(layer.id);
+        beginLayerRename(layer.id);
       }}
       onPointerDown={onLayerPointerDown}
       onPointerMove={onPointerMoveHover}

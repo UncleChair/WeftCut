@@ -390,6 +390,7 @@ const zhCN: Resources = {
     toggle_keyframe_lanes: "展开关键帧轨",
     prebake_now: "立即预烘焙",
     rename: "重命名",
+    rename_track_label: "重命名 {{label}}",
     enable_layer: "启用图层",
     disable_layer: "禁用图层",
     bake_dot_warming: "预热中…",
@@ -1167,6 +1168,7 @@ const zhCN: Resources = {
       add: "添加轨道",
       delete: "删除轨道",
       move: "移动轨道",
+      rename: "重命名轨道",
       add_caption: "添加字幕轨道",
     },
     marker: {

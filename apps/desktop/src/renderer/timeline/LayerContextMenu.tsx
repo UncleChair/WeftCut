@@ -1,7 +1,7 @@
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import type { TransitionDirection } from "../ipc";
+import { useCursorAnchor } from "./contextMenuAnchor";
 import {
   TRANSITION_DIRECTIONS,
   type TransitionCut,
@@ -48,21 +48,7 @@ export function LayerContextMenu({
   ) => void;
 }) {
   const { t } = useTranslation();
-  const anchor = useMemo(
-    () => ({
-      getBoundingClientRect: () => ({
-        x,
-        y,
-        top: y,
-        left: x,
-        right: x,
-        bottom: y,
-        width: 0,
-        height: 0,
-      }),
-    }),
-    [x, y],
-  );
+  const anchor = useCursorAnchor(x, y);
   const directionLabel = (d: TransitionDirection) =>
     t(`transitions.direction_${d}`, { defaultValue: d });
   return (

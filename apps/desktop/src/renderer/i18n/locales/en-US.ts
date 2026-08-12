@@ -399,6 +399,9 @@ const enUS = {
     separate_audio: "Separate audio to new track",
     prebake_now: "Pre-bake now",
     rename: "Rename",
+    // Accessible name for the lane header's inline rename field — the visible
+    // label it replaces is the lane's own name.
+    rename_track_label: "Rename {{label}}",
     enable_layer: "Enable layer",
     disable_layer: "Disable layer",
     bake_dot_warming: "Warming…",
@@ -1223,6 +1226,7 @@ const enUS = {
       add: "Added track",
       delete: "Deleted track",
       move: "Moved track",
+      rename: "Renamed track",
       add_caption: "Added caption track",
     },
     marker: {

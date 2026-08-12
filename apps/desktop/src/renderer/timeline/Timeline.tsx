@@ -73,7 +73,7 @@ import { TrackLane } from "./TrackLane";
 import type { MediaDragPayload, MediaDropPlan } from "./mediaDrag";
 import { KeyframeLane, KeyframeLaneHeaders } from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
-import { beginRename } from "./renameStore";
+import { beginLayerRename } from "./renameStore";
 import { useTimelineView } from "./hooks/useTimelineView";
 import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
 import { useHeightDrag } from "./hooks/useHeightDrag";
@@ -837,7 +837,7 @@ export function Timeline({
 
   const onRename = useCallback((layerId: string) => {
     setContextMenu(null);
-    beginRename(layerId);
+    beginLayerRename(layerId);
   }, []);
 
   const onToggleEnabled = useCallback(

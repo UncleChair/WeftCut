@@ -46,7 +46,7 @@ if (isMac) document.documentElement.classList.add("platform-mac");
 // Production: suppress the Chromium/Electron default context menu (reload / print /
 // inspect) except over editable or copyable content, where the native
 // cut/copy/paste menu stays useful. The app's own context menus (timeline
-// layers) preventDefault on their targets either way. Dev keeps the default
+// layers, lane headers) preventDefault on their targets either way. Dev keeps the default
 // menu for right-click → Inspect.
 if (!import.meta.env.DEV) {
   document.addEventListener("contextmenu", (e) => {

@@ -513,11 +513,19 @@ answer to what a track is called, called by every surface that names one —
 because main holds no locale bundle, so a name computed there could never
 be translated, and translatability is the reason the role stamp carries
 the name at all. Main emits the same *keys* where it must name a track
-without a renderer (`history-labels.ts`), never an English phrase. The
-exception is the track `separate_audio` creates, which stores
+without a renderer (`history-labels.ts`), never an English phrase.
+
+The exception is the track `separate_audio` creates, which stores
 `"<source> (audio)"` whenever the source has a name of its own: that
 records which source the audio was lifted from, and the display layer
 cannot recompute it once the layer has moved on.
+
+`rename_track` is the only command that changes the field once a track
+exists, and it stores `None` for a blank name — so clearing the rename
+field is how a user gets the derived name back. That is the opposite of
+the layer rename, where an empty value abandons the edit: a track's
+derived name is a meaningful default the user needs a route back to, and a
+layer has no equivalent. The inconsistency is deliberate.
 
 Cleanup has one rule: **a track disappears when its last layer leaves
 it.** `transient && !locked` is the predicate, and every path that can
@@ -907,6 +915,7 @@ the UI uses the same actor via backend commands.
 | `add_track(label?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track |
 | `remove_track(id, force?)` | rejects if non-empty unless `force` |
 | `move_track(id, new_position)` | |
+| `rename_track(id, label?)` | **recorded** (undoable); any track, reserved ones included. A blank or absent `label` stores `None`, which restores the derived name |
 | `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these. `muted`/`solo` round-trip but no longer gate audio (mixing is per-role) |
 | `set_role_gain(role, gain_db)` | **recorded** (undoable); sets a mixing role's bus gain, folded into that role's layers at mix time |
 | `update_role_flags(role, patch)` | unrecorded (like `update_track_flags`); patch `{muted?, solo?}` on a role's mix bus; undo never reverts these |

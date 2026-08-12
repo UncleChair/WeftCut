@@ -233,6 +233,111 @@ describe('dispatch: update_track_flags (unrecorded)', () => {
   })
 })
 
+// A name is content, so unlike the flags above it RECORDS (ADR 0042 decision 3).
+// Read off the snapshot and the history view: what matters is what the lane is
+// called afterwards, whether one Ctrl-Z takes the name back, and that the same
+// undo leaves the eye and the lock exactly where the editor put them.
+describe('dispatch: rename_track (recorded)', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'rename')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const extra = (actor.dispatch('add_track', { label: null }) as { ok: true; value: string }).value
+    return { actor, aRoll: initial.tracks[0].id, extra }
+  }
+  type Actor = ReturnType<typeof createActor>
+  const labelOf = (actor: Actor, track: string): string | null =>
+    actor.snapshot().tracks.find((t) => t.id === track)?.label ?? null
+  const head = (actor: Actor) => actor.historyView(50).ops.at(-1)!
+
+  it('records the name, and one undo takes it back — redo puts it on again', () => {
+    const { actor, extra } = setup()
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('rename_track', { track: extra, label: 'Titles' }).ok).toBe(true)
+    expect(labelOf(actor, extra)).toBe('Titles')
+    expect(actor.historyStatus().len).toBe(before + 1)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(labelOf(actor, extra)).toBeNull()
+    expect(actor.dispatch('redo', {}).ok).toBe(true)
+    expect(labelOf(actor, extra)).toBe('Titles')
+  })
+
+  it('stores null for a cleared name, so the derived name comes back', () => {
+    const { actor, extra } = setup()
+    for (const cleared of [null, '', '   ', '\t\n']) {
+      expect(actor.dispatch('rename_track', { track: extra, label: 'Titles' }).ok).toBe(true)
+      expect(actor.dispatch('rename_track', { track: extra, label: cleared }).ok).toBe(true)
+      // null, never '' — a blank in the project file is a name the display layer
+      // would have to defend against.
+      expect(labelOf(actor, extra), JSON.stringify(cleared)).toBeNull()
+    }
+  })
+
+  it('trims a stored name, so no lane is named by its padding', () => {
+    const { actor, extra } = setup()
+    expect(actor.dispatch('rename_track', { track: extra, label: '  Titles  ' }).ok).toBe(true)
+    expect(labelOf(actor, extra)).toBe('Titles')
+  })
+
+  // The reserved skeleton is not a special case to work around: a role is the
+  // naming FALLBACK, so it neither blocks a rename nor survives one.
+  it('renames a reserved A-roll lane, and clearing hands it back to its role', () => {
+    const { actor, aRoll } = setup()
+    expect(actor.dispatch('rename_track', { track: aRoll, label: 'Interview' }).ok).toBe(true)
+    expect(labelOf(actor, aRoll)).toBe('Interview')
+    expect(actor.snapshot().tracks[0].role).toBe('ARoll') // the stamp is untouched
+    expect(actor.dispatch('rename_track', { track: aRoll, label: null }).ok).toBe(true)
+    expect(labelOf(actor, aRoll)).toBeNull()
+  })
+
+  it('TrackNotFound for an id the project does not hold', () => {
+    const { actor } = setup()
+    const before = actor.historyStatus().len
+    const r = actor.dispatch('rename_track', { track: '00000000-0000-0000-0000-000000000000', label: 'x' })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('TrackNotFound')
+    expect(actor.historyStatus().len).toBe(before)
+  })
+
+  // The unrecorded-channel guarantee, from the other side: undoing an EDIT must
+  // not reveal a lane the editor hid or unlock one they locked.
+  it('leaves the eye and the lock as the editor set them when the rename is undone', () => {
+    const { actor, extra } = setup()
+    expect(actor.dispatch('rename_track', { track: extra, label: 'Titles' }).ok).toBe(true)
+    expect(actor.dispatch('update_track_flags', { track: extra, patch: { enabled: false, locked: true } }).ok).toBe(true)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    const lane = actor.snapshot().tracks.find((t) => t.id === extra)!
+    expect(lane.label).toBeNull()
+    expect([lane.enabled, lane.locked]).toEqual([false, true])
+  })
+
+  it('names the renamed lane in the history row, derived name included', () => {
+    const { actor, aRoll, extra } = setup()
+    actor.dispatch('rename_track', { track: extra, label: 'Titles' })
+    expect(head(actor)).toMatchObject({
+      summary: 'Renamed track', label_key: 'history.track.rename',
+      affected: [{ kind: 'Track', id: extra }], entity_labels: [{ text: 'Titles' }],
+    })
+    // Cleared back to a derived name, the row travels the KEY the header would
+    // render — main holds no locale bundle, so it cannot name the lane itself.
+    actor.dispatch('rename_track', { track: extra, label: '' })
+    expect(head(actor).entity_labels).toEqual([{ label_key: 'tracks.positional', label_args: { n: 3 } }])
+    actor.dispatch('rename_track', { track: aRoll, label: 'Interview' })
+    actor.dispatch('rename_track', { track: aRoll, label: null })
+    expect(head(actor).entity_labels).toEqual([{ label_key: 'tracks.roles.a-roll' }])
+  })
+
+  // The commit-wide no-op guard covers this: re-typing the name a lane already
+  // has must not spend an undo slot the editor would then have to press twice.
+  it('records nothing when the name it commits is the one already stored', () => {
+    const { actor, aRoll, extra } = setup()
+    expect(actor.dispatch('rename_track', { track: extra, label: 'Titles' }).ok).toBe(true)
+    const after = actor.historyStatus().len
+    expect(actor.dispatch('rename_track', { track: extra, label: '  Titles  ' }).ok).toBe(true)
+    expect(actor.dispatch('rename_track', { track: aRoll, label: null }).ok).toBe(true) // already derived
+    expect(actor.historyStatus().len).toBe(after)
+  })
+})
+
 describe('dispatch: effect chain', () => {
   function setup() {
     const idGen = seededGen(); const initial = blankProject(idGen, 'fx'); const a = initial.tracks[0].id

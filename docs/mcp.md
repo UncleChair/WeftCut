@@ -201,6 +201,7 @@ Media + tracks:
 - `remove_media { media_id, force? }`
 - `add_track { label? }` → `TrackId` (tracks are kind-agnostic — any layer kind can be placed on any track)
 - `remove_track { track_id, force? }`
+- `rename_track { track_id, label? }` — any track, reserved ones included; `label: null` (or blank) clears it back to the derived name
 - `move_track { track_id, new_position }`
 
 Layers:

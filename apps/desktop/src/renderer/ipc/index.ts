@@ -1064,6 +1064,16 @@ export async function updateTrackFlags(
   return invoke<void>("update_track_flags", { trackId, patch });
 }
 
+/// Name a lane. RECORDED (unlike the flags above) — a name is content, so
+/// Ctrl-Z reverts it. `null` (or a blank string, which the actor folds to null)
+/// restores the derived name (ADR 0042).
+export async function renameTrack(
+  trackId: string,
+  label: string | null,
+): Promise<void> {
+  return invoke<void>("rename_track", { trackId, label });
+}
+
 export async function updateLayerParams(
   layerId: string,
   patch: LayerParamsPatch,

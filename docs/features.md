@@ -25,6 +25,7 @@ add an entry, and Ctrl-Z walks straight past them.
 | Op | Recorded? |
 |---|---|
 | `add_track`, `delete_track`, `move_track` | yes |
+| `rename_track` | yes — a name is content, and the layer label already records; the two rename surfaces cannot disagree about undo |
 | `update_track_flags` (eye/M/S/lock toggles) | no — patched into every history snapshot; undo never flips a track control |
 | `add_layer`, `update_layer`, `update_layer_params`, `move_layer`, `duplicate_layer`, `split_layer`, `delete_layer` | yes |
 | `add_marker`, `update_marker`, `remove_marker` | yes |

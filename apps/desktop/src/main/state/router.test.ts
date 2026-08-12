@@ -18,7 +18,7 @@ const ALL_CHANNELS: readonly string[] = [
   'update_layer_param_track', 'update_layer_param_tracks', 'add_effect', 'update_effect',
   'move_effect', 'remove_effect', 'move_layer', 'trim_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve', 'duplicate_layer', 'paste_layer', 'delete_layer', 'remove_media', 'set_composition',
-  'fit_composition_to_layers', 'update_track_flags', 'set_role_gain', 'update_role_flags',
+  'fit_composition_to_layers', 'update_track_flags', 'rename_track', 'set_role_gain', 'update_role_flags',
   'add_transition', 'update_transition', 'remove_transition',
   'project_undo', 'project_redo', 'project_restore_checkpoint', 'update_project_settings',
   'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',

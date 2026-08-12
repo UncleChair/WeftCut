@@ -49,6 +49,7 @@ export const HISTORY_SUMMARY = {
   trackAdd: { key: 'history.track.add', text: 'Added track' },
   trackDelete: { key: 'history.track.delete', text: 'Deleted track' },
   trackMove: { key: 'history.track.move', text: 'Moved track' },
+  trackRename: { key: 'history.track.rename', text: 'Renamed track' },
   trackAddCaption: { key: 'history.track.add_caption', text: 'Added caption track' },
 
   markerAdd: { key: 'history.marker.add', text: 'Added marker' },

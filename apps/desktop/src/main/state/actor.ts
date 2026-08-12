@@ -19,7 +19,7 @@ import { applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, locateLayer } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
-import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
+import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition, applyUpdateTransition } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate,
@@ -747,6 +747,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_marker': commit(HISTORY_SUMMARY.markerRemove, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit(HISTORY_SUMMARY.trackDelete, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
         case 'move_track': moveTrack(a.track as Uuid, parseNum(a.new_position, 'new_position')); return { ok: true, value: null }
+        // RECORDED, unlike the flags patch below: a name is content, and the
+        // layer label is already recorded — two rename surfaces with opposite
+        // undo behaviour would be indefensible (ADR 0042). The Track ref is what
+        // makes the row name the lane it renamed.
+        case 'rename_track': commit(HISTORY_SUMMARY.trackRename, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRenameTrack(d, a.track as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_track_flags': updateTrackFlags(a.track as Uuid, a.patch as TrackFlagsPatch); return { ok: true, value: null }
         case 'add_effect': return { ok: true, value: commit(HISTORY_SUMMARY.effectAdd, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)) }
         case 'update_effect': commit(HISTORY_SUMMARY.effectUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
