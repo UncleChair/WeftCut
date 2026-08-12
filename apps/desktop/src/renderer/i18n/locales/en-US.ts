@@ -251,7 +251,6 @@ const enUS = {
     cancel: "Cancel",
   },
   actions: {
-    add_track: "+ Track",
     add_color_layer: "Color layer",
     add_text_layer: "Text",
     select_tool: "Selection tool",

@@ -324,6 +324,10 @@ export function TrackLane({
       if (!payload) return;
       e.preventDefault();
       endMediaDrag();
+      // `=== "valid"`, deliberately not `!placementRefuses(...)`: a lane drop
+      // always names a real track, so `"spawn"` cannot arise here, and if one
+      // ever did it would mean a caller routed a strip plan onto a lane — refuse
+      // rather than commit it to the wrong row. The strip has its own handler.
       if (plan?.validity !== "valid") return;
       onMediaDrop(track, payload, plan);
     },

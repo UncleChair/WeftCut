@@ -1220,11 +1220,16 @@ export async function groupsDissolve(groupId: string): Promise<void> {
   return invoke<void>("groups_dissolve", { groupId });
 }
 
-/// Lift an Audio layer onto a freshly-created non-transient track inserted
-/// directly after its source. Group membership survives. Returns the new
-/// track's id. UI consequence: the combined row collapses to V-only on the
-/// source row; the new row below shows the waveform on its own (J/L-cut
-/// friendly).
+/// Lift an Audio layer onto a freshly-created track inserted directly below its
+/// source in the z-stack, so the new row reads one row down the screen. Group
+/// membership survives. Returns the new track's id. UI consequence: the combined
+/// row collapses to V-only on the source row; the new row below shows the
+/// waveform on its own (J/L-cut friendly).
+///
+/// The lifted track is `transient` like every role-less track, so emptying it
+/// later removes it — and lifting can now empty the SOURCE row, which the same
+/// rule then removes (ADR 0042). It is also the one track that keeps a stored
+/// label, when the source had a name worth recording.
 export async function separateAudioToNewTrack(
   layerId: string,
 ): Promise<string> {

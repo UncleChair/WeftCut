@@ -251,7 +251,6 @@ const zhCN: Resources = {
     cancel: "取消",
   },
   actions: {
-    add_track: "+ 轨道",
     add_color_layer: "颜色层",
     add_text_layer: "文本",
     select_tool: "选择工具",

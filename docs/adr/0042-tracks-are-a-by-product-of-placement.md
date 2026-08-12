@@ -66,7 +66,11 @@ human entry point for adding, removing or reordering a track.
    clearing the rename field writes `null` and restores the derived name. The one
    exception is the track that `separate_audio` creates, which keeps a stored
    `"<source> (audio)"` — that records which source it was lifted from, and the
-   display layer cannot recompute it once the layer has moved on.
+   display layer cannot recompute it once the layer has moved on. The exception is
+   earned only when the source *has* a stored name to quote: once the reserved
+   lanes derive theirs, the common case has nothing to record, and quoting main's
+   idea of a derived name would write back the untranslatable literal this rule
+   removes. A nameless source yields a lifted lane that derives its own name.
 
 4. **Every non-reserved track is `transient`,** including one an agent creates
    explicitly. The field's meaning widens from "import-created holding track" to
@@ -128,18 +132,29 @@ instead of what to watch out for.
 
 ## Where this lives
 
-The seams this lands on, all of which exist today:
+The seams this landed on:
 
-- Placement policy and the drop strip — `renderer/timeline/placement.ts`,
-  `mediaDrag.ts`, and the two event models that must reach one target:
-  `TrackLane.tsx` (HTML5 drag-and-drop) and `LayerBlock.tsx` (pointer drag).
-- Pruning — `main/state/mutations/helpers.ts`, called from `delete.ts` and
-  `move.ts`.
-- Derived names — beside `deriveTrackKindLabel` in `main/state/summary.ts`, plus
-  the three readers that fall back through `label ?? …`: `panels/MediaPool.tsx`,
-  `panels/peek.ts`, `errors/formatCommandError.ts`.
-- *Move to a new track* — one `CommandDef` in `renderer/commands/registry.ts`
-  and one entry in `menu/menuSpec.ts`.
+- Placement policy and the drop strip — `renderer/timeline/placement.ts` owns
+  the `spawn` verdict and the `SPAWN_TRACK_ID` target that carries it;
+  `DropStrip.tsx` is the row. The two event models reach it separately:
+  HTML5 drag-and-drop through the strip's own drop handler, pointer drag
+  through `hooks/useLayerDrag.ts`, which folds the strip into the same
+  measured row list rather than the track-keyed lane registry.
+- Pruning — `main/state/mutations/helpers.ts`, called from `delete.ts`,
+  `move.ts` (both `applyMoveLayer` and `applyMoveLayersToNewTrack`) and
+  `media.ts`.
+- Derived names — `renderer/lib/trackName.ts`, the twin of `lib/layerName.ts`.
+  **Renderer-side**, not beside `deriveTrackKindLabel` in main as first
+  sketched: main holds no locale bundle, so a name computed there could never
+  be localized, which is the point of deriving at all. Main emits an i18n key
+  plus its interpolation values for history rows (`history-labels.ts`) so the
+  two cannot disagree. Seven surfaces call it, not the three the audit found.
+- *Move to a new track* — `commands/appCommands.ts` (a menu-only command id,
+  since it has no binding) and one entry in `menu/menuSpec.ts`, over the
+  `move_layers_to_new_track` op in `mutations/move.ts`.
+- Renaming — `rename_track` in `mutations/tracks.ts`, driven from
+  `timeline/TrackHeader.tsx` and `timeline/TrackContextMenu.tsx` through the
+  one rename slot in `timeline/renameStore.ts`.
 
 ## Industry baseline
 

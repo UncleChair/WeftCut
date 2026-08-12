@@ -37,8 +37,13 @@ export type LayerParamsView = VideoClipView | ImageOverlayView | TextView | Colo
 
 export function layerKind(params: LayerParams): string { return params.kind }
 
-/** Visual-class wins; audio-only → "Audio"; empty → "Video" (so blank A/B-roll
- *  rows still style as video lanes). */
+/** `TrackSummary.kind` — the dominant layer class, which the timeline CSS and the
+ *  drop checks read. Visual-class wins; audio-only → "Audio"; empty → "Video"
+ *  (so blank A/B-roll rows still style as video lanes).
+ *
+ *  NOT a name, and no longer in any naming chain: `renderer/lib/trackName.ts` is
+ *  the single answer to what a lane is called (ADR 0042). Falling back to this
+ *  would tell the user "Video" where the header reads "A roll". */
 export function deriveTrackKindLabel(track: Track): string {
   let hasVisual = false, hasAudio = false
   for (const l of track.layers) {
