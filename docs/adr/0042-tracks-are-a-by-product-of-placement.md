@@ -127,6 +127,20 @@ instead of what to watch out for.
   track reverts to its derived name, a layer abandons the edit. Deliberate: a
   track's derived name is a meaningful default, so the user needs a way back to
   it, and a layer has no equivalent.
+- **A raise discards a name the user set on the lane it emptied.** Renaming a lane
+  and then raising its last clip out of it deletes that lane, so the name goes
+  with it and the clip lands on a freshly derived positional name, silently. This
+  is accepted, not overlooked: under this model a lane name is a label on a
+  by-product, and one undo restores clip, lane and name together. Premiere and
+  Resolve never hit it only because they never delete a lane.
+
+  Two repairs were weighed. Carrying the name onto the new lane is cheap but
+  states that a label describing the old lane now describes a different one, and
+  goes ambiguous the moment a multi-clip raise empties two named lanes. Exempting
+  named lanes from cleanup is worse and is **rejected outright**: it makes a name
+  a second pinning mechanism beside the lock, and since no human surface deletes
+  a lane, named empty lanes would accumulate with nothing able to remove them —
+  exactly the corner removing `auto_delete_empty_tracks` was meant to close.
 - `remove_media --force` removes layers inline and deliberately calls no prune,
   so it can still strand an empty lane. Unchanged behaviour.
 

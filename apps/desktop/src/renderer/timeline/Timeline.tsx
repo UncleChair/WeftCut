@@ -112,18 +112,6 @@ import {
   type TransitionKindName,
 } from "./transitions";
 
-// Any media kind drops on any track (tracks are kind-agnostic); the
-// main-process state layer enforces the overlap rules (`main/state/validate.ts`).
-function trackAcceptsMedia(_trackKind: string, _mediaKind: string): boolean {
-  return true;
-}
-
-
-// Drops land on their target track directly — nothing is auto-routed elsewhere.
-function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): boolean {
-  return false;
-}
-
 interface TimelineProps {
   tracks: TrackSummary[];
   /// `docs/features.md#groups`. Empty array when no groups exist.
@@ -660,16 +648,10 @@ export function Timeline({
       payload: MediaDragPayload,
       plan: MediaDropPlan,
     ) => {
-      if (
-        track !== null &&
-        !trackAcceptsMedia(track.kind, payload.kind) &&
-        !trackAcceptsMediaForAutoRoute(track.kind, payload.kind)
-      ) {
-        console.warn(
-          `track ${track.kind} doesn't accept media of kind ${payload.kind}`,
-        );
-        return;
-      }
+      // No kind gate: tracks are kind-agnostic, so any media kind drops on any
+      // track and nothing is auto-routed elsewhere. Overlap is the main-process
+      // state layer's rule (`main/state/validate.ts`), pre-checked for the ghost
+      // by the placement policy.
       const m = media.find((mm) => mm.id === payload.mediaId);
       if (!m) {
         console.warn(
@@ -690,9 +672,14 @@ export function Timeline({
         // Spawn-then-place is TWO commits, matching what the layer-adding
         // commands already do when their reverse scan finds no free lane
         // (`main/state/actor.ts`, add_color_layer): the track add gets its own
-        // op_id, then the layer add gets a second one. One history entry for the
-        // whole gesture is #06's problem — moving an EXISTING clip is where the
-        // cost of two entries is visible, because undo has to give a lane back.
+        // op_id, then the layer add gets a second one.
+        //
+        // Deliberately unlike raising an EXISTING clip, which is one entry via
+        // `move_layers_to_new_track`. There, undo has to give a pruned SOURCE
+        // lane back, so two entries would let one undo leave the clip stranded on
+        // a lane that no longer belongs to it. A fresh import empties nothing, so
+        // the first undo removes the layer and the second removes the lane —
+        // each step reversing exactly what it did.
         const trackId = track !== null ? track.id : await addTrack();
         await addMediaLayer(trackId, payload.mediaId, plan.rawStartUs);
         if (track === null) revealSpawnedTrack(trackId);
