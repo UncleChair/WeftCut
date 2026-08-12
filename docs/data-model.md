@@ -501,6 +501,23 @@ answer when they don't have other context. Users can rename them;
 they cannot delete them. `delete_track` returns
 `CommandError::TrackNotRemovable` if invoked on one.
 
+`label` is `None` on every track a user has not named, and that absence
+means **the name is derived** — one rule for the whole track list, with
+one exception. A role-stamped track is named from its `role`; a role-less
+one from its 1-based slot in the vector, counted from the bottom of the
+z-stack, so adding or pruning a track renumbers the ones above it
+(Premiere and Resolve do the same). A blank label counts as absent.
+Derivation runs **renderer-side** — `renderer/lib/trackName.ts`, the one
+answer to what a track is called, called by every surface that names one —
+because main holds no locale bundle, so a name computed there could never
+be translated, and translatability is the reason the role stamp carries
+the name at all. Main emits the same *keys* where it must name a track
+without a renderer (`history-labels.ts`), never an English phrase. The
+exception is the track `separate_audio` creates, which stores
+`"<source> (audio)"` whenever the source has a name of its own: that
+records which source the audio was lifted from, and the display layer
+cannot recompute it once the layer has moved on.
+
 Cleanup has one rule: **a track disappears when its last layer leaves
 it.** `transient && !locked` is the predicate, and every path that can
 empty a track — `delete_layer` and `move_layer` — calls the same prune

@@ -218,7 +218,9 @@ export function HistoryPanel() {
 
   const entityNames = (labels: HistoryEntityLabel[]): string =>
     labels
-      .map((label) => ("text" in label ? label.text : t(label.kind_key)))
+      .map((label) =>
+        "text" in label ? label.text : t(label.label_key, label.label_args ?? {}),
+      )
       .filter((name) => name.length > 0)
       .join(separator);
 

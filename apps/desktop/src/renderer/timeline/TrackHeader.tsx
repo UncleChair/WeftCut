@@ -2,6 +2,8 @@ import { useTranslation } from "react-i18next";
 import { tryMutate } from "../errors/tryMutate";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
 import { updateTrackFlags, type TrackSummary } from "../ipc";
+import { trackDisplayName } from "../lib/trackName";
+import { useProjectStore } from "../state/projectStore";
 import { trackHeaderControls } from "./geometry";
 
 function FlagButton({ active, activeClass, label, onToggle, children }: {
@@ -46,7 +48,13 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const kindLabel = t(`kinds.${track.kind.toLowerCase()}`, { defaultValue: track.kind });
+  // The name a lane's positional number counts against is its slot in the
+  // PROJECT's track vector, read from the mirror rather than from the rows this
+  // header renders beside: the timeline's row list is filtered in A/B mode, so
+  // numbering off it would renumber every lane when the user toggles the filter.
+  // Atomic selector — `tracks` is one field of one snapshot.
+  const tracks = useProjectStore((s) => s.summary?.tracks);
+  const name = trackDisplayName(track, tracks ?? [], t);
   const toggle = (patch: Parameters<typeof updateTrackFlags>[1]) => async () => {
     if (await tryMutate(() => updateTrackFlags(track.id, patch), "Update track flag")) {
       await onMutated();
@@ -79,9 +87,9 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
       )}
       <span
         className="min-w-0 flex-1 truncate text-[10.5px] font-medium text-muted-foreground"
-        title={track.label ?? kindLabel}
+        title={name}
       >
-        {track.label ?? kindLabel}
+        {name}
         {isRevealed && <span className="font-medium text-blue-400/70"> (revealed)</span>}
       </span>
       {controls.showEye && (

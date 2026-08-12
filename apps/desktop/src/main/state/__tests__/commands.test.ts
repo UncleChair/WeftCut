@@ -221,7 +221,7 @@ describe('prodMediaLayer', () => {
 describe('pickFreeOverlayTrack', () => {
   it('returns null when no non-reserved tracks', () => {
     const p = makeProject({ tracks: [
-      { id: 'a', label: 'A roll', enabled: true, locked: false, muted: false, solo: false,
+      { id: 'a', label: null, enabled: true, locked: false, muted: false, solo: false,
         removable: false, role: 'ARoll', transient: false, height_px: 64, layers: [] },
     ] })
     expect(pickFreeOverlayTrack(p, 0, 5_000_000)).toBeNull()
@@ -229,7 +229,7 @@ describe('pickFreeOverlayTrack', () => {
 
   it('returns last non-reserved track with no overlap', () => {
     const p = makeProject({ tracks: [
-      { id: 'a', label: 'A roll', enabled: true, locked: false, muted: false, solo: false,
+      { id: 'a', label: null, enabled: true, locked: false, muted: false, solo: false,
         removable: false, role: 'ARoll', transient: false, height_px: 64, layers: [] },
       { id: 't1', label: 'T1', enabled: true, locked: false, muted: false, solo: false,
         removable: true, role: null, transient: false, height_px: 64, layers: [] },

@@ -384,13 +384,13 @@ const enUS = {
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",
     empty_ab_mode:
-      "No A/B-roll content here. Drop a clip on A roll or B roll, or press {{key}} to show all tracks.",
-    track_label: "track {{n}}",
+      "No A/B-roll content here. Drop a clip on $t(tracks.roles.a-roll) or $t(tracks.roles.b-roll), or press {{key}} to show all tracks.",
     resize_track_hint: "Drag to resize this track",
     track_eye_hint: "Hide this track's output (affects export)",
     track_lock_hint: "Lock this track against edits",
     drop_collision: "Overlaps existing media",
     drop_locked: "Track is locked",
+    drop_spawn_hint: "Release to create a track",
     toggle_keyframe_lanes: "Expand keyframe lanes",
     mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
     mode_all_hint: "Showing all tracks. Click to filter to A/B-roll only.",
@@ -415,6 +415,20 @@ const enUS = {
     add_transition_wipe: "Add wipe · {{direction}}",
     add_transition_slide: "Add slide · {{direction}}",
     transition_chip_title: "{{kind}} transition · {{start}} → {{end}}",
+  },
+  // Derived track names (`lib/trackName.ts`): what a lane is called when the
+  // user has not named it. Kebab role keys so the lookup is the wire value
+  // itself. Nested into `timeline.empty_ab_mode` with `$t(…)` so the hint names
+  // lanes the way their headers do instead of quoting one language.
+  tracks: {
+    roles: {
+      "a-roll": "A roll",
+      "b-roll": "B roll",
+      "audio-a": "A roll audio",
+      "audio-b": "B roll audio",
+      caption: "Captions",
+    },
+    positional: "Track {{n}}",
   },
   transitions: {
     kind_crossfade: "Crossfade",
@@ -1105,7 +1119,7 @@ const enUS = {
     timing_heading: "Timing",
     insert_at: "Insert at",
     track_label: "Track",
-    track_overlay_auto: "Overlay (auto-create)",
+    track_overlay_auto: "New track (auto-create)",
     duration_hint:
       "Layer length defaults to {{value}} (the motif's default duration). Trim later in the timeline if you need a different length.",
     add: "Add to timeline",

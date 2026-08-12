@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import en from '../../renderer/i18n/locales/en-US'
 import zh from '../../renderer/i18n/locales/zh-CN'
-import { ENTITY_KIND_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, removedMediaSummary, resolveEntityLabels,
+import { ENTITY_LABEL_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, removedMediaSummary, resolveEntityLabels,
   restoredCheckpointSummary, roleGainSummary, type EntityLabel, type HistorySummary } from './history-labels'
 import type { EntityRef } from './history'
 import { blankProject, type Layer, type MediaItem, type Project } from './model'
@@ -61,9 +61,16 @@ describe('history label keys', () => {
       }
     }
   })
-  it('resolves every kind_key an entity label can emit', () => {
+  it('resolves every label_key an entity label can emit', () => {
     for (const [name, loc] of Object.entries(LOCALES)) {
-      for (const key of ENTITY_KIND_KEYS) expect(typeof at(loc, key), `${name} ${key}`).toBe('string')
+      for (const key of ENTITY_LABEL_KEYS) expect(typeof at(loc, key), `${name} ${key}`).toBe('string')
+    }
+  })
+  // The positional track name is the one entity label that carries args; a
+  // placeholder mismatch renders "{{n}}" beside a lane in the panel.
+  it('gives the positional track key exactly the `n` placeholder', () => {
+    for (const [name, loc] of Object.entries(LOCALES)) {
+      expect(placeholders(at(loc, 'tracks.positional') as string), name).toEqual(['n'])
     }
   })
 })
@@ -106,13 +113,20 @@ describe('resolveEntityLabels', () => {
   // differently from the clip itself.
   it('emits the kind KEY for a media-less layer (blank label counts as absent)', () => {
     const p = layer(fresh(), mkLayer('L1', '  ', colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 9)))
-    expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ kind_key: 'kinds.color' }])
+    expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ label_key: 'kinds.color' }])
   })
-  it('names a track by its label, else its derived kind key', () => {
+  // The track rungs are renderer/lib/trackName.ts's, so a history row names a
+  // lane exactly as its header does — role first, then the 1-based slot in the
+  // track vector, which is the same number the renderer counts.
+  it('names a track by its label, else its role, else its position', () => {
     const p = fresh()
     const [t0, t1] = p.tracks
     expect(labels({ ...p, tracks: [{ ...t0, label: 'A-Roll' }, t1] }, [{ kind: 'Track', id: t0.id }])).toEqual([{ text: 'A-Roll' }])
-    expect(labels({ ...p, tracks: [{ ...t0, label: null }, t1] }, [{ kind: 'Track', id: t0.id }])).toEqual([{ kind_key: 'kinds.video' }])
+    expect(labels(p, [{ kind: 'Track', id: t0.id }])).toEqual([{ label_key: 'tracks.roles.a-roll' }])
+    expect(labels(p, [{ kind: 'Track', id: t1.id }])).toEqual([{ label_key: 'tracks.roles.b-roll' }])
+    const extra = { ...t1, id: 'T-extra', role: null, label: null }
+    expect(labels({ ...p, tracks: [t0, t1, extra] }, [{ kind: 'Track', id: 'T-extra' }]))
+      .toEqual([{ label_key: 'tracks.positional', label_args: { n: 3 } }])
   })
   // Every branch trims, not just the Layer one. The panel filters zero-length
   // names out, so an untrimmed '   ' renders a row with NO entity name at all —
@@ -122,7 +136,7 @@ describe('resolveEntityLabels', () => {
     const [t0, t1] = p.tracks
     for (const blank of ['', '   ']) {
       expect(labels({ ...p, tracks: [{ ...t0, label: blank }, t1] }, [{ kind: 'Track', id: t0.id }]))
-        .toEqual([{ kind_key: 'kinds.video' }])
+        .toEqual([{ label_key: 'tracks.roles.a-roll' }])
     }
   })
   const marker = (label: string) =>
@@ -138,7 +152,7 @@ describe('resolveEntityLabels', () => {
     const p = fresh()
     for (const blank of ['', '   ']) {
       expect(labels({ ...p, markers: [marker(blank)] }, [{ kind: 'Marker', id: 'M' }]))
-        .toEqual([{ kind_key: 'kinds.marker' }])
+        .toEqual([{ label_key: 'kinds.marker' }])
     }
   })
   it('falls back to the raw id for a ref the snapshot does not hold', () => {

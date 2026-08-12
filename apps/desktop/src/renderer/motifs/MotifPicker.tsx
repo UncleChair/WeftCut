@@ -20,6 +20,7 @@ import {
   type MotifSummary,
   type TrackSummary,
 } from "../ipc";
+import { trackDisplayName } from "../lib/trackName";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
 import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
 import { newDraftSource } from "../render/motifs/newDraftSource";
@@ -29,7 +30,7 @@ interface Props {
   onAdded: () => Promise<void>;
   /// Fired after "New Motif" auto-places the fresh draft at the playhead.
   /// The App selects the layer and reveals its (role-null, AB-hidden)
-  /// auto-created Overlay track, landing the user straight in the property
+  /// auto-created overlay track, landing the user straight in the property
   /// panel's source editor — the draft's real editing home (docs/motifs.md
   /// canvas-context editing).
   onDraftPlaced: (layerId: string) => void;
@@ -51,8 +52,8 @@ interface Props {
 }
 
 /// `<select>` value for "auto track". Sent over IPC as `trackId: undefined`,
-/// which makes the `add_motif` handler mint a fresh "Overlay" track for the
-/// layer.
+/// which makes the `add_motif` handler spawn a fresh unnamed track for the
+/// layer — its name is derived from its position (`lib/trackName.ts`).
 const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 
 export function MotifPicker({
@@ -133,7 +134,7 @@ export function MotifPicker({
       // card is already selected and the error shows in place.
       setSelectedId(draftId); // motifs:changed → reload() surfaces the card
       // Straight into the editing surface: place the draft at the playhead
-      // (default props/duration, fresh Overlay track), hand the new layer to
+      // (default props/duration, fresh overlay track), hand the new layer to
       // the App for select + reveal, and close the picker.
       const layerId = await addMotif({
         motifId: draftId,
@@ -327,10 +328,10 @@ function MotifForm({
     defaultPropsFor(motif),
   );
   const [insertAtUs, setInsertAtUs] = useState<number>(currentTimeUs);
-  // Default to auto-create. The backend spawns a fresh Overlay track
-  // on every auto insert so consecutive motifs never collide on
-  // the same track — picking an existing Overlay as the default would
-  // walk straight back into the overlap invariant.
+  // Default to auto-create. The backend spawns a fresh track on every
+  // auto insert so consecutive motifs never collide on the same track —
+  // picking an existing overlay track as the default would walk straight
+  // back into the overlap invariant.
   const [trackChoice, setTrackChoice] = useState<string>(AUTO_OVERLAY_SENTINEL);
   const [busy, setBusy] = useState(false);
 
@@ -418,7 +419,7 @@ function MotifForm({
             },
             ...tracks.map((tr) => ({
               value: tr.id,
-              label: tr.label ?? `track ${tr.id.slice(0, 8)}`,
+              label: trackDisplayName(tr, tracks, t),
             })),
           ]}
         />

@@ -102,10 +102,12 @@ describe("formatCommandError — curated tier", () => {
     });
   });
 
-  it("an unlabelled track falls back to a positional kind name", () => {
+  // The refusal has to name the lane the way its header does, or the user is
+  // sent looking for a row that reads differently.
+  it("an unlabelled, role-less track falls back to its positional name", () => {
     seedStore();
     const out = formatCommandError({ error: "TrackLocked", track: "t-2" });
-    expect(out.message).toBe("Video 2 is locked.");
+    expect(out.message).toBe("Track 2 is locked.");
   });
 
   it("ids the mirror can't resolve degrade to short ids, never raw uuids", () => {

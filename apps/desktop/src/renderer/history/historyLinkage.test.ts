@@ -61,7 +61,7 @@ function fixtureSummary(layerIds: string[] = ["l1", "l2"]): ProjectSummary {
       {
         id: "t2",
         kind: "Video",
-        label: "Overlay",
+        label: null,
         enabled: true,
         locked: false,
         muted: false,

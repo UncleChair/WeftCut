@@ -701,7 +701,10 @@ describe('dispatch: separate_audio', () => {
     const tracks = actor.snapshot().tracks
     expect(tracks[0].id).toBe((r as { ok: true; value: string }).value) // new track inserted before A
     expect(tracks[0].layers.map((x) => x.id)).toEqual([l])
-    expect(tracks[0].label).toBe('A roll (audio)')
+    // A-roll carries no stored label of its own, so there is no source name to
+    // quote — the lifted lane derives one (mutations/media.test.ts covers both
+    // halves of the exception).
+    expect(tracks[0].label).toBeNull()
   })
   it('separate_audio on a color layer → WrongLayerKind', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'sa2'); const a = initial.tracks[0].id

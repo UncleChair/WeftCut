@@ -4,12 +4,15 @@
 // Kept separate from presentation so it is unit-testable without a DOM.
 
 import type { LayerSummary, TrackSummary } from "../ipc";
+import { trackDisplayName } from "../lib/trackName";
 
 /// One row in the peek list. Carries enough state to render the row +
 /// drive selection / reveal on click.
 export interface PeekItem {
   layer: LayerSummary;
   trackId: string;
+  /// The name the track's own header shows (`lib/trackName.ts`), already
+  /// resolved — one lane has one name everywhere.
   trackLabel: string;
   trackKind: string;
   /// Microseconds from playhead to the *layer's nearest edge* —
@@ -20,17 +23,21 @@ export interface PeekItem {
   spansPlayhead: boolean;
 }
 
+/// `t` is injected rather than imported so this module stays DOM- and
+/// i18n-instance-free; the label it resolves has to be built here because the
+/// item order breaks its ties on the track name.
 export function buildPeekItems(
   tracks: TrackSummary[],
   currentTimeUs: number,
   deltaUs: number,
+  t: (key: string, values: Record<string, unknown>) => string,
 ): PeekItem[] {
   const lo = currentTimeUs - deltaUs;
   const hi = currentTimeUs + deltaUs;
   const items: PeekItem[] = [];
-  for (const t of tracks) {
-    if (t.role !== null) continue;
-    for (const layer of t.layers) {
+  for (const track of tracks) {
+    if (track.role !== null) continue;
+    for (const layer of track.layers) {
       if (layer.t_end_us <= lo || layer.t_start_us >= hi) continue;
       const spans =
         layer.t_start_us <= currentTimeUs && layer.t_end_us >= currentTimeUs;
@@ -41,9 +48,9 @@ export function buildPeekItems(
           : layer.t_end_us - currentTimeUs;
       items.push({
         layer,
-        trackId: t.id,
-        trackLabel: t.label ?? t.kind,
-        trackKind: t.kind,
+        trackId: track.id,
+        trackLabel: trackDisplayName(track, tracks, t),
+        trackKind: track.kind,
         offsetUs: offset,
         spansPlayhead: spans,
       });

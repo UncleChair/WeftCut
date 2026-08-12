@@ -376,16 +376,16 @@ const zhCN: Resources = {
   timeline: {
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
     empty_ab_mode:
-      "此处没有 A/B 内容。将片段拖到 A roll 或 B roll，或按 {{key}} 显示全部轨道。",
+      "此处没有 A/B 内容。将片段拖到 $t(tracks.roles.a-roll) 或 $t(tracks.roles.b-roll)，或按 {{key}} 显示全部轨道。",
     mode_ab_hint: "当前仅显示 A/B 轨。点击切换为显示全部。",
     mode_all_hint: "当前显示全部轨道。点击切换为仅显示 A/B 轨。",
     separate_audio: "将音频分离到新轨道",
-    track_label: "轨道 {{n}}",
     resize_track_hint: "拖动以调整该轨道高度",
     track_eye_hint: "隐藏此轨道的输出（影响导出）",
     track_lock_hint: "锁定此轨道禁止编辑",
     drop_collision: "与现有素材重叠",
     drop_locked: "轨道已锁定",
+    drop_spawn_hint: "松开即新建轨道",
     toggle_keyframe_lanes: "展开关键帧轨",
     prebake_now: "立即预烘焙",
     rename: "重命名",
@@ -405,6 +405,16 @@ const zhCN: Resources = {
     add_transition_wipe: "添加划像 · {{direction}}",
     add_transition_slide: "添加滑动 · {{direction}}",
     transition_chip_title: "{{kind}}转场 · {{start}} → {{end}}",
+  },
+  tracks: {
+    roles: {
+      "a-roll": "A 轨",
+      "b-roll": "B 轨",
+      "audio-a": "A 轨音频",
+      "audio-b": "B 轨音频",
+      caption: "字幕",
+    },
+    positional: "轨道 {{n}}",
   },
   transitions: {
     kind_crossfade: "交叉溶解",
@@ -1059,7 +1069,7 @@ const zhCN: Resources = {
     timing_heading: "时间",
     insert_at: "插入位置",
     track_label: "轨道",
-    track_overlay_auto: "Overlay（自动创建）",
+    track_overlay_auto: "新建轨道（自动创建）",
     duration_hint:
       "图层长度默认为 {{value}}（Motif 的默认时长）。如需不同长度，可在时间轴上裁剪。",
     add: "添加到时间轴",

@@ -142,8 +142,17 @@ export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uui
   if (layer.params.kind !== 'Audio') throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'Audio' })
 
   const newId = idGen() // after the checks, before commit's op_id (keystone)
-  const srcLabel = source.label
-  const label = srcLabel && srcLabel.length > 0 ? `${srcLabel} (audio)` : 'Audio'
+  // THE ONE TRACK THAT KEEPS A STORED LABEL. Every other track leaves `label`
+  // null and lets the renderer derive the name (ADR 0042) — this one records
+  // WHICH source the audio was lifted from, and the display layer cannot
+  // recompute that once the layer has moved on. Do not copy this pattern.
+  //
+  // The exception is only earned when the source HAS a name to record. A source
+  // on its own derived name gives nothing to quote, and quoting main's idea of
+  // that name would write an untranslatable literal into the project file — so
+  // the lane falls back to a derived name of its own. Blank counts as absent.
+  const srcLabel = source.label?.trim()
+  const label = srcLabel ? `${srcLabel} (audio)` : null
   source.layers.splice(li, 1)
   const newTrack: Track = { id: newId, label, enabled: true, locked: false, muted: false, solo: false,
     removable: true, role: null, transient: true, height_px: 64, layers: [layer] }

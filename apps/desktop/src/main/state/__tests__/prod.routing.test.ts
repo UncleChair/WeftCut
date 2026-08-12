@@ -136,7 +136,8 @@ describe('production adapter routing — paste_layer (rich)', () => {
     const target = snap.tracks.find((track) => track.layers.some((layer) => layer.id === pastedId))!
     const pasted = target.layers.find((layer) => layer.id === pastedId)!
     expect(target.role).toBeNull()
-    expect(target.label).toBe('Overlay')
+    expect(target.label).toBeNull() // spawned lanes store no name; it is derived
+
     expect(pasted.id).not.toBe(sourceId)
     expect(pasted.label).toBe('Copied clip')
     expect(pasted.params).toEqual(source.params)

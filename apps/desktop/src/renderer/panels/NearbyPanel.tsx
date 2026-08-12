@@ -60,8 +60,8 @@ export function NearbyPanel({
 
   const items = useMemo(() => {
     if (displayMode !== "AbRoll") return [];
-    return buildPeekItems(tracks, currentTimeUs, deltaWindowUs);
-  }, [tracks, currentTimeUs, deltaWindowUs, displayMode]);
+    return buildPeekItems(tracks, currentTimeUs, deltaWindowUs, t);
+  }, [tracks, currentTimeUs, deltaWindowUs, displayMode, t]);
 
   const sections = useMemo(() => groupPeekItems(items, filter), [items, filter]);
 

@@ -107,10 +107,12 @@ describe('createTsActorHost — persistence-route integration', () => {
       await host.handleInvoke('project_open', { path: targetDir })
 
       const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
-        tracks: Array<{ label: string }>
+        tracks: Array<{ label: string | null; role: string | null }>
       }
+      // The flushed edit is the third track; it stores no label, because a
+      // spawned lane's name is derived renderer-side.
       expect(persisted.tracks).toHaveLength(3)
-      expect(persisted.tracks.at(-1)?.label).toBe('Track')
+      expect(persisted.tracks.at(-1)).toMatchObject({ label: null, role: null })
       expect(await host.handleInvoke('project_summary', {})).toMatchObject({ name: 'target' })
     } finally {
       host.stop()

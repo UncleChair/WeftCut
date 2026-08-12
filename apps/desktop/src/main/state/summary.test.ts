@@ -166,7 +166,8 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     expect(s.layer_count).toBe(1)
   })
   it('track roles emit kebab wire form (ARoll→a-roll, BRoll→b-roll)', () => {
-    // blankProject reserves two tracks: A roll (ARoll) and B roll (BRoll)
+    // blankProject reserves two role-stamped tracks, ARoll and BRoll. Neither
+    // stores a label — the role IS the name, resolved renderer-side.
     const gen = seededGen()
     const initial = blankProject(gen, 'demo')
     const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })

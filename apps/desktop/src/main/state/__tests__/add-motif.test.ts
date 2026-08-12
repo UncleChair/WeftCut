@@ -41,8 +41,9 @@ describe('actor.command("add_motif") — no track_id', () => {
     const snap = actor.snapshot()
     // One new track was created
     expect(snap.tracks.length).toBe(trackCountBefore + 1)
-    // The new track is labeled 'Overlay' and has no role
-    const overlayTrack = snap.tracks.find((t) => t.label === 'Overlay' && t.role === null)
+    // The new track stores no label — its name is derived renderer-side — and
+    // carries no role, so it is the spawned one.
+    const overlayTrack = snap.tracks.find((t) => t.label === null && t.role === null)
     expect(overlayTrack).toBeDefined()
     // The layer is on the overlay track
     const layer = overlayTrack!.layers.find((l) => l.id === layerId)
@@ -183,10 +184,10 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     const layer = layers.find((l) => l.id === text)
     expect(layer).toBeDefined()
     expect(layer!.params.kind).toBe('Motif')
-    // No-track MCP path mints the Overlay track FIRST, then the layer — so the
+    // No-track MCP path mints the spawned track FIRST, then the layer — so the
     // returned layer id is ordered AFTER the minted track id (idGen call order).
     // This mirrors the command-path id-order assertion.
-    const overlayTrack = snap.tracks.find((t) => t.label === 'Overlay' && t.role === null)
+    const overlayTrack = snap.tracks.find((t) => t.label === null && t.role === null)
     expect(overlayTrack).toBeDefined()
     expect(overlayTrack!.id < text!).toBe(true)
   })

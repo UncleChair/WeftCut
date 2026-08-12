@@ -145,8 +145,11 @@ export interface Project {
   settings: ProjectSettings
 }
 
-function newTrack(id: Uuid, label: string, role: TrackRole): Track {
-  return { id, label, enabled: true, locked: false, muted: false, solo: false,
+/** A reserved-skeleton track. `label` is null because the name is DERIVED from
+ *  `role` renderer-side (ADR 0042) — a literal written here could never be
+ *  localized, and localizability is the whole point of the role stamp. */
+function newTrack(id: Uuid, role: TrackRole): Track {
+  return { id, label: null, enabled: true, locked: false, muted: false, solo: false,
     removable: false, role, transient: false, height_px: 64, layers: [] }
 }
 function defaultComposition(): Composition {
@@ -162,8 +165,8 @@ export function defaultSettings(): ProjectSettings {
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id. */
 export function blankProject(idGen: IdGen, name: string): Project {
-  const aRoll = newTrack(idGen(), 'A roll', 'ARoll')
-  const bRoll = newTrack(idGen(), 'B roll', 'BRoll')
+  const aRoll = newTrack(idGen(), 'ARoll')
+  const bRoll = newTrack(idGen(), 'BRoll')
   const projectId = idGen()
   // LANDMINE: real RFC3339 timestamps, NOT the '<TS>' sentinel. canonicalize()
   // normalizes these away for differential comparison, so a sentinel would pass

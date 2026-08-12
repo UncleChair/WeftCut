@@ -45,17 +45,31 @@ describe('applySeparateAudio', () => {
     const a1 = applyAddLayer(p, gen, p.tracks[0].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 3_000_000), 0, 3_000_000) // #4
     return { p, gen, a1 }
   }
-  it('lifts the audio layer onto a new track inserted before the source, labelled "<src> (audio)"', () => {
+  it('lifts the audio layer onto a new track inserted before the source', () => {
     const { p, gen, a1 } = withAudio()
     expect(p.tracks[0].layers.map((l) => l.id)).toEqual([a1]) // A roll holds it
     const newTrack = applySeparateAudio(p, gen, a1) // #5
     expect(newTrack).toBe('00000000-0000-0000-0000-000000000005')
     // new track inserted at the source index (0) → [newAudio, A, B]
     expect(p.tracks[0].id).toBe(newTrack)
-    expect(p.tracks[0].label).toBe('A roll (audio)')
     expect(p.tracks[0].layers.map((l) => l.id)).toEqual([a1]) // layer moved here
     expect(p.tracks[0].removable).toBe(true)
     expect(p.tracks[1].layers).toEqual([]) // A roll now empty
+  })
+  // The single stored-label exception, and the limit of it: a source name is
+  // quoted only when the source HAS one. A source on its own derived name gives
+  // nothing to record, so the lifted lane derives a name too rather than
+  // freezing main's English into the project file.
+  it('quotes a NAMED source as "<src> (audio)", and stores nothing for an unnamed one', () => {
+    const { p, gen, a1 } = withAudio()
+    p.tracks[0].label = 'Interview'
+    applySeparateAudio(p, gen, a1)
+    expect(p.tracks[0].label).toBe('Interview (audio)')
+
+    const blank = withAudio()
+    blank.p.tracks[0].label = '   '
+    applySeparateAudio(blank.p, blank.gen, blank.a1)
+    expect(blank.p.tracks[0].label).toBeNull()
   })
   it('LayerNotFound (no id minted)', () => {
     const { p, gen } = withAudio()

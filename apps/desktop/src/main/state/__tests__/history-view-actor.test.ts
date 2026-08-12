@@ -59,7 +59,7 @@ describe('derived affected', () => {
     expect(head(actor)).toMatchObject({ summary: 'Added track', affected: [{ kind: 'Track', id: trackId }], entity_labels: [{ text: 'B-Roll' }] })
     const layerId = val(actor.dispatch('add_layer', { track: trackId, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }))
     expect(head(actor)).toMatchObject({ summary: 'Added layer', affected: [{ kind: 'Layer', id: layerId }] })
-    expect(head(actor).entity_labels).toEqual([{ kind_key: 'kinds.color' }]) // no label, no media → kind key
+    expect(head(actor).entity_labels).toEqual([{ label_key: 'kinds.color' }]) // no label, no media → kind key
     const markerId = val(actor.dispatch('add_marker', { t_us: 0, label: 'Intro' }))
     expect(head(actor)).toMatchObject({ summary: 'Added marker', affected: [{ kind: 'Marker', id: markerId }], entity_labels: [{ text: 'Intro' }] })
   })

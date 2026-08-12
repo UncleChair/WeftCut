@@ -100,8 +100,8 @@ export function resolveDurationUs(durationUs: number | undefined): number {
 }
 
 /** Scan tracks in reverse for the first non-reserved track with no layer
- *  overlap in [t0, t1). Returns null if none found (caller must create the
- *  "Overlay" track via addTrack). */
+ *  overlap in [t0, t1). Returns null if none found, which means the caller must
+ *  spawn a track via `applyAddTrack`. */
 export function pickFreeOverlayTrack(project: Project, t0: number, t1: number): string | null {
   const tracks = [...project.tracks].reverse()
   for (const t of tracks) {
@@ -115,7 +115,9 @@ export function pickFreeOverlayTrack(project: Project, t0: number, t1: number): 
 /** Mechanical channels: pure camelCase→snake renaming, no param construction.
  *  Returns null for channels not in this table. */
 const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
-  add_track: () => ({ op: 'add_track', args: { label: 'Track' } }),
+  // No label: the renderer derives the name, and a literal written here could
+  // never be localized (ADR 0042).
+  add_track: () => ({ op: 'add_track', args: { label: null } }),
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
   // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_group: a.escapeGroup ?? false } }),

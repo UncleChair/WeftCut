@@ -814,7 +814,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       switch (channel) {
         case 'add_color_layer': {
           // Resolve the overlay track when trackId is absent (reverse-scan
-          // non-reserved; create "Overlay" if none free).
+          // non-reserved; spawn one if none free).
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
@@ -825,11 +825,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
           }
-          // No free track — create "Overlay" in its OWN commit (the track add is a
+          // No free track — spawn one in its OWN commit (the track add is a
           // separate commit, so it gets its own op_id), THEN add the layer in a
-          // second commit. Two op_ids.
+          // second commit. Two op_ids. `label: null` leaves the new lane's name
+          // to be derived from its position (ADR 0042).
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
-            applyAddTrack(d, idGen, 'Overlay'))
+            applyAddTrack(d, idGen, null))
           const params = prodColorParams(wireArgs, current().composition)
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
@@ -849,7 +850,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           // No free track — same two-commit pattern as add_color_layer above.
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
-            applyAddTrack(d, idGen, 'Overlay'))
+            applyAddTrack(d, idGen, null))
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
@@ -857,7 +858,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'paste_layer': {
           // Paste uses the same automatic placement policy as add_text_layer:
           // reverse-scan non-reserved tracks for a free interval, otherwise
-          // create a new Overlay track before adding the cloned layer.
+          // spawn a track before adding the cloned layer.
           const sourceId = parseUuid(wireArgs.layerId, 'layerId')
           const requestedStart = parseNum(wireArgs.tStartUs, 'tStartUs')
           // Timeline Alt+drag resolves an exact destination lane in the UI.
@@ -877,7 +878,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: true, value: id }
           }
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
-            applyAddTrack(d, idGen, 'Overlay'))
+            applyAddTrack(d, idGen, null))
           const id = commit(HISTORY_SUMMARY.layerPaste, layerRef, { kind: 'Coarse' }, (d) =>
             applyPasteLayer(d, idGen, sourceId, newTrackId, requestedStart))
           return { ok: true, value: id }
@@ -903,7 +904,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_demo_color_layer': {
           // add_demo_color_layer:
-          //   track=tracks.front() (create "Track" if empty),
+          //   track=tracks.front() (spawn one if empty),
           //   t_start=track.last_layer.t_end ?? 0, duration=2s,
           //   color=demo_color(track.layers.len()), w/h=composition size.
           const snap = current()
@@ -919,10 +920,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, firstTrack.id, params, t0, t1))
             return { ok: true, value: id }
           }
-          // No tracks at all — create "Track" then add layer inside one commit.
+          // No tracks at all — spawn one then add the layer inside one commit.
           // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one resolves the track in its own commit, so the track add gets its own op_id.
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
-            const newTrackId = applyAddTrack(d, idGen, 'Track')
+            const newTrackId = applyAddTrack(d, idGen, null)
             const t0 = 0
             const t1 = 2_000_000
             const params = prodColorParams({ color: demoColor(0) }, d.composition)
@@ -932,7 +933,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_demo_text_layer': {
           // add_demo_text_layer:
-          //   track=tracks.last() (create "Overlay" if empty),
+          //   track=tracks.last() (spawn one if empty),
           //   t_start=track.last_layer.t_end ?? 0, duration=3s,
           //   content="TEXT", Arial 96 weight:700.
           const snap = current()
@@ -955,7 +956,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           // No tracks at all — same unreachable single-commit case as add_demo_color_layer.
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
-            const newTrackId = applyAddTrack(d, idGen, 'Overlay')
+            const newTrackId = applyAddTrack(d, idGen, null)
             const params: LayerParams = {
               kind: 'Text', content: 'TEXT',
               font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
@@ -989,9 +990,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
           if (resolvedEnd <= tStartUs) return { ok: false, error: { error: 'InvalidArgument', field: 't_end_us', detail: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
-          // Two-commit: if no track_id → mint Overlay track FIRST, THEN Motif layer.
+          // Two-commit: if no track_id → spawn the track FIRST, THEN the Motif layer.
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : null
-          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
+          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null))
           const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
           return { ok: true, value: layerId }
         }
@@ -1294,7 +1295,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
           const trackId = (p.track_id as string | null | undefined) ?? null
-          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
+          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null))
           const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
           return { ok: true, result: toolText(layerId) }
         }

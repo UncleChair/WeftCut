@@ -233,7 +233,7 @@ describe("HistoryPanel rendering", () => {
     ).toBeTruthy();
   });
 
-  it("renders entity_labels: resolved text as-is, kind_key through t()", async () => {
+  it("renders entity_labels: resolved text as-is, label_key through t()", async () => {
     await mountPanel(
       stackView([
         entry(USER, "history.layer.delete", {
@@ -241,13 +241,29 @@ describe("HistoryPanel rendering", () => {
             { kind: "Layer", id: "l1" },
             { kind: "Layer", id: "l2" },
           ],
-          entity_labels: [{ text: "beach.mp4" }, { kind_key: "kinds.color" }],
+          entity_labels: [{ text: "beach.mp4" }, { label_key: "kinds.color" }],
         }),
       ]),
     );
-    // `kinds.color` → "Color"; main holds no locale bundle, so the kind rung
+    // `kinds.color` → "Color"; main holds no locale bundle, so a derived name
     // travels as a key.
     expect(screen.getByText("beach.mp4, Color")).toBeTruthy();
+  });
+
+  // A derived TRACK name is the one entity label carrying interpolation values;
+  // dropping them would render "Track {{n}}" beside the row.
+  it("interpolates a derived track label's args", async () => {
+    await mountPanel(
+      stackView([
+        entry(USER, "history.track.add", {
+          affected: [{ kind: "Track", id: "t9" }],
+          entity_labels: [
+            { label_key: "tracks.positional", label_args: { n: 3 } },
+          ],
+        }),
+      ]),
+    );
+    expect(screen.getByText("Track 3")).toBeTruthy();
   });
 
   it("greys the redo tail and keeps it clickable", async () => {

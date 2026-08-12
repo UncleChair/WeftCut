@@ -64,10 +64,12 @@ export type HistoryEntityRef =
   | { kind: "Layer"; id: string }
   | { kind: "Marker"; id: string };
 
-/// A name for one `affected` ref. `text` is a resolved entity name; `kind_key`
-/// is the fallback when only the entity's kind is known and the UI must
-/// translate it (`t(l.kind_key)`).
-export type HistoryEntityLabel = { text: string } | { kind_key: string };
+/// A name for one `affected` ref. `text` is a stored entity name; the other arm
+/// is a DERIVED name — a clip's kind or a track's role/position — which only the
+/// UI can translate (`t(l.label_key, l.label_args ?? {})`).
+export type HistoryEntityLabel =
+  | { text: string }
+  | { label_key: string; label_args?: Record<string, string | number> };
 
 export interface HistoryStackEntry {
   op_id: string;

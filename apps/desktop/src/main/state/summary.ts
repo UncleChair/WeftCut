@@ -195,7 +195,9 @@ export interface ProjectSummary {
 
 // The kebab wire form of TrackRole — what renderer/ipc/index.ts declares. The
 // serialized project keeps the PascalCase variant; this spelling is view-only.
-const TRACK_ROLE_WIRE: Record<string, string> = { ARoll: 'a-roll', BRoll: 'b-roll', AudioA: 'audio-a', AudioB: 'audio-b', Caption: 'caption' }
+// Exported because a derived track NAME is keyed on the wire spelling too
+// (history-labels.ts), and two hand-written mappings would drift.
+export const TRACK_ROLE_WIRE: Record<string, string> = { ARoll: 'a-roll', BRoll: 'b-roll', AudioA: 'audio-a', AudioB: 'audio-b', Caption: 'caption' }
 
 // `AudioRole::ALL` order (state/audio_role.rs); default-filled per role.
 const ROLE_ORDER = ['dialogue', 'music', 'sfx', 'voiceover'] as const

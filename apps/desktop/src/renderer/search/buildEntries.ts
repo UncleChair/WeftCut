@@ -1,6 +1,7 @@
 import { formatTimecode } from "../frames";
-import type { ProjectSummary, TrackSummary } from "../ipc";
+import type { ProjectSummary } from "../ipc";
 import { layerDisplayName } from "../lib/layerName";
+import { trackDisplayName } from "../lib/trackName";
 import type { ActionId } from "../shortcuts/defs";
 import { pinyinHaystacks } from "./pinyin";
 import type { MediaUsage, SearchEntry } from "./types";
@@ -38,10 +39,6 @@ function withPinyin(haystacks: string[]): string[] {
   return out;
 }
 
-function trackDisplayLabel(track: TrackSummary, index: number): string {
-  return track.label ?? `${track.kind} ${index + 1}`;
-}
-
 export function buildEntries(
   summary: ProjectSummary | null,
   commands: CommandInput[],
@@ -69,8 +66,8 @@ export function buildEntries(
   const tc = (us: number) => formatTimecode(us, fpsNum, fpsDen);
 
   const usagesByMedia = new Map<string, MediaUsage[]>();
-  summary.tracks.forEach((track, ti) => {
-    const trackLabel = trackDisplayLabel(track, ti);
+  summary.tracks.forEach((track) => {
+    const trackLabel = trackDisplayName(track, summary.tracks, locale.t);
     for (const layer of track.layers) {
       const p = layer.params as { media_id?: string };
       if (typeof p.media_id !== "string") continue;
@@ -104,8 +101,11 @@ export function buildEntries(
     });
   }
 
-  summary.tracks.forEach((track, ti) => {
-    const trackLabel = trackDisplayLabel(track, ti);
+  summary.tracks.forEach((track) => {
+    // Same name the header shows. A derived name is locale-dependent, so the
+    // en-US pass earns a second haystack exactly as a clip's kind fallback does.
+    const trackLabel = trackDisplayName(track, summary.tracks, locale.t);
+    const enTrackLabel = trackDisplayName(track, summary.tracks, locale.tEn);
     const first = track.layers.reduce<{ id: string; t: number } | null>(
       (acc, l) => (acc === null || l.t_start_us < acc.t ? { id: l.id, t: l.t_start_us } : acc),
       null,
@@ -115,7 +115,9 @@ export function buildEntries(
       type: "track",
       label: trackLabel,
       context: track.role ?? track.kind,
-      haystacks: withPinyin([trackLabel]),
+      haystacks: withPinyin(
+        trackLabel === enTrackLabel ? [trackLabel] : [trackLabel, enTrackLabel],
+      ),
       payload: { type: "track", trackId: track.id, firstLayerId: first?.id ?? null },
     });
 

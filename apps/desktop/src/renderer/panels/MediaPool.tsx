@@ -32,6 +32,7 @@ import {
   removeMedia,
 } from "../ipc";
 import { formatTimecode } from "../frames";
+import { trackDisplayName } from "../lib/trackName";
 import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
@@ -61,8 +62,11 @@ interface MediaReference {
   layerId: string;
   layerLabel: string | null;
   layerKind: string | null;
-  trackLabel: string | null;
-  trackNumber: number | null;
+  /// The name the track's own header shows, already resolved. Null ONLY for a
+  /// layer the renderer's snapshot cannot place (see `mediaReferencesFor`) —
+  /// there is no positional number beside it, because the derived name already
+  /// carries the position.
+  trackName: string | null;
   tStartUs: number | null;
 }
 
@@ -97,13 +101,14 @@ function layerMediaId(
 function mediaReferencesFor(
   mediaId: string,
   tracks: readonly TrackSummary[],
+  t: (key: string, values: Record<string, unknown>) => string,
   onlyLayerIds?: readonly string[],
 ): MediaReference[] {
   const requested = onlyLayerIds ? new Set(onlyLayerIds) : null;
   const found = new Set<string>();
   const references: MediaReference[] = [];
 
-  tracks.forEach((track, trackIndex) => {
+  tracks.forEach((track) => {
     track.layers.forEach((layer) => {
       const matches = requested
         ? requested.has(layer.id)
@@ -114,8 +119,7 @@ function mediaReferencesFor(
         layerId: layer.id,
         layerLabel: layer.label,
         layerKind: layer.params.kind,
-        trackLabel: track.label,
-        trackNumber: trackIndex + 1,
+        trackName: trackDisplayName(track, tracks, t),
         tStartUs: layer.t_start_us,
       });
     });
@@ -130,8 +134,7 @@ function mediaReferencesFor(
       layerId,
       layerLabel: null,
       layerKind: null,
-      trackLabel: null,
-      trackNumber: null,
+      trackName: null,
       tStartUs: null,
     });
   }
@@ -456,7 +459,7 @@ export function MediaPool({
             setContextMenu(null);
             setRemovalTarget({
               media: contextMedia,
-              references: mediaReferencesFor(contextMedia.id, tracks),
+              references: mediaReferencesFor(contextMedia.id, tracks, t),
             });
           }}
         />
@@ -770,7 +773,7 @@ function RemoveMediaDialog({
       const referencedBy = parseMediaInUseLayerIds(cause);
       if (referencedBy !== null && !force) {
         onReferencesChanged(
-          mediaReferencesFor(target.media.id, tracks, referencedBy),
+          mediaReferencesFor(target.media.id, tracks, t, referencedBy),
         );
       } else {
         setError(
@@ -824,12 +827,8 @@ function RemoveMediaDialog({
                       id: reference.layerId.slice(0, 8),
                     });
                   const trackName =
-                    reference.trackLabel?.trim() ||
-                    (reference.trackNumber !== null
-                      ? t("timeline.track_label", {
-                          n: reference.trackNumber,
-                        })
-                      : t("media_pool.remove_unknown_track"));
+                    reference.trackName ??
+                    t("media_pool.remove_unknown_track");
                   return (
                     <li key={reference.layerId} title={reference.layerId}>
                       <span className="media-remove-reference-name">

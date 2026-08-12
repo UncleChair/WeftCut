@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/history-labels.ts
 import type { EntityRef } from './history'
 import type { Layer, Project, Uuid } from './model'
-import { deriveTrackKindLabel, mediaLabel } from './summary'
+import { mediaLabel, TRACK_ROLE_WIRE } from './summary'
 
 /** One history row's text, carried as BOTH the i18n key the panel translates and
  *  the exact English phrase `HistoryEntry.summary` keeps on the wire.
@@ -108,26 +108,40 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
 /** One resolved `affected` entry's name.
  *
  *  `{ text }` is a real name — the entity's own label, its media's label, or (as
- *  the last resort) its raw id. `{ kind_key }` is the kind rung of the naming
- *  chain, which ONLY the renderer can translate, so the `kinds.*` key travels
- *  instead of an English word: main holds no locale bundle, and shipping "Color"
- *  into a zh-CN panel would name a clip differently from the clip itself.
+ *  the last resort) its raw id. `{ label_key }` is a DERIVED name, which ONLY
+ *  the renderer can translate, so the key (plus any interpolation values)
+ *  travels instead of an English word: main holds no locale bundle, and shipping
+ *  "Color" into a zh-CN panel would name a clip differently from the clip
+ *  itself.
  *
- *  Render it as `'text' in l ? l.text : t(l.kind_key)`. */
-export type EntityLabel = { text: string } | { kind_key: string }
+ *  Render it as `'text' in l ? l.text : t(l.label_key, l.label_args ?? {})`. */
+export type EntityLabel =
+  | { text: string }
+  | { label_key: string; label_args?: Record<string, string | number> }
 
-/** renderer/lib/layerName.ts + TrackHeader.tsx's own expression,
- *  `t("kinds." + kind.toLowerCase())`. */
-const kindKey = (kind: string): { kind_key: string } => ({ kind_key: `kinds.${kind.toLowerCase()}` })
+/** renderer/lib/layerName.ts's own expression, `t("kinds." + kind.toLowerCase())`. */
+const kindKey = (kind: string): { label_key: string } => ({ label_key: `kinds.${kind.toLowerCase()}` })
 
-/** Every `kind_key` a label can carry: the six LayerParams discriminants,
- *  `deriveTrackKindLabel`'s two outputs, and `Marker` (markers have no kind
- *  discriminant of their own — the rung exists so a blank-labelled marker names
- *  its kind instead of falling through to a 36-char uuid). Enumerated so the
- *  locale test can check they all resolve — an unresolvable one renders as a raw
- *  key in the panel. */
-export const ENTITY_KIND_KEYS: readonly string[] =
-  ['VideoClip', 'ImageOverlay', 'Audio', 'Text', 'Color', 'Motif', 'Video', 'Marker'].map((k) => kindKey(k).kind_key)
+/** A track with no stored label, named exactly as renderer/lib/trackName.ts
+ *  names it: from its role, else from its 1-based slot in the track vector.
+ *  `index` is that slot, which is the same number the renderer computes — the
+ *  header and the history row cannot disagree. */
+function derivedTrackKey(role: string | null, index: number): { label_key: string; label_args?: Record<string, number> } {
+  const wire = role !== null ? TRACK_ROLE_WIRE[role] : undefined
+  if (wire !== undefined) return { label_key: `tracks.roles.${wire}` }
+  return { label_key: 'tracks.positional', label_args: { n: index + 1 } }
+}
+
+/** Every `label_key` a label can carry: the six LayerParams discriminants,
+ *  `Marker` (markers have no kind discriminant of their own — the rung exists so
+ *  a blank-labelled marker names its kind instead of falling through to a
+ *  36-char uuid), and the derived track names. Enumerated so the locale test can
+ *  check they all resolve — an unresolvable one renders as a raw key in the
+ *  panel. */
+export const ENTITY_LABEL_KEYS: readonly string[] = [
+  ...['VideoClip', 'ImageOverlay', 'Audio', 'Text', 'Color', 'Motif', 'Marker'].map((k) => kindKey(k).label_key),
+  ...[...Object.keys(TRACK_ROLE_WIRE), null].map((role) => derivedTrackKey(role, 0).label_key),
+]
 
 /** The one name a layer is shown under — the main-side twin of
  *  renderer/lib/layerName.ts `layerDisplayName`: own label (blank counts as
@@ -160,10 +174,14 @@ function labelIn(p: Project, layers: Layer[], ref: EntityRef): EntityLabel | nul
       return l ? layerLabel(p, l) : null
     }
     case 'Track': {
-      const t = p.tracks.find((x) => x.id === ref.id)
-      if (!t) return null
+      const index = p.tracks.findIndex((x) => x.id === ref.id)
+      if (index < 0) return null
+      const t = p.tracks[index]
       const own = t.label?.trim()
-      return own ? { text: own } : kindKey(deriveTrackKindLabel(t))
+      // The DERIVED name, not the dominant-layer-class one: a role-stamped
+      // track's label is null, and the kind rung would render "Video" in a
+      // history row while its header reads "A roll".
+      return own ? { text: own } : derivedTrackKey(t.role, index)
     }
     case 'Marker': {
       const m = p.markers.find((x) => x.id === ref.id)

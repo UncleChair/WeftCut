@@ -110,6 +110,11 @@ function track(
 // Playhead at 1s, ±0.5s window → intersection range [500_000, 1_500_000].
 const NOW = 1_000_000;
 
+/// Key + args, so a name assertion says which rung of `trackDisplayName` ran
+/// without pinning the English copy.
+const T = (key: string, values: Record<string, unknown>): string =>
+  values.n === undefined ? key : `${key}#${String(values.n)}`;
+
 describe("buildPeekItems windowing", () => {
   it("keeps only role-null layers that intersect the ±window", () => {
     const items = buildPeekItems(
@@ -124,6 +129,7 @@ describe("buildPeekItems windowing", () => {
       ],
       NOW,
       500_000,
+      T,
     );
 
     expect(items.map((i) => i.layer.id)).toEqual(["in"]);
@@ -137,6 +143,7 @@ describe("buildPeekItems windowing", () => {
       ],
       NOW,
       5_000_000,
+      T,
     );
 
     // Neither spans the playhead, so ordering is purely by start time.
@@ -154,6 +161,7 @@ describe("buildPeekItems windowing", () => {
       ],
       NOW,
       5_000_000,
+      T,
     );
 
     // Spanning item sorts first (LIVE), then the rest by start time.
@@ -163,5 +171,16 @@ describe("buildPeekItems windowing", () => {
     expect(byId.get("span")!.offsetUs).toBe(0);
     expect(byId.get("past")!.offsetUs).toBe(-100_000);
     expect(byId.get("future")!.offsetUs).toBe(200_000);
+  });
+
+  // The row's sublabel is the header's name, so an unnamed lane reads as its
+  // position rather than as its dominant layer class.
+  it("names each row's track the way the track header does", () => {
+    const named = track("t-named", null, [layer("a", 800_000, 1_200_000)]);
+    const unnamed = { ...track("t-plain", null, [layer("b", 800_000, 1_200_000)]), label: null };
+    const items = buildPeekItems([named, unnamed], NOW, 5_000_000, T);
+    const byId = new Map(items.map((i) => [i.layer.id, i]));
+    expect(byId.get("a")!.trackLabel).toBe("t-named");
+    expect(byId.get("b")!.trackLabel).toBe("tracks.positional#2");
   });
 });

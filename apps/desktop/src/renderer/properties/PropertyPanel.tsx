@@ -36,6 +36,7 @@ import {
 } from "../ipc";
 import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
 import { layerDisplayName } from "../lib/layerName";
+import { trackDisplayName } from "../lib/trackName";
 import { refusalText, tryMutate } from "../errors/tryMutate";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { ScaleFields } from "./ScaleFields";
@@ -169,7 +170,7 @@ function LayerPanel({
 
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
   const trackLabel = track
-    ? (track.label ?? t(`kinds.${track.kind.toLowerCase()}`, { defaultValue: track.kind }))
+    ? trackDisplayName(track, summary?.tracks ?? [], t)
     : "—";
   const mediaLabel =
     layer.params.kind === "VideoClip" ||

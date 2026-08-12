@@ -1,6 +1,7 @@
 import i18n from "../i18n";
 import { formatTimecode } from "../frames";
 import { layerDisplayName } from "../lib/layerName";
+import { trackDisplayName } from "../lib/trackName";
 import { useProjectStore } from "../state/projectStore";
 import type {
   CommandError,
@@ -44,8 +45,8 @@ export interface RefusalAction {
 
 /// Name/number resolution against the renderer's project mirror. Injectable
 /// so formatter tests run against a fixture instead of the live store; `t`
-/// decides the language of KIND fallbacks only (labels and media names are
-/// user content and language-neutral).
+/// decides the language of DERIVED names only (a stored label and a media name
+/// are user content and language-neutral).
 export interface RefusalContext {
   t: (key: string, values?: Record<string, unknown>) => string;
   layer(id: string): string;
@@ -71,17 +72,10 @@ export function liveRefusalContext(
     },
     track(id) {
       const tracks = useProjectStore.getState().summary?.tracks ?? [];
-      const index = tracks.findIndex((track) => track.id === id);
-      const track = index >= 0 ? tracks[index] : undefined;
-      if (!track) return shortId(id);
-      const own = track.label?.trim();
-      if (own) return own;
-      // Same fallback family as TrackHeader, made positional: "Video 2" names
-      // one track; bare "Video" could be any of them.
-      const kind = t(`kinds.${track.kind.toLowerCase()}`, {
-        defaultValue: track.kind,
-      });
-      return `${kind} ${index + 1}`;
+      const track = tracks.find((candidate) => candidate.id === id);
+      // The header's own name, or a refusal reads as being about a lane the
+      // user cannot find.
+      return track ? trackDisplayName(track, tracks, t) : shortId(id);
     },
     media(id) {
       const media = useProjectStore.getState().mediaById.get(id);
