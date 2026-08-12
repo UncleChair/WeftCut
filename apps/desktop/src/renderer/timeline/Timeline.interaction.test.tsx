@@ -23,6 +23,7 @@ import {
   mediaDragPayload,
   useMediaDragStore,
 } from "./mediaDrag";
+import { SPAWN_TRACK_ID } from "./placement";
 import {
   clearLayerSelection,
   setLayerSelection,
@@ -39,6 +40,7 @@ import { HEADER_COL_PX } from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
+  addTrack: vi.fn().mockResolvedValue("spawned-track"),
   moveLayer: vi.fn().mockResolvedValue(undefined),
   pasteLayer: vi.fn().mockResolvedValue("duplicated-layer"),
   trimLayer: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +69,7 @@ vi.mock("../ipc", async (importOriginal) => {
   return {
     ...actual,
     addMediaLayer: ipcMocks.addMediaLayer,
+    addTrack: ipcMocks.addTrack,
     moveLayer: ipcMocks.moveLayer,
     pasteLayer: ipcMocks.pasteLayer,
     trimLayer: ipcMocks.trimLayer,
@@ -221,6 +224,7 @@ describe("Timeline seek/selection coupling", () => {
     setActiveRegion(null);
     setPlayheadTimeUs(0);
     ipcMocks.addMediaLayer.mockClear();
+    ipcMocks.addTrack.mockClear();
     ipcMocks.moveLayer.mockClear();
     ipcMocks.pasteLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
@@ -1383,6 +1387,129 @@ describe("Timeline seek/selection coupling", () => {
     });
     fireEvent(lane, drop);
     expect(ipcMocks.addMediaLayer).not.toHaveBeenCalled();
+  });
+
+  // -------- The drop strip (ADR 0042) --------
+
+  const stripOf = (container: HTMLElement): HTMLElement => {
+    const strip = container.querySelector(
+      '[data-testid="timeline-drop-strip"]',
+    ) as HTMLElement;
+    // jsdom lays nothing out; the strip needs a box for the pointer-to-time math.
+    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 1040,
+      top: 0,
+      bottom: 14,
+      width: 1040,
+      height: 14,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    return strip;
+  };
+
+  it("reserves the strip's row in flow and keeps it inert with no drag in flight", () => {
+    const { container } = renderTimeline({});
+    const strip = container.querySelector(
+      '[data-testid="timeline-drop-strip"]',
+    ) as HTMLElement;
+    const spacer = container.querySelector(
+      '[data-testid="timeline-drop-strip-header"]',
+    ) as HTMLElement;
+
+    // Both columns paint the row, or every header below it loses its lane.
+    expect(strip.style.height).toBe("14px");
+    expect(spacer.style.height).toBe(strip.style.height);
+    expect(strip.dataset.armed).toBe("false");
+    expect(strip.textContent).toBe("");
+  });
+
+  it("spawns a lane and places the clip when a media drag is released on the strip", async () => {
+    const payload = mediaDragPayload(sourceMedia);
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({ media: [sourceMedia] });
+    const strip = stripOf(container);
+    const dataTransfer = {
+      types: [MEDIA_DRAG_TYPE],
+      dropEffect: "none",
+      getData: () => JSON.stringify(payload),
+    };
+    const at = MEDIA_DRAG_CURSOR_OFFSET_PX + 240;
+
+    const dragOver = createEvent.dragOver(strip, { dataTransfer });
+    Object.defineProperty(dragOver, "clientX", { value: at });
+    fireEvent(strip, dragOver);
+
+    // The strip owns the highlight through the same claim protocol the lanes
+    // use, and a lane that does not exist yet cannot collide.
+    expect(useMediaDragStore.getState().dropTargetTrackId).toBe(SPAWN_TRACK_ID);
+    const ghost = container.querySelector(
+      '[data-testid="timeline-drop-strip-ghost"]',
+    ) as HTMLElement;
+    expect(ghost.dataset.validity).toBe("spawn");
+    expect(ghost.dataset.startUs).toBe("3000000");
+    expect(ghost.dataset.endUs).toBe("6000000");
+    expect(
+      container.querySelector('[data-testid="timeline-drop-strip-hint"]'),
+    ).not.toBeNull();
+
+    const drop = createEvent.drop(strip, { dataTransfer });
+    Object.defineProperty(drop, "clientX", { value: at });
+    fireEvent(strip, drop);
+
+    await waitFor(() => {
+      expect(ipcMocks.addTrack).toHaveBeenCalledOnce();
+      expect(ipcMocks.addMediaLayer).toHaveBeenCalledWith(
+        "spawned-track",
+        sourceMedia.id,
+        3_000_000,
+      );
+    });
+  });
+
+  it("leaves a lane drop landing on that lane, with no lane spawned", async () => {
+    const emptyTrack: TrackSummary = { ...track, layers: [] };
+    const payload = mediaDragPayload(sourceMedia);
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({
+      tracks: [emptyTrack],
+      media: [sourceMedia],
+    });
+    const lane = container.querySelector(
+      '[data-testid="track-lane"]',
+    ) as HTMLElement;
+    vi.spyOn(lane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 1040,
+      top: 14,
+      bottom: 78,
+      width: 1040,
+      height: 64,
+      x: 0,
+      y: 14,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const dataTransfer = {
+      types: [MEDIA_DRAG_TYPE],
+      dropEffect: "none",
+      getData: () => JSON.stringify(payload),
+    };
+    const at = MEDIA_DRAG_CURSOR_OFFSET_PX + 240;
+
+    const drop = createEvent.drop(lane, { dataTransfer });
+    Object.defineProperty(drop, "clientX", { value: at });
+    fireEvent(lane, drop);
+
+    await waitFor(() => {
+      expect(ipcMocks.addMediaLayer).toHaveBeenCalledWith(
+        emptyTrack.id,
+        sourceMedia.id,
+        3_000_000,
+      );
+    });
+    expect(ipcMocks.addTrack).not.toHaveBeenCalled();
   });
 });
 

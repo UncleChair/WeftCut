@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import {
   evaluateTimelinePlacements,
+  SPAWN_TRACK_ID,
   type TimelinePlacement,
 } from "./placement";
 
@@ -122,5 +123,67 @@ describe("evaluateTimelinePlacements", () => {
 
     expect(result.validity).toBe("locked");
     expect(result.conflictingLayerIds).toEqual(["stationary"]);
+  });
+
+  // The fourth outcome (ADR 0042): "no lane can take this, so spawn one".
+  it("answers spawn for the spawn target, whatever the committed timeline holds", () => {
+    const result = evaluateTimelinePlacements({
+      // Every lane in the project is occupied across the placement's span and
+      // one of them is locked — none of that reaches a lane that does not exist.
+      tracks: [
+        track("track-1", [layer("busy", 0, 10_000_000)]),
+        track("track-2", [layer("also-busy", 0, 10_000_000)], true),
+      ],
+      placements: [
+        placement("incoming", SPAWN_TRACK_ID, 1_000_000, 3_000_000),
+      ],
+      replacedLayerIds: new Set(),
+    });
+
+    expect(result).toEqual({
+      validity: "spawn",
+      conflictingLayerIds: [],
+      sharesLane: false,
+    });
+  });
+
+  it("refuses a spawn whose own projections would overlap on the one new lane", () => {
+    const result = evaluateTimelinePlacements({
+      tracks: [],
+      placements: [
+        placement("anchor", SPAWN_TRACK_ID, 0, 2_000_000),
+        placement("sibling", SPAWN_TRACK_ID, 1_000_000, 3_000_000),
+      ],
+      replacedLayerIds: new Set(["anchor", "sibling"]),
+    });
+
+    expect(result.validity).toBe("collision");
+    expect(result.conflictingLayerIds).toEqual(["anchor", "sibling"]);
+  });
+
+  it("keeps a locked subject refused even when the destination is spawned", () => {
+    const result = evaluateTimelinePlacements({
+      tracks: [],
+      placements: [
+        { ...placement("incoming", SPAWN_TRACK_ID, 0, 2_000_000), locked: true },
+      ],
+      replacedLayerIds: new Set(),
+    });
+
+    expect(result.validity).toBe("locked");
+  });
+
+  it("lets opposite-class projections share the spawned lane", () => {
+    const result = evaluateTimelinePlacements({
+      tracks: [],
+      placements: [
+        placement("visual", SPAWN_TRACK_ID, 0, 2_000_000),
+        placement("audio", SPAWN_TRACK_ID, 0, 2_000_000, "audio"),
+      ],
+      replacedLayerIds: new Set(["visual", "audio"]),
+    });
+
+    expect(result.validity).toBe("spawn");
+    expect(result.sharesLane).toBe(true);
   });
 });

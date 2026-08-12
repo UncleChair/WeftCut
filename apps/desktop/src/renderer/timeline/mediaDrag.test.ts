@@ -271,6 +271,28 @@ describe("media drag placement", () => {
     expect(adjacent.validity).toBe("valid");
     expect(locked.validity).toBe("locked");
   });
+
+  it("answers spawn for the drop strip with the same span a lane would get", () => {
+    const payload = mediaDragPayload(media());
+    const occupied = track([visualLayer("video", 0, 10_000_000)]);
+    const args = {
+      media: payload,
+      pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
+      pxPerSec: 80,
+      fpsNum: 30,
+      fpsDen: 1,
+    };
+    const onLane = planMediaDrop({ ...args, track: occupied });
+    const onStrip = planMediaDrop({ ...args, track: null });
+
+    // The span is a property of the pointer and the source, not of the
+    // destination — only the answer about the destination differs.
+    expect(onStrip.tStartUs).toBe(onLane.tStartUs);
+    expect(onStrip.tEndUs).toBe(onLane.tEndUs);
+    expect(onLane.validity).toBe("collision");
+    expect(onStrip.validity).toBe("spawn");
+    expect(onStrip.conflictingLayerIds).toEqual([]);
+  });
 });
 
 describe("media drag target ownership", () => {

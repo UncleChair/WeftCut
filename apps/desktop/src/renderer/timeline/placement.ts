@@ -4,7 +4,18 @@ import {
   type LayerOverlapClass,
 } from "./geometry";
 
-export type PlacementValidity = "valid" | "collision" | "locked";
+/// `"spawn"` is the placement policy's fourth answer: no lane can take this
+/// clip, so one is made for it. It is what the command path has always done
+/// internally (`main/state/commands.ts`'s reverse scan appends a lane when
+/// nothing is free) and what the drop path could not say — see ADR 0042.
+export type PlacementValidity = "valid" | "collision" | "locked" | "spawn";
+
+/// Placement target standing in for "a lane that does not exist yet" — the drop
+/// strip. Keeping it a target id rather than a flag is what makes the strip's
+/// answer structural: it travels the same evaluation, the same claim/release
+/// drop-target protocol and the same ghost geometry a lane does, and no drop
+/// surface has to special-case it.
+export const SPAWN_TRACK_ID = "__weftcut-spawn-track__";
 
 export interface TimelinePlacement {
   layerId: string;
@@ -38,6 +49,9 @@ function rangesOverlap(
  * This is the shared overlap seam for incoming-media ghosts and existing-layer
  * move ghosts: visual/visual and audio/audio overlap is invalid, visual/audio
  * overlap is a legal shared lane, and touching half-open ranges are legal.
+ *
+ * A placement on `SPAWN_TRACK_ID` answers `"spawn"`: the lane it names has no
+ * committed content to overlap, so a fresh lane is empty by construction.
  */
 export function evaluateTimelinePlacements({
   tracks,
@@ -53,6 +67,7 @@ export function evaluateTimelinePlacements({
   const conflictSet = new Set<string>();
   let locked = false;
   let sharesLane = false;
+  let spawns = false;
 
   const addConflict = (layerId: string) => {
     if (conflictSet.has(layerId)) return;
@@ -61,6 +76,13 @@ export function evaluateTimelinePlacements({
   };
 
   for (const placement of placements) {
+    if (placement.trackId === SPAWN_TRACK_ID) {
+      // A locked SUBJECT still refuses — that is a property of the clip being
+      // placed, not of the destination, and the destination has no content.
+      if (placement.locked) locked = true;
+      spawns = true;
+      continue;
+    }
     const targetTrack = trackById.get(placement.trackId);
     if (placement.locked || targetTrack?.locked) locked = true;
     if (!targetTrack) continue;
@@ -113,11 +135,16 @@ export function evaluateTimelinePlacements({
   }
 
   return {
+    // `spawn` ranks below collision so a multi-selection that would overlap
+    // itself on the one new lane still refuses instead of promising a lane it
+    // cannot fill.
     validity: locked
       ? "locked"
       : conflictingLayerIds.length > 0
         ? "collision"
-        : "valid",
+        : spawns
+          ? "spawn"
+          : "valid",
     conflictingLayerIds,
     sharesLane,
   };

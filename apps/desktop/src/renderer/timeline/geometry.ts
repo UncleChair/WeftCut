@@ -46,6 +46,12 @@ export const LAYER_FULL_LABEL_MIN_PX = 120;
 /// Width of the sticky track-header column.
 export const HEADER_COL_PX = 160;
 
+/// Height of the drop strip above the topmost lane (ADR 0042). Its space is
+/// reserved in flow permanently, not conditionally on a drag — a row that
+/// appeared mid-gesture would reflow the timeline under the pointer. Thin
+/// enough to read as a seam rather than a lane the user is meant to manage.
+export const DROP_STRIP_HEIGHT_PX = 14;
+
 export function computeTimelineExtent({
   durationUs,
   pxPerSec,
@@ -68,9 +74,9 @@ export function computeTimelineExtent({
 
 export interface VisualTrack {
   track: TrackSummary;
-  /// True when this is the first lane of its kind group — the renderer adds
-  /// a divider line above it. Today the boundary is between the video stack
-  /// and the audio stack.
+  /// True when this is the first lane of its section — the renderer adds a
+  /// divider line above it. Sections are role-stamped vs role-less, not kind
+  /// buckets, so there is exactly one boundary (see `visualOrderedTracks`).
   isGroupStart: boolean;
 }
 
@@ -143,19 +149,23 @@ export function computeLayerSlices(
 // at the top of the screen", matching the editor convention that the
 // top-of-z-stack composites visually on top. See `docs/data-model.md`.
 //
+// Placement APPENDS a lane it had to create, so the role-less "additional"
+// region is the TAIL of the data array and therefore the HEAD of the visual
+// order — auto-created lanes accrete downward from the top of the screen, which
+// is why the drop strip that spawns them sits above the first row (ADR 0042).
+//
 //   data-model (bottom → top of z-stack)        visual (top → bottom of screen)
 //   ┌─────────────────────────────────┐         ┌─────────────────────────────┐
-//   │ idx 0 — additional / transient  │         │ B roll                      │
-//   │ idx 1 — A roll                  │   ⇄     │ B's separated audio (if any)│
-//   │ idx 2 — A's separated audio     │ reverse │ A roll                      │
-//   │ idx 3 — B roll                  │         │ A's separated audio (if any)│
-//   │ idx 4 — B's separated audio     │         │ additional / transient      │
-//   │ idx 5 — additional (extra)      │         └─────────────────────────────┘
-//   └─────────────────────────────────┘
+//   │ idx 0 — A roll                  │         │ additional (newest)         │
+//   │ idx 1 — A's separated audio     │   ⇄     │ additional / transient      │
+//   │ idx 2 — B roll                  │ reverse │ B's separated audio (if any)│
+//   │ idx 3 — B's separated audio     │         │ B roll                      │
+//   │ idx 4 — additional / transient  │         │ A's separated audio (if any)│
+//   │ idx 5 — additional (newest)     │         │ A roll                      │
+//   └─────────────────────────────────┘         └─────────────────────────────┘
 //
-// Group-start dividers separate the kind-buckets visually. The only divider is
-// between the role-stamped tracks and the transient tail (the "additional"
-// region at the bottom).
+// One group-start divider separates the two sections: it lands on the first
+// role-stamped row, i.e. under the "additional" region at the top.
 export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
   const reversed = tracks.slice().reverse();
   const out: VisualTrack[] = [];
@@ -163,8 +173,8 @@ export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
   for (const track of reversed) {
     // Role-stamped tracks (the reserved A/B skeleton + their separated
     // audio derivatives if any) form one section; everything else
-    // (transient imports, user/agent-added additional tracks) forms
-    // the bottom section. The boundary between them gets a divider.
+    // (transient imports, spawned additional tracks) forms the section
+    // above them. The boundary between them gets a divider.
     const section: "role" | "extra" = track.role !== null ? "role" : "extra";
     const isGroupStart = prevSection !== null && section !== prevSection;
     out.push({ track, isGroupStart });

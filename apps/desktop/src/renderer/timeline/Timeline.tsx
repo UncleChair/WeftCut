@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
+  addTrack,
   addTransition,
   groupsCreate,
   groupsDissolve,
@@ -56,6 +57,7 @@ import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetSt
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
+  DROP_STRIP_HEIGHT_PX,
   HEADER_COL_PX,
   computeTimelineExtent,
   indexGroups,
@@ -63,6 +65,7 @@ import {
   trackKeyframeProperties,
   visualOrderedTracks,
 } from "./geometry";
+import { DropStrip } from "./DropStrip";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
@@ -82,7 +85,11 @@ import {
   useRangeReveal,
 } from "../state/rangeStore";
 import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
-import { registerScrollToTime } from "../state/navigation";
+import {
+  registerScrollToTime,
+  revealTrackWithoutSelection,
+} from "../state/navigation";
+import { useProjectStore } from "../state/projectStore";
 import {
   clearLayerSelection,
   clearTransitionSelection,
@@ -610,13 +617,35 @@ export function Timeline({
 
   // -------- Media drop, seek, render --------
 
+  // A spawned lane carries no role, so the A/B filter above would hide the clip
+  // the user just dropped. Route it through the existing inline-reveal (R.7)
+  // rather than a second visibility rule. Held as state because the reveal
+  // registry validates against `projectStore`, which refreshes on its own
+  // `project:changed` subscription and can still be one fetch behind this drop.
+  const [spawnRevealTrackId, setSpawnRevealTrackId] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    const trackId = spawnRevealTrackId;
+    if (trackId === null) return;
+    const attempt = () => {
+      if (!revealTrackWithoutSelection(trackId)) return false;
+      setSpawnRevealTrackId(null);
+      return true;
+    };
+    if (attempt()) return;
+    return useProjectStore.subscribe(() => void attempt());
+  }, [spawnRevealTrackId]);
+
   const onMediaDrop = useCallback(
     async (
-      track: TrackSummary,
+      // null = the drop strip: no lane exists yet, so one is created first.
+      track: TrackSummary | null,
       payload: MediaDragPayload,
       plan: MediaDropPlan,
     ) => {
       if (
+        track !== null &&
         !trackAcceptsMedia(track.kind, payload.kind) &&
         !trackAcceptsMediaForAutoRoute(track.kind, payload.kind)
       ) {
@@ -642,13 +671,23 @@ export function Timeline({
         return;
       }
       try {
-        await addMediaLayer(track.id, payload.mediaId, plan.rawStartUs);
+        // Spawn-then-place is TWO commits, matching what the layer-adding
+        // commands already do when their reverse scan finds no free lane
+        // (`main/state/actor.ts`, add_color_layer): the track add gets its own
+        // op_id, then the layer add gets a second one. One history entry for the
+        // whole gesture is #06's problem — moving an EXISTING clip is where the
+        // cost of two entries is visible, because undo has to give a lane back.
+        const trackId = track !== null ? track.id : await addTrack();
+        await addMediaLayer(trackId, payload.mediaId, plan.rawStartUs);
+        if (track === null && displayMode !== "ShowAll") {
+          setSpawnRevealTrackId(trackId);
+        }
         await onMutated();
       } catch (err) {
         console.error("media drop failed:", err);
       }
     },
-    [importing, media, onMutated, previewDecodable, proxyState],
+    [displayMode, importing, media, onMutated, previewDecodable, proxyState],
   );
 
   // Context-menu open handler. Captures cursor position + target layer;
@@ -965,6 +1004,16 @@ export function Timeline({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           /> {/* ruler corner */}
+          {/* Row-alignment spacer for the drop strip in the body below. These
+              two loops paint the same rows in the same order out of two
+              columns; a row present in one and missing from the other slides
+              every header beneath it out of line with its lane. */}
+          <div
+            data-testid="timeline-drop-strip-header"
+            className="bg-card"
+            style={{ height: DROP_STRIP_HEIGHT_PX }}
+            aria-hidden="true"
+          />
           {orderedTracks.map(({ track, isGroupStart }) => (
             <Fragment key={track.id}>
               <TrackHeader
@@ -1006,13 +1055,21 @@ export function Timeline({
             className="relative min-w-full"
             style={{ width: widthPx }}
           >
+            <DropStrip
+              pxPerSec={pxPerSec}
+              fpsNum={fpsNum}
+              fpsDen={fpsDen}
+              mediaDropSnap={mediaDropSnap}
+              onMediaDrop={onMediaDrop}
+            />
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
             {/*
               Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
-              is the top (see `docs/data-model.md`). The visual order
-              groups by kind (Video on top, then Subtitle, then Audio at the
-              bottom — Premiere/Resolve/FCP convention) and within each group is
-              z-stack-reversed so the top of the group is the top of z-stack.
+              is the top (see `docs/data-model.md`). `visualOrderedTracks`
+              reverses that, so the tail of the array is the TOP row here — it
+              splits role-stamped lanes from role-less ones, it does NOT bucket
+              by kind. The role-less section is the one at the top, which is
+              where the strip above spawns into.
             */}
             {orderedTracks.map(({ track, isGroupStart }) => (
               <Fragment key={track.id}>

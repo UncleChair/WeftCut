@@ -9,6 +9,7 @@ import type {
 import type { LayerOverlapClass } from "./geometry";
 import {
   evaluateTimelinePlacements,
+  SPAWN_TRACK_ID,
   type PlacementValidity,
 } from "./placement";
 import { snapDragDeltaToTimelineBoundary } from "./snapping";
@@ -181,7 +182,11 @@ export function planMediaDrop({
   fpsDen,
   snap,
 }: {
-  track: TrackSummary;
+  /// The destination lane, or null for the drop strip — no lane exists there
+  /// yet, so the placement is evaluated against `SPAWN_TRACK_ID` and answers
+  /// `"spawn"`. Everything else about the plan (start time, snapping, ghost
+  /// span) is identical, which is the point of routing both through here.
+  track: TrackSummary | null;
   media: MediaDragPayload;
   pointerXPx: number;
   pxPerSec: number;
@@ -240,11 +245,11 @@ export function planMediaDrop({
   );
   const overlapClass = mediaOverlapClass(media.kind);
   const evaluation = evaluateTimelinePlacements({
-    tracks: [track],
+    tracks: track ? [track] : [],
     placements: [
       {
         layerId: "__media-drop-ghost__",
-        trackId: track.id,
+        trackId: track?.id ?? SPAWN_TRACK_ID,
         tStartUs,
         tEndUs,
         overlapClass,

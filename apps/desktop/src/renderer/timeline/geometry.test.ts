@@ -143,12 +143,15 @@ describe("computeLayerSlices", () => {
 
 describe("visualOrderedTracks", () => {
   it("reverses data order and marks the role/extra boundary", () => {
-    const t0 = track({ id: "t0", role: null, transient: true });
-    const t1 = track({ id: "t1", role: "a-roll" as never });
-    const t2 = track({ id: "t2", role: "b-roll" as never });
-    const out = visualOrderedTracks([t0, t1, t2]);
-    expect(out.map((v) => v.track.id)).toEqual(["t2", "t1", "t0"]);
-    expect(out.map((v) => v.isGroupStart)).toEqual([false, false, true]);
+    // Data order as production builds it: the reserved skeleton first, then the
+    // lanes placement APPENDED. Reversed, the role-less tail is the top of the
+    // screen, so the divider lands on the first role-stamped row below it.
+    const aRoll = track({ id: "a-roll", role: "a-roll" as never });
+    const bRoll = track({ id: "b-roll", role: "b-roll" as never });
+    const spawned = track({ id: "spawned", role: null, transient: true });
+    const out = visualOrderedTracks([aRoll, bRoll, spawned]);
+    expect(out.map((v) => v.track.id)).toEqual(["spawned", "b-roll", "a-roll"]);
+    expect(out.map((v) => v.isGroupStart)).toEqual([false, true, false]);
   });
   it("produces isGroupStart === false for every entry when all tracks have role: null", () => {
     const tracks = [
