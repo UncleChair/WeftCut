@@ -44,6 +44,7 @@ import {
 } from "../panels/QuickActionsPanel";
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
 import { AgentPanel } from "../agent/AgentPanel";
+import { HistoryPanel } from "../history/HistoryPanel";
 import {
   importCancel,
   updateLayer,
@@ -392,6 +393,13 @@ function AgentDockPanel() {
   );
 }
 
+/// No `weft-dock-panel-scroll` wrapper and no contracts: the History Panel owns
+/// its own scroller (sticky cursor follow) and pulls the edit stack over its own
+/// IPC channel, so nothing about it rides the summary the other Panels share.
+function HistoryDockPanel() {
+  return <HistoryPanel />;
+}
+
 const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   media: MediaDockPanel,
   preview: PreviewDockPanel,
@@ -403,6 +411,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   effect: EffectDockPanel,
   nearby: NearbyDockPanel,
   agent: AgentDockPanel,
+  history: HistoryDockPanel,
 };
 
 export function WeftCutPanelRenderer({

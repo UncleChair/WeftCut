@@ -10,7 +10,13 @@ import { setLayerSelection } from "./selectionStore";
 /// MediaPool's list DOM — are registered on mount, playbackStore-style;
 /// every verb is a safe no-op for whatever isn't mounted.
 
-type RevealTrackFn = (trackId: string, layerId: string) => void;
+/// `layerId: null` means "reveal + scroll the track, select nothing". History
+/// rows for `add_track` / `add_caption_track` carry a Track ref and nothing
+/// else, and `selectionStore` has no track-selection concept — so revealing
+/// without selecting is the honest outcome, not a degraded one. App's
+/// `revealTrack` skips its `selectLayerWithGroup` for null, leaving whatever
+/// was selected alone rather than clearing it.
+type RevealTrackFn = (trackId: string, layerId: string | null) => void;
 type ScrollToTimeFn = (tUs: number) => void;
 type RevealMediaFn = (mediaId: string) => void;
 type OpenMediaPoolPanelFn = () => void;
@@ -178,6 +184,42 @@ export function jumpToLayer(layerId: string): boolean {
     revealTrackFn(trackId, layerId);
   }
   jumpToTimeUs(layer.t_start_us);
+  return true;
+}
+
+/// Select + reveal a Layer WITHOUT moving the playhead — the non-seeking half
+/// of `jumpToLayer`.
+///
+/// This exists for the History Panel and is deliberately NOT `jumpToLayer`:
+/// the playhead is the user's observation point, and a history jump changes
+/// what is ON the timeline, not which frame is being looked at. Holding it
+/// still is what makes "same frame, before and after" comparison possible —
+/// the whole basis for deciding whether a step should be reverted
+/// (spec decision 8).
+///
+/// Goes through App's `revealTrack` when mounted, so the selection is
+/// group-aware exactly as a timeline click is; falls back to a plain
+/// selection when nothing has registered. Returns false for a Layer that
+/// isn't in the live index.
+export function revealLayerWithoutSeek(layerId: string): boolean {
+  const { layerById, trackIdByLayerId } = useProjectStore.getState();
+  if (!layerById.has(layerId)) return false;
+  const trackId = trackIdByLayerId.get(layerId);
+  if (trackId !== undefined && revealTrackFn) {
+    revealTrackFn(trackId, layerId);
+    return true;
+  }
+  return selectLayer(layerId);
+}
+
+/// Reveal + scroll a Track, selecting nothing and seeking nowhere. Returns
+/// false when the Track is gone from the live summary, or when no reveal
+/// handle is mounted (nothing observable would happen).
+export function revealTrackWithoutSelection(trackId: string): boolean {
+  const summary = useProjectStore.getState().summary;
+  if (!summary?.tracks.some((track) => track.id === trackId)) return false;
+  if (!revealTrackFn) return false;
+  revealTrackFn(trackId, null);
   return true;
 }
 

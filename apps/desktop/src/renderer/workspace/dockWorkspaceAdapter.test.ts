@@ -338,9 +338,9 @@ function fakeDockview(
 }
 
 describe("Dock Panel registry", () => {
-  it("registers exactly the ten semantic singleton kinds", () => {
-    expect(PANEL_KINDS).toHaveLength(10);
-    expect(new Set(PANEL_KINDS).size).toBe(10);
+  it("registers exactly the eleven semantic singleton kinds", () => {
+    expect(PANEL_KINDS).toHaveLength(11);
+    expect(new Set(PANEL_KINDS).size).toBe(11);
     expect(Object.keys(PANEL_REGISTRY)).toEqual([...PANEL_KINDS]);
     expect(EDITING_OPEN_PANEL_KINDS).toEqual([
       "media",
@@ -351,6 +351,13 @@ describe("Dock Panel registry", () => {
       "effect",
       "nearby",
     ]);
+    // History pulls the edit stack over its own IPC channel, so it joins the
+    // on-demand tool Panels: closed by default, costing nothing until opened.
+    expect(PANEL_REGISTRY.history).toMatchObject({
+      kind: "history",
+      titleKey: "dock_workspace.panels.history",
+      initiallyOpen: false,
+    });
   });
 });
 

@@ -8,6 +8,8 @@ import {
   registerRevealTrack,
   registerScrollToTime,
   revealInMediaPool,
+  revealLayerWithoutSeek,
+  revealTrackWithoutSelection,
   selectLayer,
   selectLayers,
   seekToClamped,
@@ -190,6 +192,60 @@ describe("jumpToLayer", () => {
     expect(jumpToLayer("ghost")).toBe(false);
     expect(useSelectionStore.getState().primaryLayerId).toBeNull();
     expect(playheadTimeUs()).toBe(0);
+  });
+});
+
+describe("revealLayerWithoutSeek / revealTrackWithoutSelection", () => {
+  // The non-seeking half of jumpToLayer, for the History Panel: a history jump
+  // changes what is ON the timeline, not which frame is being looked at.
+
+  it("selects + reveals through App's handle and never seeks", () => {
+    const reveal = vi.fn();
+    const scroll = vi.fn();
+    const unReveal = registerRevealTrack(reveal);
+    const unScroll = registerScrollToTime(scroll);
+    setPlayheadTimeUs(7_000_000);
+
+    expect(revealLayerWithoutSeek("l1")).toBe(true);
+    expect(reveal).toHaveBeenCalledWith("t1", "l1");
+    expect(playheadTimeUs()).toBe(7_000_000);
+    expect(scroll).not.toHaveBeenCalled();
+    unReveal();
+    unScroll();
+  });
+
+  it("falls back to a plain selection with no reveal handle mounted", () => {
+    expect(revealLayerWithoutSeek("l2")).toBe(true);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l2");
+  });
+
+  it("returns false for a stale layer id", () => {
+    expect(revealLayerWithoutSeek("ghost")).toBe(false);
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+  });
+
+  it("reveals a track with a NULL layer id — nothing to select", () => {
+    // `add_track` / `add_caption_track` rows carry a Track ref and nothing
+    // else, and selectionStore has no track-selection concept.
+    const reveal = vi.fn();
+    const unReveal = registerRevealTrack(reveal);
+    setLayerSelection("l1", ["l1"]);
+
+    expect(revealTrackWithoutSelection("t1")).toBe(true);
+    expect(reveal).toHaveBeenCalledWith("t1", null);
+    // The existing selection is left alone rather than cleared.
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(playheadTimeUs()).toBe(0);
+    unReveal();
+  });
+
+  it("returns false for a stale track, or with no reveal handle mounted", () => {
+    expect(revealTrackWithoutSelection("t1")).toBe(false);
+    const reveal = vi.fn();
+    const unReveal = registerRevealTrack(reveal);
+    expect(revealTrackWithoutSelection("ghost")).toBe(false);
+    expect(reveal).not.toHaveBeenCalled();
+    unReveal();
   });
 });
 

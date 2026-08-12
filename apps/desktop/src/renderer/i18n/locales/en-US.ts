@@ -219,6 +219,7 @@ const enUS = {
       effect: "Effect",
       nearby: "Nearby",
       agent: "Agent",
+      history: "History",
     },
     position: {
       left: "left",
@@ -1240,6 +1241,35 @@ const enUS = {
     },
     audio: { set_role_gain: "Set {{role}} role gain" },
     checkpoint: { restore: "Restored checkpoint “{{label}}”" },
+  },
+  // The History Panel's own chrome. The ROW text comes from `history.*` above
+  // (main records the key at commit time); everything here is panel furniture.
+  history_panel: {
+    empty: "No edits recorded yet.",
+    loading: "Loading history…",
+    // Eviction header. Non-interactive: those snapshots are gone, so there is
+    // nothing to jump to (spec decision 12).
+    evicted_one: "{{count}} earlier step is out of range",
+    evicted_other: "{{count}} earlier steps are out of range",
+    jump_hint: "Jump to this state",
+    current_hint: "Current state",
+    redo_hint: "Jump forward to this state",
+    locked_hint: "History is locked: {{reason}}",
+    actor_user: "You",
+    actor_agent: "Agent",
+    agent_client: "Agent: {{client}}",
+    group_steps_one: "{{count}} step",
+    group_steps_other: "{{count}} steps",
+    group_jump_hint: "Jump to the state before this run",
+    // Boundary case: eviction ate the run's predecessor, so no stack index
+    // holds "before this run" any more.
+    group_jump_unavailable: "The state before this run is out of range",
+    expand_group: "Show every step",
+    collapse_group: "Collapse the run",
+    // Joins entity names on a row and the counted phrases in a group header.
+    list_separator: ", ",
+    // Aggregate counting: `Split layer ×2, Added marker ×4`.
+    aggregate_item: "{{label}} ×{{count}}",
   },
   // Display labels for Rust-side enum discriminants. Keep keys lowercase so
   // `t("kinds." + value.toLowerCase())` works directly.

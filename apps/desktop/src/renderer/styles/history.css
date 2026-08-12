@@ -1,0 +1,226 @@
+/* ============================================================
+   History Panel — the edit stack as a navigable timeline.
+
+   Layout: a three-row grid. Row 1 is the checkpoint section
+   (ticket 04 — present and empty, so adding it never reflows
+   the stack), row 2 the lock badge, row 3 the scrolling stack.
+   Oldest at the top, newest at the bottom, matching the Agent
+   record panel's chronology and its sticky-to-bottom scroll.
+
+   Visual language follows agent.css's record rows: no drawn row
+   borders, hover as a tint, state carried by text colour.
+   ============================================================ */
+
+/* Flex, not grid: the lock badge is conditional, and a fixed grid-row track
+   list would hand the stack a content-sized row whenever the badge is absent —
+   killing its scroll. */
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  font-size: var(--font-size-body);
+}
+
+/* Reserved slot for the checkpoint section (create / restore / delete).
+   Empty until ticket 04 fills it — it draws nothing and claims no height,
+   but it is the first child, so the stack never has to move to make room. */
+.history-checkpoints {
+  flex: none;
+}
+
+.history-checkpoints:not(:empty) {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.history-lock-badge {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #2a1a0a;
+  border-bottom: 1px solid #4a2c10;
+  font-size: var(--font-size-caption);
+  color: var(--color-amber-400);
+}
+
+.history-lock-reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-stack {
+  /* offsetParent for the sticky-follow scroll math in HistoryPanel.tsx —
+     row offsetTop must be measured against this scroller, not the page. */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.history-empty {
+  padding: 16px 12px;
+  color: var(--color-gray-500);
+  font-style: italic;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+}
+
+button.history-row {
+  cursor: pointer;
+}
+
+button.history-row:hover:not(:disabled) {
+  background: var(--surface-tint);
+}
+
+button.history-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+button.history-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The cursor row: where the project actually is right now. */
+.history-row[data-state="current"] {
+  background: var(--selection-bg);
+  border-left-color: var(--selection);
+  font-weight: 500;
+}
+
+/* Redo tail. Greyed but still clickable — the grey IS the warning; the next
+   edit truncates these silently, with no dialog (spec decision 6). */
+.history-row[data-state="future"] {
+  color: var(--color-gray-500);
+}
+
+/* Eviction header: everything before the top row was discarded. Not a jump
+   target — those snapshots no longer exist. */
+.history-evicted-row {
+  display: block;
+  padding: 6px 12px;
+  color: var(--color-gray-500);
+  font-size: var(--font-size-caption);
+  font-style: italic;
+  border-bottom: 1px dashed var(--border-soft);
+}
+
+.history-row-time {
+  color: var(--color-gray-500);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-row-actor {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-gray-500);
+}
+
+.history-row-actor[data-actor="agent"] {
+  color: var(--color-amber-400);
+}
+
+.history-row-body {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.history-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Entity names resolved in main against the snapshot that still holds the
+   ref — the whole reason a delete row can say more than a raw uuid. */
+.history-row-entities {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+}
+
+/* ── Folded agent runs ─────────────────────────────────────── */
+
+.history-group-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.history-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-gray-500);
+  cursor: pointer;
+}
+
+.history-group-toggle:hover {
+  background: var(--hover-neutral);
+  color: var(--foreground);
+}
+
+.history-group-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.history-group-row {
+  padding-left: 4px;
+}
+
+.history-group-steps {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+/* The aggregate is FACT (counted from the run's own label keys), unlike the
+   agent's self-reported reason, which is intent — and which the Agent panel
+   and status bar already show (spec decision 11). */
+.history-group-aggregate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+/* Expanded steps stay individually clickable — folding is a rendering
+   affordance over a run, never a collapse of it. */
+.history-entry-row.is-nested {
+  padding-left: 30px;
+}

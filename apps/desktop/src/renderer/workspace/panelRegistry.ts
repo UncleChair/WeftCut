@@ -18,6 +18,7 @@ export const PANEL_KINDS = [
   "effect",
   "nearby",
   "agent",
+  "history",
 ] as const;
 
 export type PanelKind = (typeof PANEL_KINDS)[number];
@@ -104,6 +105,15 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
   agent: {
     kind: "agent",
     titleKey: "dock_workspace.panels.agent",
+    ...TOOL_MINIMUM,
+    initiallyOpen: false,
+  },
+  // Closed by default like the other on-demand tool Panels: the edit stack is
+  // pulled over its own IPC channel (`project_history_view`), so a closed
+  // History Panel costs exactly zero refetches — see spec decision 5.
+  history: {
+    kind: "history",
+    titleKey: "dock_workspace.panels.history",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
   },

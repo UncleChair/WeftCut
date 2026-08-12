@@ -150,7 +150,8 @@
 .weft-dock-panel > .preview,
 .weft-dock-panel > .timeline,
 .weft-dock-panel > .media-pool,
-.weft-dock-panel > .agent-panel {
+.weft-dock-panel > .agent-panel,
+.weft-dock-panel > .history-panel {
   width: 100%;
   height: 100%;
 }

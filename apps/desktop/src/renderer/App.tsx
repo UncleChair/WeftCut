@@ -247,10 +247,15 @@ export function App({ onCloseProject }: AppProps) {
     [summary?.groups],
   );
 
+  /// `layerId === null`: reveal + scroll the track and select NOTHING —
+  /// History rows for `add_track` / `add_caption_track` carry a Track ref and
+  /// nothing else, and there is no track-selection concept to satisfy. Skipping
+  /// `selectLayerWithGroup` (rather than passing it null, which CLEARS the
+  /// selection) leaves the user's current selection undisturbed.
   const revealTrack = useCallback(
-    (trackId: string, layerId: string) => {
+    (trackId: string, layerId: string | null) => {
       setRevealedTrackId(trackId);
-      selectLayerWithGroup(layerId);
+      if (layerId !== null) selectLayerWithGroup(layerId);
     },
     [selectLayerWithGroup],
   );
