@@ -17,7 +17,11 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
   runtime, so user machines need no Node install. It ships as an extraResource
   and the app copies it to `<userData>/cli/weftcut-mcp.cjs` at every startup;
   client configs reference THAT copy, the only path stable across upgrades on
-  all three OSes (an AppImage mounts at a random point per run). The shim
+  all three OSes (an AppImage mounts at a random point per run). `<userData>`
+  is `<appData>/WeftCut` — Electron names it from package.json's `productName`,
+  which is why that key must stay set: electron-builder's own `productName` is
+  never written into the packaged package.json, and without it both dev and
+  packaged builds fall back to the scoped package name. The shim
   re-reads `mcp_auth.json` on every bridge (re)connect, so port re-picks and
   token rotations self-heal, and the config fragment carries no URL and no
   token.

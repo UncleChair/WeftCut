@@ -35,8 +35,10 @@ export function shimEnvFromProcess(): ShimEnv {
 /// Last-resort userData guess. Generated configs always carry an explicit
 /// WEFTCUT_USERDATA and the installed shim finds userData as its own
 /// grandparent, so this only serves a hand-invoked shim. Electron derives the
-/// dir from the app name — productName "WeftCut" packaged, the scoped package
-/// name "@weftcut/desktop" in dev — so probe both for mcp_auth.json.
+/// dir from the app name, which is package.json's `productName` ("WeftCut") in
+/// dev AND packaged: electron-builder's own productName never reaches the
+/// packaged package.json, so the two modes agree only because the key is set
+/// there. The scoped-name candidate stays for profiles written before it was.
 export function defaultUserDataDir(se: ShimEnv): string {
   const appData =
     se.platform === 'win32'
