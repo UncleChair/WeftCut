@@ -42,6 +42,7 @@ const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
   addTrack: vi.fn().mockResolvedValue("spawned-track"),
   moveLayer: vi.fn().mockResolvedValue(undefined),
+  moveLayersToNewTrack: vi.fn().mockResolvedValue("raised-track"),
   pasteLayer: vi.fn().mockResolvedValue("duplicated-layer"),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
@@ -71,6 +72,7 @@ vi.mock("../ipc", async (importOriginal) => {
     addMediaLayer: ipcMocks.addMediaLayer,
     addTrack: ipcMocks.addTrack,
     moveLayer: ipcMocks.moveLayer,
+    moveLayersToNewTrack: ipcMocks.moveLayersToNewTrack,
     pasteLayer: ipcMocks.pasteLayer,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
@@ -226,6 +228,7 @@ describe("Timeline seek/selection coupling", () => {
     ipcMocks.addMediaLayer.mockClear();
     ipcMocks.addTrack.mockClear();
     ipcMocks.moveLayer.mockClear();
+    ipcMocks.moveLayersToNewTrack.mockClear();
     ipcMocks.pasteLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
@@ -395,10 +398,35 @@ describe("Timeline seek/selection coupling", () => {
   };
   const threeRows = [rowBottom, rowMid, rowTop];
 
+  function stubRect(el: Element, top: number, bottom: number) {
+    vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+      top,
+      bottom,
+      height: bottom - top,
+      y: top,
+      left: 0,
+      right: 1040,
+      width: 1040,
+      x: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+  }
+
   // Give the lanes a vertical layout jsdom cannot produce on its own. The gap
   // between rowMid and rowBottom is what an expanded track's keyframe
   // sub-lanes occupy — the geometry an arithmetic row-offset table cannot see.
+  //
+  // The drop strip is measured by the SAME hit-test, so it gets the band it
+  // actually renders in: immediately above the topmost lane. Without it the
+  // strip's unlaid-out (0, 0) rect would tie with rowTop's and steal its band —
+  // which is a fixture artifact, not app behaviour, and would send a lane-to-lane
+  // drag to the spawn target.
   function stubLaneLayout(container: HTMLElement) {
+    stubRect(
+      container.querySelector('[data-testid="timeline-drop-strip"]')!,
+      -14,
+      0,
+    );
     const bands: [number, number][] = [
       [0, 56], // rowTop
       [56, 112], // rowMid — its sub-lanes then fill 112 → 184
@@ -409,18 +437,7 @@ describe("Timeline seek/selection coupling", () => {
       .forEach((el, i) => {
         const band = bands[i];
         if (!band) return;
-        const [top, bottom] = band;
-        vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
-          top,
-          bottom,
-          height: bottom - top,
-          y: top,
-          left: 0,
-          right: 0,
-          width: 0,
-          x: 0,
-          toJSON: () => ({}),
-        } as DOMRect);
+        stubRect(el, band[0], band[1]);
       });
   }
 
@@ -469,6 +486,8 @@ describe("Timeline seek/selection coupling", () => {
       0,
       false,
     );
+    // A lane with room takes the clip itself; spawning stays the exception.
+    expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
   });
 
   it("hands an expanded track's sub-lane band to the track that owns it", () => {
@@ -1510,6 +1529,211 @@ describe("Timeline seek/selection coupling", () => {
       );
     });
     expect(ipcMocks.addTrack).not.toHaveBeenCalled();
+  });
+
+  // -------- The strip's OTHER event model: a pointer-driven clip drag --------
+  //
+  // A media-pool drag is HTML5 drag-and-drop and a clip drag is pointer-driven,
+  // and they converge on this one row. These cases exist because the failure the
+  // ticket predicted is one mechanism working while the other silently does
+  // nothing: every one of them would still pass on the placement policy alone.
+
+  /// The strip above the lanes, laid out the way it renders. The lanes follow it
+  /// in visual order, so lane i owns `[14 + 56i, 70 + 56i)`.
+  const stubRaiseLayout = (container: HTMLElement): HTMLElement => {
+    const strip = stripOf(container); // band [0, 14)
+    container
+      .querySelectorAll('[data-testid="track-lane"]')
+      .forEach((el, i) => stubRect(el, 14 + i * 56, 70 + i * 56));
+    return strip;
+  };
+
+  const stripState = (strip: HTMLElement) => ({
+    armed: strip.dataset.armed,
+    lit: strip.dataset.lit,
+    hints: strip.querySelectorAll('[data-testid="timeline-drop-strip-hint"]')
+      .length,
+  });
+
+  it("lights the strip and raises an existing clip onto a fresh lane", async () => {
+    const { container, getByText } = renderTimeline({
+      selectedLayerId: layer.id,
+    });
+    const strip = stubRaiseLayout(container);
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    // Straight up out of the lane's band [14, 70) into the strip's [0, 14).
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 7 });
+
+    // Armed and lit from a drag that publishes to no media-drag store.
+    expect(stripState(strip)).toEqual({ armed: "true", lit: "true", hints: 1 });
+    // `spawn` is a destination being created, not a refusal — the chip must not
+    // wear the collision chrome or the gesture reads as blocked.
+    expect(block.dataset.dragValidity).toBe("spawn");
+    expect(
+      block.querySelector('[data-testid="layer-drag-invalid-badge"]'),
+    ).toBeNull();
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
+
+    await waitFor(() => {
+      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([layer.id]);
+    });
+    // The one create-and-move operation, never decomposed into add-then-move.
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.addTrack).not.toHaveBeenCalled();
+  });
+
+  it("raises a whole group onto the ONE new lane", async () => {
+    const { container, getByText } = renderTimeline({
+      tracks: [groupedTrack],
+      groups: [group],
+      selectedLayerId: layer.id,
+    });
+    stubRaiseLayout(container);
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 7 });
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
+
+    // The drag's own subject set, exactly as a cross-lane move would carry it.
+    await waitFor(() => {
+      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([
+        layer.id,
+        groupedLayer.id,
+      ]);
+    });
+  });
+
+  // Two lanes, one clip each, grouped — the shape a raise has to judge as a set
+  // rather than one clip at a time. `tracks` is bottom-of-z-stack first, so the
+  // SECOND entry renders in the top lane band.
+  const twoLaneGroup = (
+    lower: LayerSummary,
+    upper: LayerSummary,
+    upperTrack: Partial<TrackSummary> = {},
+  ) => ({
+    tracks: [
+      { ...track, id: "lane-lower", label: "Lower", layers: [lower] },
+      {
+        ...track,
+        id: "lane-upper",
+        label: "Upper",
+        role: null,
+        layers: [upper],
+        ...upperTrack,
+      },
+    ] as TrackSummary[],
+    groups: [
+      { id: "raise-group", label: null, layer_ids: [lower.id, upper.id] },
+    ] as GroupSummary[],
+  });
+
+  it("refuses a subject set that would overlap itself on the one new lane", () => {
+    const anchor: LayerSummary = { ...layer, id: "raise-anchor", label: "Anchor" };
+    const overlapping: LayerSummary = {
+      ...layer,
+      id: "raise-overlap",
+      label: "Overlapping",
+      t_start_us: 1_000_000,
+      t_end_us: 3_000_000,
+    };
+    const { container, getByText } = renderTimeline({
+      ...twoLaneGroup(anchor, overlapping),
+      selectedLayerId: anchor.id,
+    });
+    stubRaiseLayout(container);
+    // "Anchor" lives on the lower lane, which renders SECOND — band [70, 126).
+    const block = getByText("Anchor").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 98 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 7 });
+
+    // `collision` out-ranks `spawn`: one empty lane cannot hold both.
+    expect(block.dataset.dragValidity).toBe("collision");
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
+    expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
+  });
+
+  it("refuses a raise whose subject sits on a locked lane", () => {
+    const anchor: LayerSummary = { ...layer, id: "raise-anchor", label: "Anchor" };
+    const pinned: LayerSummary = {
+      ...layer,
+      id: "raise-pinned",
+      label: "Pinned",
+      t_start_us: 3_000_000,
+      t_end_us: 4_000_000,
+    };
+    const { container, getByText } = renderTimeline({
+      ...twoLaneGroup(anchor, pinned, { locked: true }),
+      selectedLayerId: anchor.id,
+    });
+    stubRaiseLayout(container);
+    const block = getByText("Anchor").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 98 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 7 });
+
+    // The times do not overlap, so `locked` is the only verdict that can refuse
+    // this — and it out-ranks `spawn`, which is why the strip is not a way around
+    // a lock rather than a case anyone had to branch on.
+    expect(block.dataset.dragValidity).toBe("locked");
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
+    expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
+  });
+
+  it("never offers the strip to a clip on a locked lane", () => {
+    const lockedTrack: TrackSummary = { ...track, locked: true };
+    const { container, getByText } = renderTimeline({
+      tracks: [lockedTrack],
+      selectedLayerId: layer.id,
+    });
+    const strip = stubRaiseLayout(container);
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 7 });
+
+    // The gesture never armed, so there is nothing for the strip to offer.
+    expect(stripState(strip)).toEqual({ armed: "false", lit: "false", hints: 0 });
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
+    expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
+  });
+
+  it("withholds the strip from an Alt+drag duplicate", async () => {
+    const { container, getByText } = renderTimeline({
+      selectedLayerId: layer.id,
+    });
+    const strip = stubRaiseLayout(container);
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 0,
+      clientY: 40,
+      altKey: true,
+    });
+    fireEvent.pointerMove(window, { clientX: 320, clientY: 7, altKey: true });
+
+    // A duplicate lowers to `pasteLayer`, which needs a lane that exists, so the
+    // strip stays dark and the copy lands on the source's own lane.
+    expect(stripState(strip)).toEqual({ armed: "true", lit: "false", hints: 0 });
+
+    fireEvent.pointerUp(window, { clientX: 320, clientY: 7, altKey: true });
+
+    await waitFor(() => {
+      expect(ipcMocks.pasteLayer).toHaveBeenCalledWith(
+        layer.id,
+        4_000_000,
+        track.id,
+      );
+    });
+    expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
   });
 });
 

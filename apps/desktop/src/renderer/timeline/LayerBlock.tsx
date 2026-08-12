@@ -39,7 +39,11 @@ import {
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
-import type { PlacementValidity } from "./placement";
+import {
+  placementRefuses,
+  previewTrackId,
+  type PlacementValidity,
+} from "./placement";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -248,7 +252,9 @@ export function LayerBlock({
   const isPendingPlacement = pendingPlacement?.layerId === layer.id;
   const dragValidity =
     isDragging && dragState?.kind === "move" ? dragState.validity : "valid";
-  const dragIsInvalid = dragValidity !== "valid";
+  // Not `!== "valid"`: a drag over the drop strip reads `"spawn"`, which is a
+  // destination being created rather than a refusal (ADR 0042).
+  const dragIsInvalid = placementRefuses(dragValidity);
   const dragInvalidLabel =
     dragValidity === "collision"
       ? t("timeline.drop_collision", { defaultValue: "Overlap" })
@@ -367,7 +373,7 @@ export function LayerBlock({
   const dragPreviewTrackId =
     dragSubject && dragState?.kind === "move"
       ? isDragAnchor
-        ? (dragState.overTrackId ?? dragSubject.trackId)
+        ? previewTrackId(dragState.overTrackId, dragSubject.trackId)
         : dragSubject.trackId
       : null;
   const movedAcrossTracks =

@@ -28,6 +28,7 @@ import {
   type MediaDropPlan,
   type MediaDropSnapOptions,
 } from "./mediaDrag";
+import { previewTrackId } from "./placement";
 
 export function TrackLane({
   track,
@@ -143,7 +144,7 @@ export function TrackLane({
     (subject: DragSubject): string => {
       if (dragState?.kind !== "move") return subject.trackId;
       if (subject.layerId !== dragState.layerId) return subject.trackId;
-      return dragState.overTrackId ?? subject.trackId;
+      return previewTrackId(dragState.overTrackId, subject.trackId);
     },
     [dragState],
   );

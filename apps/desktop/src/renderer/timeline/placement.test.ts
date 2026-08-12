@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import {
   evaluateTimelinePlacements,
+  placementRefuses,
+  previewTrackId,
   SPAWN_TRACK_ID,
   type TimelinePlacement,
 } from "./placement";
@@ -185,5 +187,29 @@ describe("evaluateTimelinePlacements", () => {
 
     expect(result.validity).toBe("spawn");
     expect(result.sharesLane).toBe(true);
+  });
+});
+
+// Two consequences of `"spawn"` being COMMITTABLE, both of which showed up as
+// wrong chrome before they were stated once: a `!== "valid"` test reads a raise as
+// a refusal, and a destination that names no lane leaves the dragged chip with
+// nowhere to render.
+describe("placementRefuses", () => {
+  it("refuses only collision and lock — a spawn is a destination being created", () => {
+    expect(placementRefuses("collision")).toBe(true);
+    expect(placementRefuses("locked")).toBe(true);
+    expect(placementRefuses("spawn")).toBe(false);
+    expect(placementRefuses("valid")).toBe(false);
+  });
+});
+
+describe("previewTrackId", () => {
+  it("previews a raise on the lane the clip is still on", () => {
+    expect(previewTrackId(SPAWN_TRACK_ID, "track-1")).toBe("track-1");
+  });
+
+  it("previews on the destination lane once there is one", () => {
+    expect(previewTrackId("track-2", "track-1")).toBe("track-2");
+    expect(previewTrackId(null, "track-1")).toBe("track-1");
   });
 });

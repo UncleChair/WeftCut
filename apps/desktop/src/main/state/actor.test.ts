@@ -1275,6 +1275,29 @@ describe('dispatch: move to a new track', () => {
     expect(clipsOn(actor, newLane).map((l) => l.id)).toEqual([first, second])
   })
 
+  // The operation the editor wanted at the start: two overlapping overlays, and
+  // no way to decide which composites on top. Any order composes from a sequence
+  // of raises, and the reason a sequence is affordable is that each raise takes
+  // its emptied lane with it — the lane count is flat, not one higher per raise.
+  it('restacks two overlapping overlays either way by repeated raises, stranding no lane', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const lower = addLane(actor)
+    const upper = addLane(actor)
+    const first = addClip(actor, lower, 0, 2_000_000)
+    const second = addClip(actor, upper, 1_000_000, 3_000_000)
+    // Later in the vector is higher in the z-stack, so `second` composites on top.
+    expect(lanes(actor)).toEqual([aRoll, bRoll, lower, upper])
+
+    const firstOnTop = value(raise(actor, [first]))
+    expect(lanes(actor)).toEqual([aRoll, bRoll, upper, firstOnTop])
+
+    const secondOnTop = value(raise(actor, [second]))
+    expect(lanes(actor)).toEqual([aRoll, bRoll, firstOnTop, secondOnTop])
+    // Both clips still overlap in time and both lanes still carry one.
+    expect(clipsOn(actor, firstOnTop).map((l) => l.id)).toEqual([first])
+    expect(clipsOn(actor, secondOnTop).map((l) => l.id)).toEqual([second])
+  })
+
   it('leaves a source lane standing when it still holds another layer', () => {
     const { actor } = setup()
     const lane = addLane(actor)

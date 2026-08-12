@@ -124,6 +124,14 @@ travel together).
   bounds (`src_in_us`/`src_out_us`) or inverts.
 - **Split** cuts every member spanning `T`, distributing source in/out
   proportionally for media-bearing kinds; all pieces stay in the group.
+- **Raise to a new track** is not a fan-out: `move_layers_to_new_track` moves
+  exactly the layers it is handed, onto one fresh lane, with every time carried
+  verbatim — there is no delta for a member to follow. What differs between its
+  two entry points is only which layers they name. The **Move to a new track**
+  command names the selection; a clip dragged into the **drop strip** names the
+  drag's subject set, so a grouped clip takes its group up with it and every
+  member changes lane, unlike a plain Move (above), where only the targeted layer
+  does.
 - **Locks reject the whole op:** if a fan-out would touch a member with
   `locked == true` — or any layer on a `Track.locked` track — the op fails
   with `GroupLockedMember` / `TrackLocked` rather than partially applying.

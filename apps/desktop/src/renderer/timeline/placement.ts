@@ -17,6 +17,33 @@ export type PlacementValidity = "valid" | "collision" | "locked" | "spawn";
 /// surface has to special-case it.
 export const SPAWN_TRACK_ID = "__weftcut-spawn-track__";
 
+/// Which lane a live drag's preview chip belongs in, given its resolved
+/// destination and the lane the clip is still on.
+///
+/// `SPAWN_TRACK_ID` names no lane, so a raise previews on the SOURCE lane: every
+/// lane would otherwise filter the chip out (each renders only the subjects whose
+/// preview lands on it) and the clip would vanish for the length of the gesture,
+/// with the 14 px strip far too thin to stand in for it. Honest as well as
+/// visible — a raise carries times verbatim, so where the chip sits already is
+/// where it will land. The lit strip is what says which lane it is going to.
+export function previewTrackId(
+  destinationTrackId: string | null,
+  sourceTrackId: string,
+): string {
+  return destinationTrackId === null || destinationTrackId === SPAWN_TRACK_ID
+    ? sourceTrackId
+    : destinationTrackId;
+}
+
+/// Whether a verdict refuses the placement. `"spawn"` is committable, so
+/// `!== "valid"` stopped meaning "refused" the moment the strip existed — a drag
+/// over it would otherwise wear the collision chrome and be blocked at release.
+/// Both refusing verdicts out-rank `"spawn"` below, which is why a lock or a
+/// self-overlap still reaches this predicate on a drop-strip placement.
+export function placementRefuses(validity: PlacementValidity): boolean {
+  return validity === "collision" || validity === "locked";
+}
+
 export interface TimelinePlacement {
   layerId: string;
   trackId: string;

@@ -66,6 +66,7 @@ import {
   visualOrderedTracks,
 } from "./geometry";
 import { DropStrip } from "./DropStrip";
+import { SPAWN_TRACK_ID } from "./placement";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
@@ -594,34 +595,22 @@ export function Timeline({
     if (el) laneElsRef.current.set(trackId, el);
     else laneElsRef.current.delete(trackId);
   }, []);
+  // The drop strip's row, measured by the same hit-test. Held apart from the
+  // registry above because that registry maps TRACK ids to lanes and the strip is
+  // not a track — no consumer of it should have to know about a row that is not
+  // one (see `useLayerDrag`'s `dropStripEl`).
+  const dropStripElRef = useRef<HTMLDivElement | null>(null);
 
   const { heightDrag, beginHeightDrag } = useHeightDrag({
     trackHeightsRef,
     setTrackHeights,
   });
 
-  const { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
-    useLayerDrag({
-      tracks,
-      groups,
-      groupByLayerId,
-      orderedTracks,
-      laneEls: laneElsRef,
-      pxPerSec,
-      fpsNum,
-      fpsDen,
-      tailSnapEnabled,
-      tailSnapStrengthPx,
-      onMutated,
-    });
-
-  // -------- Media drop, seek, render --------
-
   // A spawned lane carries no role, so the A/B filter above would hide the clip
-  // the user just dropped. Route it through the existing inline-reveal (R.7)
+  // that just landed on it. Route it through the existing inline-reveal (R.7)
   // rather than a second visibility rule. Held as state because the reveal
   // registry validates against `projectStore`, which refreshes on its own
-  // `project:changed` subscription and can still be one fetch behind this drop.
+  // `project:changed` subscription and can still be one fetch behind the commit.
   const [spawnRevealTrackId, setSpawnRevealTrackId] = useState<string | null>(
     null,
   );
@@ -636,6 +625,33 @@ export function Timeline({
     if (attempt()) return;
     return useProjectStore.subscribe(() => void attempt());
   }, [spawnRevealTrackId]);
+  // Both spawn paths — a media-pool drop and an existing-clip raise — end here,
+  // so the visibility rule has one home.
+  const revealSpawnedTrack = useCallback(
+    (trackId: string) => {
+      if (displayMode !== "ShowAll") setSpawnRevealTrackId(trackId);
+    },
+    [displayMode],
+  );
+
+  const { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
+    useLayerDrag({
+      tracks,
+      groups,
+      groupByLayerId,
+      orderedTracks,
+      laneEls: laneElsRef,
+      dropStripEl: dropStripElRef,
+      pxPerSec,
+      fpsNum,
+      fpsDen,
+      tailSnapEnabled,
+      tailSnapStrengthPx,
+      onLaneSpawned: revealSpawnedTrack,
+      onMutated,
+    });
+
+  // -------- Media drop, seek, render --------
 
   const onMediaDrop = useCallback(
     async (
@@ -679,15 +695,20 @@ export function Timeline({
         // cost of two entries is visible, because undo has to give a lane back.
         const trackId = track !== null ? track.id : await addTrack();
         await addMediaLayer(trackId, payload.mediaId, plan.rawStartUs);
-        if (track === null && displayMode !== "ShowAll") {
-          setSpawnRevealTrackId(trackId);
-        }
+        if (track === null) revealSpawnedTrack(trackId);
         await onMutated();
       } catch (err) {
         console.error("media drop failed:", err);
       }
     },
-    [displayMode, importing, media, onMutated, previewDecodable, proxyState],
+    [
+      importing,
+      media,
+      onMutated,
+      previewDecodable,
+      proxyState,
+      revealSpawnedTrack,
+    ],
   );
 
   // Context-menu open handler. Captures cursor position + target layer;
@@ -1056,10 +1077,26 @@ export function Timeline({
             style={{ width: widthPx }}
           >
             <DropStrip
+              elRef={dropStripElRef}
               pxPerSec={pxPerSec}
               fpsNum={fpsNum}
               fpsDen={fpsDen}
               mediaDropSnap={mediaDropSnap}
+              // The other event model's half of the strip's feedback: a pointer
+              // drag has no store to publish to, so its state is handed over.
+              // `deltaUs` is zero while the strip is the destination, which is
+              // why this head matches what the commit will keep.
+              layerDrag={
+                drag?.kind === "move"
+                  ? {
+                      overStrip: drag.overTrackId === SPAWN_TRACK_ID,
+                      anchorLeftPx:
+                        (Math.max(0, drag.originalTStart + drag.deltaUs) /
+                          1_000_000) *
+                        pxPerSec,
+                    }
+                  : null
+              }
               onMediaDrop={onMediaDrop}
             />
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}

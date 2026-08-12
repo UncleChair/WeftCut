@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   moveLayer,
+  moveLayersToNewTrack,
   pasteLayer,
   trimLayer,
   type GroupSummary,
@@ -31,6 +32,7 @@ import { snapDragDeltaToTimelineBoundary } from "../snapping";
 import { playheadTimeUs } from "../../state/playheadStore";
 import {
   evaluateTimelinePlacements,
+  SPAWN_TRACK_ID,
   type PlacementValidity,
   type TimelinePlacement,
 } from "../placement";
@@ -38,7 +40,10 @@ import {
 /// Tracks are kind-agnostic: any layer can land on any track. This
 /// reject hook always accepts; routing is by LayerParams, not track
 /// kind. See docs/data-model.md (kind-agnostic tracks) / ADR 0023.
-function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean {
+///
+/// Takes the destination's ID rather than its summary because one destination
+/// has no summary: the drop strip names a lane that does not exist yet.
+function trackAcceptsForLayer(_targetTrackId: string, _drag: DragState): boolean {
   return true;
 }
 
@@ -70,20 +75,29 @@ interface PointerDragEvaluation {
 /// Layer drag state machine (move / trim-start / trim-end): ghost
 /// tracking via window pointermove, frame + timeline-boundary snapping,
 /// and the commit-on-pointerup switch that lowers to
-/// `moveLayer`/`pasteLayer`/`trimLayer`.
+/// `moveLayer`/`moveLayersToNewTrack`/`pasteLayer`/`trimLayer`.
 export function useLayerDrag(opts: {
   tracks: TrackSummary[];
   groups: GroupSummary[];
   groupByLayerId: Map<string, string>;
   orderedTracks: VisualTrack[];
   /// Live track-id → lane-element registry, owned by the Timeline. Measured
-  /// per pointer event; see `trackUnderPointer`.
+  /// per pointer event; see `destinationUnderPointer`.
   laneEls: React.RefObject<Map<string, HTMLElement>>;
+  /// The drop strip's row. Deliberately NOT an entry in `laneEls`: that registry
+  /// maps TRACK ids to lanes and the hit-test walks `orderedTracks` to find them,
+  /// so a row that is not a track could never be reached through it. Handed over
+  /// separately and folded into the same measured rows instead — one band rule
+  /// still decides every destination.
+  dropStripEl: React.RefObject<HTMLElement | null>;
   pxPerSec: number;
   fpsNum: number;
   fpsDen: number;
   tailSnapEnabled: boolean;
   tailSnapStrengthPx: number;
+  /// A raise minted a lane. The Timeline reveals it: a spawned lane carries no
+  /// role, so the A/B filter would hide the clip the user just raised.
+  onLaneSpawned: (trackId: string) => void;
   onMutated: () => Promise<void>;
 }): {
   drag: DragState | null;
@@ -98,11 +112,13 @@ export function useLayerDrag(opts: {
     groupByLayerId,
     orderedTracks,
     laneEls,
+    dropStripEl,
     pxPerSec,
     fpsNum,
     fpsDen,
     tailSnapEnabled,
     tailSnapStrengthPx,
+    onLaneSpawned,
     onMutated,
   } = opts;
   const [gesture, setGesture] = useState<LayerDragGesture | null>(null);
@@ -113,10 +129,17 @@ export function useLayerDrag(opts: {
     useState<PendingLayerPlacement[] | null>(null);
 
   const layerEntryById = useMemo(() => {
-    const layerById = new Map<string, { layer: LayerSummary; trackId: string }>();
+    const layerById = new Map<
+      string,
+      { layer: LayerSummary; trackId: string; trackLocked: boolean }
+    >();
     for (const track of tracks) {
       for (const layer of track.layers) {
-        layerById.set(layer.id, { layer, trackId: track.id });
+        layerById.set(layer.id, {
+          layer,
+          trackId: track.id,
+          trackLocked: track.locked,
+        });
       }
     }
     return layerById;
@@ -241,12 +264,14 @@ export function useLayerDrag(opts: {
 
   // -------- Layer drag (move / trim) --------
 
-  /// Measure the rendered lanes, then band-select. Cost is one forced reflow
-  /// per pointer event; the remaining rect reads then hit clean layout.
-  const trackUnderPointer = useCallback(
-    (clientY: number): TrackSummary | null => {
+  /// Which destination a pointer at `clientY` is over, as a track id —
+  /// `SPAWN_TRACK_ID` when that destination is the drop strip, i.e. a lane that
+  /// does not exist yet (ADR 0042). Measure the rendered rows, then band-select.
+  /// Cost is one forced reflow per pointer event; the remaining rect reads then
+  /// hit clean layout.
+  const destinationUnderPointer = useCallback(
+    (clientY: number): string | null => {
       const rows: MeasuredTrackRow[] = [];
-      const trackById = new Map<string, TrackSummary>();
       // Walk `orderedTracks`, not the registry: only rendered lanes are
       // droppable, and the AB display filter hides some tracks entirely.
       for (const { track } of orderedTracks) {
@@ -254,12 +279,23 @@ export function useLayerDrag(opts: {
         if (!el) continue;
         const rect = el.getBoundingClientRect();
         rows.push({ trackId: track.id, top: rect.top, bottom: rect.bottom });
-        trackById.set(track.id, track);
       }
-      const hitId = trackIdAtClientY(rows, clientY);
-      return hitId === null ? null : (trackById.get(hitId) ?? null);
+      // The strip joins the SAME row list, so the seam between it and the
+      // topmost lane is decided by the one band rule that already hands an
+      // expanded track's sub-lanes to their owner. A second hit-test would be a
+      // second chance to disagree with this one at exactly that boundary.
+      const stripEl = dropStripEl.current;
+      if (stripEl) {
+        const rect = stripEl.getBoundingClientRect();
+        rows.push({
+          trackId: SPAWN_TRACK_ID,
+          top: rect.top,
+          bottom: rect.bottom,
+        });
+      }
+      return trackIdAtClientY(rows, clientY);
     },
-    [laneEls, orderedTracks],
+    [dropStripEl, laneEls, orderedTracks],
   );
 
   /// Snap a raw drag delta so the dragged edge / clip-start lands on
@@ -397,14 +433,20 @@ export function useLayerDrag(opts: {
     (
       state: DragState,
       deltaUs: number,
-      overTrack: TrackSummary | null,
+      overTrackId: string | null,
     ): LayerMoveProjection => {
       const anchorStartUs = Math.max(0, state.originalTStart + deltaUs);
       const actualDeltaUs = anchorStartUs - state.originalTStart;
       const destinationTrackId =
-        overTrack && trackAcceptsForLayer(overTrack, state)
-          ? overTrack.id
+        overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
+          ? overTrackId
           : state.trackId;
+      // A raise takes the WHOLE subject set onto the one new lane and carries
+      // every time verbatim: `move_layers_to_new_track` has no delta for a
+      // sibling to follow. Projecting them all onto `SPAWN_TRACK_ID` is exactly
+      // the question "could one empty lane hold them" — which is what makes a set
+      // that would overlap itself there answer `"collision"` and refuse.
+      const spawning = destinationTrackId === SPAWN_TRACK_ID;
       const projected: TimelinePlacement[] = [];
 
       for (const subject of state.subjects) {
@@ -412,16 +454,23 @@ export function useLayerDrag(opts: {
         if (!entry) continue;
         const durationUs = subject.originalTEnd - subject.originalTStart;
         const isAnchor = subject.layerId === state.layerId;
-        const tStartUs = isAnchor
-          ? anchorStartUs
-          : Math.max(0, subject.originalTStart + actualDeltaUs);
+        const tStartUs = spawning
+          ? subject.originalTStart
+          : isAnchor
+            ? anchorStartUs
+            : Math.max(0, subject.originalTStart + actualDeltaUs);
         projected.push({
           layerId: subject.layerId,
-          trackId: isAnchor ? destinationTrackId : subject.trackId,
+          trackId: spawning || isAnchor ? destinationTrackId : subject.trackId,
           tStartUs,
           tEndUs: tStartUs + durationUs,
           overlapClass: layerOverlapClass(entry.layer),
-          locked: entry.layer.locked,
+          // The SOURCE lane's lock speaks too. With a real destination the target
+          // lane's own lock already refuses — a sibling's destination IS its
+          // source — but a raise names one lane that does not exist yet, so
+          // without this the strip would be a way around a lock. `"locked"`
+          // out-ranks `"spawn"`, which is the whole refusal.
+          locked: entry.layer.locked || entry.trackLocked,
         });
       }
 
@@ -479,13 +528,19 @@ export function useLayerDrag(opts: {
       // a selected clip (arm delay 0) commits a cross-track move. Skipping
       // the measurement on horizontal-only drags is a free side benefit.
       const movedVertically = Math.abs(clientY - state.startY) >= 1;
-      const overTrack =
+      const hitTrackId =
         state.kind === "move" && movedVertically
-          ? trackUnderPointer(clientY)
+          ? destinationUnderPointer(clientY)
           : null;
+      // Alt+drag lowers to `pasteLayer`, which needs a lane that already exists,
+      // and there is no create-and-paste operation — so the strip is simply not a
+      // destination for a duplicate. Withheld here rather than refused at
+      // release, the same instinct as this gesture's other pre-checks.
+      const overTrackId =
+        hitTrackId === SPAWN_TRACK_ID && state.duplicate ? null : hitTrackId;
       const destinationTrackId =
-        overTrack && trackAcceptsForLayer(overTrack, state)
-          ? overTrack.id
+        overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
+          ? overTrackId
           : state.trackId;
       const trackChanged =
         state.kind === "move" && destinationTrackId !== state.trackId;
@@ -496,18 +551,22 @@ export function useLayerDrag(opts: {
 
       const hasEditIntent = timeChanged || trackChanged;
       // A purely vertical move preserves time. In particular, do not let its
-      // zero horizontal delta be attracted to the playhead.
-      const deltaUs = timeChanged
-        ? snapDeltaToTimelineBoundary(state, frameDeltaUs)
-        : 0;
+      // zero horizontal delta be attracted to the playhead. A raise onto the
+      // strip preserves it too, whatever the pointer did horizontally: the commit
+      // carries times verbatim, so a ghost that slid would promise an edit
+      // `move_layers_to_new_track` cannot make.
+      const deltaUs =
+        timeChanged && destinationTrackId !== SPAWN_TRACK_ID
+          ? snapDeltaToTimelineBoundary(state, frameDeltaUs)
+          : 0;
       const moveProjection =
         state.kind === "move"
-          ? buildMoveProjection(state, deltaUs, overTrack)
+          ? buildMoveProjection(state, deltaUs, overTrackId)
           : null;
       const nextState: DragState = {
         ...state,
         deltaUs,
-        overTrackId: overTrack?.id ?? null,
+        overTrackId,
         validity: moveProjection?.validity ?? "valid",
         conflictingLayerIds: moveProjection?.conflictingLayerIds ?? [],
       };
@@ -530,7 +589,7 @@ export function useLayerDrag(opts: {
       pxPerSec,
       snapDragDelta,
       snapDeltaToTimelineBoundary,
-      trackUnderPointer,
+      destinationUnderPointer,
     ],
   );
 
@@ -590,9 +649,39 @@ export function useLayerDrag(opts: {
         const escape = committed.escapeGroup;
         switch (committed.kind) {
           case "move": {
-            if (!moveProjection || moveProjection.validity !== "valid") {
+            const spawning =
+              moveProjection?.destinationTrackId === SPAWN_TRACK_ID;
+            // The verdict a committable release has to carry: `"spawn"` over the
+            // strip (a lane that does not exist yet is never `"valid"`),
+            // `"valid"` over a real lane. Collision and lock out-rank both, so
+            // this one comparison is also the refusal — the locked case needs no
+            // branch of its own.
+            if (
+              !moveProjection ||
+              moveProjection.validity !== (spawning ? "spawn" : "valid")
+            ) {
               setPendingPlacements(null);
               return;
+            }
+            if (spawning) {
+              // ONE history entry, from ONE operation: the lane appears, every
+              // subject moves onto it, and every lane the raise emptied goes with
+              // it, so one undo puts all of it back. Never decomposed into
+              // add-track + move — that is two entries and a stranded lane if the
+              // second half fails.
+              //
+              // A bridge is keyed by destination track id and this destination
+              // has no id until the commit returns, so one written here could
+              // match no lane and would never clear. Nothing to bridge either —
+              // times are carried verbatim, so the only change is which row the
+              // clip sits on. Any bridge an earlier gesture left is dropped for
+              // the same reason: the raise moves its subjects out from under it.
+              setPendingPlacements(null);
+              const spawnedTrackId = await moveLayersToNewTrack(
+                committed.subjects.map((subject) => subject.layerId),
+              );
+              onLaneSpawned(spawnedTrackId);
+              break;
             }
             if (committed.duplicate) {
               const pendingDuplicate = moveProjection.placements.find(
@@ -651,6 +740,7 @@ export function useLayerDrag(opts: {
       constrainedAnchorUs,
       evaluatePointer,
       gesture,
+      onLaneSpawned,
       onMutated,
     ],
   );
