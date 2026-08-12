@@ -151,6 +151,14 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_project_settings: (a) => ({ op: 'update_project_settings', args: { patch: a.patch } }),
   project_undo: () => ({ op: 'undo', args: {} }),
   project_redo: () => ({ op: 'redo', args: {} }),
+  // History-panel channels. Same `project_*` channel → bare-op-name mapping the
+  // three above use: the CHANNEL is the renderer's name for it, the OP is the
+  // dispatch arm's. jump_to takes an absolute stack index (cursor-only, rejects
+  // under the revert lock); create/delete_checkpoint are the User-actor half of
+  // the checkpoint surface the MCP tools already cover for agents.
+  project_jump_to: (a) => ({ op: 'jump_to', args: { index: a.index } }),
+  project_create_checkpoint: (a) => ({ op: 'create_checkpoint', args: { label: a.label } }),
+  project_delete_checkpoint: (a) => ({ op: 'delete_checkpoint', args: { checkpoint_id: a.checkpointId } }),
   project_restore_checkpoint: (a) => ({ op: 'restore_checkpoint', args: { checkpoint_id: a.checkpointId } }),
   // NOTE: add_motif is intentionally NOT a MECHANICAL entry — parseMechanical
   // returns null for it, so command() falls through to the rich add_motif switch
@@ -172,6 +180,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_transition', 'update_transition', 'remove_transition',
   'separate_audio_to_new_track', 'restyle_captions',
   'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
+  'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
   // add_motif as a pure TS recorded mutation
   'add_motif',
 ])

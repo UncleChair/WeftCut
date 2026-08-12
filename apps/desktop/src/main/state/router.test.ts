@@ -21,9 +21,10 @@ const ALL_CHANNELS: readonly string[] = [
   'fit_composition_to_layers', 'update_track_flags', 'set_role_gain', 'update_role_flags',
   'add_transition', 'update_transition', 'remove_transition',
   'project_undo', 'project_redo', 'project_restore_checkpoint', 'update_project_settings',
+  'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
   'restyle_captions', 'add_motif',
-  // router special-cases (summary / settings / persistence seam / agent-session)
-  'project_summary', 'get_project_settings', 'project_open', 'project_save_as',
+  // router special-cases (summary / history read / settings / persistence seam / agent-session)
+  'project_summary', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
   // motif route (TS authoring + read + install + staleness)
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
@@ -78,13 +79,14 @@ describe('router partition gate', () => {
   })
 
   it('the allowlist sets are disjoint from each other and from hybrids/blocked/production/special', () => {
-    // SPECIAL: the 7 switch-case channels (project_open, project_save, etc.) handled
+    // SPECIAL: the switch-case channels (project_open, project_save, etc.) handled
     // by dedicated Route kinds. They must never appear in any named allowlist bucket —
     // if a future refactor accidentally adds one to e.g. PURE_NATIVE the disjointness
     // check here will catch it before the partition gate silently hides the duplicate.
     const SPECIAL: ReadonlySet<string> = new Set([
       'project_open', 'project_save', 'project_save_as', 'project_new_workspace',
-      'project_summary', 'get_project_settings', 'agent_session_end', 'agent_session_begin',
+      'project_summary', 'project_history_view', 'get_project_settings',
+      'agent_session_end', 'agent_session_begin',
     ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
@@ -120,6 +122,17 @@ describe('routeChannel', () => {
   })
   it('routes project_restore_checkpoint to command (Phase 4a-i §2.1)', () => {
     expect(routeChannel('project_restore_checkpoint').kind).toBe('command')
+  })
+  // The history panel's four channels: three actions ride the command route, but
+  // the view is a READ and must never reach the command route — that is what
+  // keeps it out of the undo stack and off the dirty flag.
+  it('routes the three history-panel actions to command', () => {
+    for (const ch of ['project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint'])
+      expect(routeChannel(ch), ch).toEqual({ kind: 'command' })
+  })
+  it('routes project_history_view to its own read kind, not command', () => {
+    expect(routeChannel('project_history_view')).toEqual({ kind: 'historyView' })
+    expect(PRODUCTION_OPS.has('project_history_view')).toBe(false)
   })
   it('forwards independent stores + media/jobs/export to rust', () => {
     for (const ch of ['agent_session_get','log_list','ensure_full_proxy','generate_quick_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])

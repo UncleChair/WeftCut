@@ -357,6 +357,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
       case 'summary':
         return buildProjectSummary(actor.snapshot(), actor.historyStatus(), deps.fileExists)
+      case 'historyView':
+        // The panel wants the WHOLE stack, so the limit is the cap itself — asked
+        // of the actor rather than restated here. MCP's `project://history`
+        // (resource-views.ts) keeps its own view(100): different consumer, different need.
+        return actor.historyView(actor.historyCapacity())
       case 'projectSettings':
         return actor.snapshot().settings
       case 'open': return persistence.open((args as { path: string }).path)

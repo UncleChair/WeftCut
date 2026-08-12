@@ -197,6 +197,56 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
+  // The panel's read. Serves the WHOLE stack (limit = the History cap, asked of
+  // the actor) — MCP's project://history keeps its own view(100).
+  it('project_history_view serves the full stack + checkpoints without dirtying the project', async () => {
+    const { deps, sent } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'hv', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
+    await host.handleInvoke('add_track', {})
+    const cpId = await host.handleInvoke('project_create_checkpoint', { label: 'cp' }) as string
+
+    const before = host.actor.historyStatus()
+    const sentBefore = sent.length
+    const view = await host.handleInvoke('project_history_view', {}) as {
+      ops: Array<{ op_id: string; label_key: string; entity_labels: unknown[] }>
+      cursor: number; len: number; evicted: number
+      checkpoints: Array<{ id: string; label: string }>
+    }
+
+    // Rows the summary channel does not carry at all, plus the eviction counter.
+    expect(view.ops).toHaveLength(view.len)
+    expect(view.ops[0].label_key).toBe('history.initial')
+    expect(view.cursor).toBe(view.len - 1)
+    expect(view.evicted).toBe(0)
+    expect(view.checkpoints).toEqual([{ id: cpId, label: 'cp', actor: { kind: 'User' }, created_at: expect.any(String) }])
+
+    // A read: no history movement, no change broadcast.
+    expect(host.actor.historyStatus()).toEqual(before)
+    expect(sent.length).toBe(sentBefore)
+    host.stop()
+  })
+
+  it('project_jump_to moves the cursor through the host and broadcasts project:changed', async () => {
+    const { deps, sent } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'jt', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
+    await host.handleInvoke('add_track', {})
+    await host.handleInvoke('add_track', {})
+    const tracksAtHead = host.actor.snapshot().tracks.length
+
+    await host.handleInvoke('project_jump_to', { index: 0 })
+    expect(host.actor.historyStatus().cursor).toBe(0)
+    expect(host.actor.snapshot().tracks.length).toBe(tracksAtHead - 2)
+    expect(sent.filter((s) => s.event === 'project:changed').length).toBeGreaterThan(0)
+
+    // Out of range surfaces as a structured refusal on the IPC rejection.
+    await expect(host.handleInvoke('project_jump_to', { index: 99 })).rejects.toThrow(/InvalidArgument/)
+    host.stop()
+  })
+
   it('project_save with no workspace is a no-op (workspaceDir returns null)', async () => {
     const { deps } = makeInMemoryDeps()
     const host = createTsActorHost(deps)

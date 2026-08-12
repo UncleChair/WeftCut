@@ -31,11 +31,27 @@ export interface HistoryEntrySummary {
   op_id: Uuid; actor: Actor; timestamp: string; summary: string; label_key: string
   label_args?: Record<string, string | number>
   affected: EntityRef[]
-  /** Names for `affected`, PARALLEL to it (same length, same order) and resolved
-   *  against this entry's own snapshot. */
+  /** Names for `affected`, PARALLEL to it (same length, same order), resolved
+   *  against whichever STORED snapshot holds each ref — this entry's own for an
+   *  add / update / move, its PREDECESSOR's for a delete (an entry stores the
+   *  state AFTER its own op, so a delete's own snapshot is precisely the one
+   *  that no longer holds it). See resolveEntityLabels. */
   entity_labels: EntityLabel[]
 }
-export interface HistoryView { ops: HistoryEntrySummary[]; cursor: number; len: number; checkpoints: Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>; lock_reason?: string }
+export interface HistoryView {
+  ops: HistoryEntrySummary[]; cursor: number; len: number
+  checkpoints: Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
+  /** How many entries `record()` has dropped off the FRONT since the stack was
+   *  seeded (0 until the cap is first exceeded; back to 0 after `reset()`).
+   *
+   *  The eviction does NOT spare the 'Initial' entry, so once it has run the top
+   *  row is an ordinary op and nothing else on the wire distinguishes "this is
+   *  the start of the project" from "everything before this was discarded" —
+   *  which is exactly what decides whether jumping back there is safe. `len` is
+   *  the LIVE stack length and cannot answer it. */
+  evicted: number
+  lock_reason?: string
+}
 export interface HistoryStatus {
   cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string
   /** storedSnapshotsHoldLayer() — the fps rate lock's condition, carried here
@@ -62,6 +78,8 @@ export class History {
   private cap = DEFAULT_CAP
   private checkpoints = new Map<Uuid, NamedCheckpoint>()
   private lockReasonStr: string | null = null
+  /** Front-evicted entry count — see HistoryView.evicted. */
+  private evictedCount = 0
 
   constructor(initial: Project, actor: Actor, opId: Uuid, timestamp = '<TS>') {
     this.snapshots.push({ op_id: opId, actor, timestamp, ...seed(initial) })
@@ -77,6 +95,7 @@ export class History {
     this.cursor = 0
     this.checkpoints.clear()
     this.lockReasonStr = null
+    this.evictedCount = 0 // a fresh stack has discarded nothing
   }
 
   current(): Project { return this.snapshots[this.cursor].snapshot }
@@ -84,7 +103,7 @@ export class History {
   record(entry: HistoryEntry): void {
     this.snapshots = this.snapshots.slice(0, this.cursor + 1) // truncate redo tail
     this.snapshots.push(entry)
-    while (this.snapshots.length > this.cap) this.snapshots.shift() // evict front
+    while (this.snapshots.length > this.cap) { this.snapshots.shift(); this.evictedCount += 1 } // evict front
     this.cursor = this.snapshots.length - 1
   }
 
@@ -98,10 +117,28 @@ export class History {
     this.cursor += 1
     return this.snapshots[this.cursor].snapshot
   }
+  /** Random-access cursor move: `undo`/`redo` generalized to an arbitrary index.
+   *  Returns `snapshots[index]`'s state — the state AFTER op `index` — or `null`
+   *  for anything outside `[0, len)` (and for a non-integer index, which can only
+   *  come from a malformed call).
+   *
+   *  Records NO entry, exactly like `undo`/`redo` (docs/features.md
+   *  #undo-stack-scope): moving the cursor introduces no state from outside the
+   *  stack, so there is nothing to record. A later `record()` therefore truncates
+   *  the tail from here, which is the standard NLE "resume from the past". */
+  jumpTo(index: number): Project | null {
+    if (!Number.isInteger(index) || index < 0 || index >= this.snapshots.length) return null
+    this.cursor = index
+    return this.snapshots[index].snapshot
+  }
   canUndo(): boolean { return this.cursor > 0 }
   canRedo(): boolean { return this.cursor + 1 < this.snapshots.length }
   cursorIndex(): number { return this.cursor }
   len(): number { return this.snapshots.length }
+  /** The stack cap — how many entries survive before `record()` evicts. Exposed
+   *  so the history panel's "give me the whole stack" read can ask for exactly
+   *  that many rows instead of hardcoding the number at the call site. */
+  capacity(): number { return this.cap }
 
   lock(reason: string): void { this.lockReasonStr = reason }
   unlock(): void { this.lockReasonStr = null }
@@ -124,6 +161,13 @@ export class History {
   /** Presence peek. The actor checks this BEFORE minting the restore op_id, so
    *  a CheckpointNotFound restore burns zero ids. */
   hasCheckpoint(id: Uuid): boolean { return this.checkpoints.has(id) }
+  /** Drop a checkpoint (and with it the full snapshot it pins); `false` when
+   *  there was no such id. Deliberately uncapped on the create side: each
+   *  checkpoint holds a whole Project, so the list would turn to landfill in one
+   *  session without a delete — with one, a hard cap would only produce a dead
+   *  end (spec decision 10). Cursor and stack untouched: a checkpoint is not a
+   *  stack row. */
+  deleteCheckpoint(id: Uuid): boolean { return this.checkpoints.delete(id) }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged
    *  (project_settings_patch_convention). The track-flag variant is
@@ -220,7 +264,7 @@ export class History {
       entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[start + i - 1]?.snapshot ?? null, e.affected),
     }))
     const checkpoints = this.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
-    const v: HistoryView = { ops, cursor: this.cursor, len: total, checkpoints }
+    const v: HistoryView = { ops, cursor: this.cursor, len: total, checkpoints, evicted: this.evictedCount }
     if (this.lockReasonStr !== null) v.lock_reason = this.lockReasonStr
     return v
   }

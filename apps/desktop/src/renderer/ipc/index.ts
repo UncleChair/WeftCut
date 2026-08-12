@@ -44,6 +44,70 @@ export interface HistoryView {
   lock_reason?: string | null;
 }
 
+// ── The FULL history view (`project_history_view`) ──────────────────────────
+// Mirrors main/state/history.ts's `HistoryView` / `HistoryEntrySummary` /
+// `EntityLabel` — the rows AND the checkpoints, everything the history panel
+// draws.
+//
+// Deliberately NOT named `HistoryView`: that name is taken above by the
+// summary-level shape (cursor / len / can_undo / can_redo / lock_reason) that
+// rides `ProjectSummary.history` and carries no rows at all. Two different
+// shapes serving two different surfaces off two different channels — the
+// `HistoryStack*` prefix here is what keeps a call site from importing one and
+// expecting the other.
+
+export type HistoryActor = { kind: "User" } | { kind: "Agent"; client: string };
+
+/// The entities an entry touched. Three variants, matching main's `EntityRef`.
+export type HistoryEntityRef =
+  | { kind: "Track"; id: string }
+  | { kind: "Layer"; id: string }
+  | { kind: "Marker"; id: string };
+
+/// A name for one `affected` ref. `text` is a resolved entity name; `kind_key`
+/// is the fallback when only the entity's kind is known and the UI must
+/// translate it (`t(l.kind_key)`).
+export type HistoryEntityLabel = { text: string } | { kind_key: string };
+
+export interface HistoryStackEntry {
+  op_id: string;
+  actor: HistoryActor;
+  timestamp: string;
+  /// The English phrase main recorded. Kept verbatim for the MCP contract; the
+  /// panel renders `label_key` instead.
+  summary: string;
+  /// i18n key for `summary` (`history.*`), recorded next to it at commit time.
+  label_key: string;
+  /// Interpolation values for `label_key`; absent for the phrases taking none.
+  label_args?: Record<string, string | number>;
+  affected: HistoryEntityRef[];
+  /// Names for `affected` — PARALLEL to it (same length, same order), resolved
+  /// in main against the stored snapshot that still holds each ref.
+  entity_labels: HistoryEntityLabel[];
+}
+
+export interface HistoryCheckpointSummary {
+  id: string;
+  label: string;
+  actor: HistoryActor;
+  created_at: string;
+}
+
+export interface HistoryStackView {
+  ops: HistoryStackEntry[];
+  /// Index into `ops` of the entry whose state is current.
+  cursor: number;
+  len: number;
+  checkpoints: HistoryCheckpointSummary[];
+  /// Entries dropped off the FRONT of the stack since it was seeded. Non-zero
+  /// means the top row is NOT the start of the project — eviction does not spare
+  /// the `Initial` entry, so nothing else on the wire says so.
+  evicted: number;
+  /// Set while an agent holds the revert lock; jump / undo / redo / restore all
+  /// reject with `HistoryLocked` until it clears.
+  lock_reason?: string;
+}
+
 export interface MediaSummary {
   id: string;
   label: string;
@@ -797,6 +861,36 @@ export async function workspaceRenameProfile(
 /// the built-in Editing profile.
 export async function workspaceDeleteProfile(id: string): Promise<WorkspaceDocument> {
   return invoke<WorkspaceDocument>("workspace_delete_profile", { id });
+}
+
+// ── History panel: one read + three actions ─────────────────────────────────
+
+/// Pull the WHOLE edit stack (rows + checkpoints). A read: it never records, and
+/// never dirties the project. Main serves `historyView(cap)` — no limit arg
+/// crosses the wire, so the panel cannot ask for a window main doesn't intend.
+export async function projectHistoryView(): Promise<HistoryStackView> {
+  return invoke<HistoryStackView>("project_history_view");
+}
+
+/// Move the history cursor to absolute stack index `index` — click-a-row.
+/// Cursor-only: records no entry, so the next edit truncates the tail from
+/// there. Rejects with `HistoryLocked` while an agent holds the revert lock, and
+/// `InvalidArgument` for an index outside `[0, len)`.
+export async function projectJumpTo(index: number): Promise<void> {
+  return invoke<void>("project_jump_to", { index });
+}
+
+/// Create a named checkpoint at the current state, stamped with the `User`
+/// actor. Returns its id. Session-only — checkpoints are not persisted.
+export async function projectCreateCheckpoint(label: string): Promise<string> {
+  return invoke<string>("project_create_checkpoint", { label });
+}
+
+/// Delete a checkpoint (and release the full snapshot it pins). Rejects with
+/// `CheckpointNotFound` if it is already gone. Changes no project state, so it
+/// emits no `project:changed` — the caller refetches the view itself.
+export async function projectDeleteCheckpoint(checkpointId: string): Promise<void> {
+  return invoke<void>("project_delete_checkpoint", { checkpointId });
 }
 
 export async function projectRestoreCheckpoint(checkpointId: string): Promise<void> {

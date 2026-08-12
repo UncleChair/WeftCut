@@ -33,7 +33,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStyle
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseRgba, parseTransitionKind, parseTransitionKindOpt, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseRgba, parseTransitionKind, parseTransitionKindOpt, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -88,10 +88,18 @@ export interface ActorHandle {
   subscribe(cb: (e: ChangeEvent) => void): () => void
   historyView(limit: number): ReturnType<History['view']>
   historyStatus(): ReturnType<History['status']>
+  /** The stack cap — the `limit` a "give me the WHOLE stack" read should pass to
+   *  `historyView` (the history panel's read; MCP's `view(100)` is a different
+   *  consumer with a different need). Delegates to History so the number is never
+   *  restated at a call site. */
+  historyCapacity(): number
   lockHistory(reason: string): void
   unlockHistory(): void
+  /** Cursor-only random access; rejects under the revert lock. See jumpTo. */
+  jumpTo(index: number): void
   checkpoint(label: string, cpActor?: Actor): Uuid
   restoreCheckpoint(id: Uuid): void
+  deleteCheckpoint(id: Uuid): void
   listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
   mcpCall(name: string, argsJson: string): McpCallResult
@@ -380,6 +388,24 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (snap === null) throw new CommandFailure({ error: 'NothingToRedo' })
     broadcastUnrecorded('Redo', snap)
   }
+  /** Random-access cursor move — the history panel's click-a-row action.
+   *
+   *  Takes the lock check FIRST, exactly like undo/redo/restore_checkpoint:
+   *  jump_to is a revert path (it is undo/redo generalized), so without the check
+   *  it would be a back door around the agent's revert lock. Records no entry.
+   *
+   *  Id burn mirrors undo/redo: a rejected jump (locked or out of range) consumes
+   *  ZERO op_ids, a successful one burns exactly the broadcast's. An in-range jump
+   *  to the CURRENT index is not a rejection — it succeeds and broadcasts, which
+   *  costs one no-op refetch and keeps the arm free of a second no-op branch. */
+  function jumpTo(index: number): void {
+    const reason = history.lockReason()
+    if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
+    const snap = history.jumpTo(index)
+    if (snap === null) // 0 ids
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'index', detail: `history index ${index} outside [0, ${history.len()})` })
+    broadcastUnrecorded('Jump to history entry', snap)
+  }
 
   // ── checkpoints — used by the MCP checkpoint + begin_agent_session tools.
   //    checkpoint mints 1 id, no op/broadcast; restore success = 2 ids
@@ -395,6 +421,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const opId = idGen() // entry op_id — minted FIRST
     const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
     broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (the SECOND id)
+  }
+  /** Drop a checkpoint. Absent id → CheckpointNotFound, burning ZERO ids (same
+   *  peek-before-mint convention restoreCheckpoint follows) — and here nothing is
+   *  minted on the success path either: deleting a checkpoint changes no project
+   *  state, so there is no snapshot to broadcast and autosave must not be woken.
+   *  The panel that issued the delete refetches the view for itself.
+   *
+   *  NOT gated on lockReason(): the lock rejects REVERT paths (undo / redo /
+   *  jump_to / restore_checkpoint — docs/features.md #undo-stack-scope) and this
+   *  reverts nothing. */
+  function deleteCheckpoint(id: Uuid): void {
+    if (!history.deleteCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids
   }
   function listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }> {
     // list_checkpoints serializes history_view().checkpoints, which INCLUDES actor
@@ -602,7 +640,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_composition': setComposition(a); return { ok: true, value: null }
         case 'undo': undo(); return { ok: true, value: null }
         case 'redo': redo(); return { ok: true, value: null }
+        case 'jump_to': jumpTo(parseNum(a.index, 'index')); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
+        // create/delete_checkpoint have no MCP twin: the agent's checkpoint tools
+        // are served in mcpCall's own switch (MCP_ACTOR-stamped). These are the
+        // renderer's User-actor path — `checkpoint()` defaults cpActor to this
+        // actor, which is `{kind:'User'}` for the production instance.
+        case 'create_checkpoint': {
+          const label = parseStr(a.label, 'label')
+          if (label.trim() === '') throw new CommandFailure({ error: 'InvalidArgument', field: 'label', detail: 'label must be non-empty' }) // 0 ids
+          return { ok: true, value: checkpoint(label) }
+        }
+        case 'delete_checkpoint': deleteCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
         case 'split_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerSplit, (s: { left: Uuid; right: Uuid }) => layerRefs([s.left, s.right]), { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_group as boolean) ?? false)) }
         // split_layer_multi — coalesced multi-split for the auto_split_by_shot
         // hybrid: split `layer` at every ascending, strictly-interior timeline
@@ -1275,10 +1324,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
     subscribe(cb) { subs.add(cb); return () => subs.delete(cb) },
     historyView: (n) => history.view(n),
     historyStatus: () => history.status(),
+    historyCapacity: () => history.capacity(),
     lockHistory: (r) => history.lock(r),
     unlockHistory: () => history.unlock(),
+    jumpTo,
     checkpoint,
     restoreCheckpoint,
+    deleteCheckpoint,
     listCheckpoints,
     dryRun,
     setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },

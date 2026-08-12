@@ -10,6 +10,7 @@ import { PRODUCTION_OPS } from './commands'
 export type Route =
   | { kind: 'command' }       // actor.command(channel, args)
   | { kind: 'summary' }       // buildProjectSummary
+  | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
   | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
@@ -62,6 +63,11 @@ export function routeChannel(channel: string): Route {
   if (MOTIF_CHANNELS.has(channel)) return { kind: 'motif', tool: channel }
   switch (channel) {
     case 'project_summary': return { kind: 'summary' }
+    // A READ, not a command: it must never enter the undo stack or dirty the
+    // project. Its own kind rather than a fold into `summary` because the panel
+    // pulls the full stack on its own cadence, while the summary refetch runs on
+    // every edit whether the panel is open or not (spec decision 5).
+    case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
     case 'project_open': return { kind: 'open' }
     case 'project_save_as': return { kind: 'saveAs' }

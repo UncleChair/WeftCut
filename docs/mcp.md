@@ -121,7 +121,7 @@ Rules:
 - Operations carry an `Actor` tag (`User` or `Agent { client }`) — surfaced in change events and the status-log console.
 - Connected agents receive change notifications in-protocol (see the change feed below) to see edits from other agents and the user.
 - No edit-locks, no per-agent state. If two agents step on each other, the second to commit may fail invariants — expected, agents should retry or back off.
-- `lock_history(reason)` is the explicit cooperative pen: one client holds the undo pen during a batch and any other client (UI or agent) that touches the actor sees a `HistoryLocked` error until the lock releases.
+- `lock_history(reason)` is the explicit cooperative pen: one client holds the undo pen during a batch, and every REVERT path (`undo`, `redo`, `jump_to`, `restore_checkpoint`) — from the UI or another agent — fails with `HistoryLocked` until the lock releases. It gates reverting only: edits still commit, and the lock never affects what records (`docs/features.md#undo-stack-scope` is authoritative).
 
 ## Tool surface
 
@@ -146,7 +146,7 @@ around 40, organised below.
 | `project://tracks` | tracks + layer envelopes |
 | `project://layers/{id}` | one layer in detail |
 | `project://markers` | all markers |
-| `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against **that op's own snapshot** so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a resolved name or `{"kind_key": "kinds.color"}` when only the entity's kind is known (the key is translated by the UI) |
+| `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against **that op's own snapshot** so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a resolved name or `{"kind_key": "kinds.color"}` when only the entity's kind is known (the key is translated by the UI). The envelope also carries `evicted`: how many entries have been dropped off the FRONT of the stack at capacity. Non-zero means the first op returned is **not** the start of the project — eviction does not spare the `Initial` entry, and `len` (the live stack length) cannot tell you |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |
@@ -409,7 +409,7 @@ filters by category (`Mcp`) and source (`Agent { client }`).
 ## Concurrency policy
 
 - The express `/mcp` handler accepts concurrent requests across sessions; tool calls funnel into the project actor's single-writer inbox.
-- `lock_history(reason)` / `unlock_history()` lets a long batch hold the history pen so the UI doesn't show partial state as separate undo entries.
+- `lock_history(reason)` / `unlock_history()` lets a long batch hold the history pen: while it is held, every revert path (`undo`, `redo`, `jump_to`, `restore_checkpoint`) rejects with `HistoryLocked`, so nobody unwinds the batch from under it. It does NOT collapse or suppress entries — each op in the batch still records its own (`docs/features.md#undo-stack-scope`).
 - `dry_run` does not commit; it clones state and walks ops, halting at the first validation error.
 
 ## Security

@@ -44,7 +44,130 @@ describe('History', () => {
     const h = new History(freshProject('seed'), U, 'op0')
     for (let i = 0; i < 250; i++) h.record(entry(freshProject(`e${i}`), `op${i}`))
     expect(h.len()).toBe(200)
+    expect(h.capacity()).toBe(200)
     expect(h.current().metadata.name).toBe('e249')
+  })
+
+  // ── jumpTo — cursor-only random access (undo/redo generalized) ─────────────
+  describe('jumpTo', () => {
+    /** seed + 3 recorded entries: cursor at 3, states '0'…'3'. */
+    function stack() {
+      const h = new History(freshProject('0'), U, 'op0')
+      for (const n of ['1', '2', '3']) h.record(entry(freshProject(n), `op${n}`))
+      return h
+    }
+
+    it('jumps BACKWARD to an arbitrary index and returns that snapshot', () => {
+      const h = stack()
+      expect(h.jumpTo(1)!.metadata.name).toBe('1')
+      expect(h.cursorIndex()).toBe(1)
+      expect(h.current().metadata.name).toBe('1')
+      expect(h.canRedo()).toBe(true) // the tail is still there — nothing was truncated
+    })
+
+    it('jumps FORWARD again, and to the seed entry', () => {
+      const h = stack()
+      h.jumpTo(1)
+      expect(h.jumpTo(3)!.metadata.name).toBe('3')
+      expect(h.cursorIndex()).toBe(3)
+      expect(h.jumpTo(0)!.metadata.name).toBe('0')
+      expect(h.canUndo()).toBe(false) // at the bottom
+    })
+
+    it('jumping to the CURRENT index is a successful no-op, not a rejection', () => {
+      const h = stack()
+      expect(h.jumpTo(3)!.metadata.name).toBe('3')
+      expect(h.cursorIndex()).toBe(3)
+      expect(h.len()).toBe(4) // records nothing
+    })
+
+    it('returns null (cursor untouched) for an out-of-range or non-integer index', () => {
+      const h = stack()
+      for (const bad of [4, 99, -1, 1.5, Number.NaN]) {
+        expect(h.jumpTo(bad), `jumpTo(${bad})`).toBeNull()
+        expect(h.cursorIndex()).toBe(3)
+      }
+    })
+
+    it('records NO entry — the stack length is identical before and after', () => {
+      const h = stack()
+      const before = h.len()
+      h.jumpTo(0); h.jumpTo(2); h.jumpTo(1)
+      expect(h.len()).toBe(before)
+    })
+
+    /// The redo tail dies the moment you edit from mid-stack — the same
+    /// "resume from the past" rule undo already has, reached by a different route.
+    it('a record() after a jump truncates everything above the jump target', () => {
+      const h = stack()
+      h.jumpTo(1)
+      h.record(entry(freshProject('4'), 'op4'))
+      expect(h.len()).toBe(3)          // seed, '1', '4'
+      expect(h.current().metadata.name).toBe('4')
+      expect(h.redo()).toBeNull()      // '2' and '3' are gone
+      expect(h.undo()!.metadata.name).toBe('1')
+    })
+  })
+
+  describe('evicted', () => {
+    it('is 0 until the cap is exceeded, then counts every dropped front entry', () => {
+      const h = new History(freshProject('seed'), U, 'op0')
+      for (let i = 0; i < 199; i++) h.record(entry(freshProject(`e${i}`), `op${i}`))
+      expect(h.len()).toBe(200)
+      expect(h.view(200).evicted).toBe(0) // exactly at cap — nothing dropped yet
+      h.record(entry(freshProject('over'), 'op-over'))
+      expect(h.view(200).evicted).toBe(1)
+      for (let i = 0; i < 9; i++) h.record(entry(freshProject(`x${i}`), `opx${i}`))
+      expect(h.view(200).evicted).toBe(10)
+      expect(h.len()).toBe(200) // len is the LIVE length and never tells you this
+    })
+
+    /// The Initial entry is NOT spared by the eviction, which is the whole reason
+    /// the counter exists: after an overflow the top row is an ordinary op.
+    it('drops the Initial entry like any other, leaving evicted as the only signal', () => {
+      const h = new History(freshProject('seed'), U, 'op0')
+      for (let i = 0; i < 205; i++) h.record(entry(freshProject(`e${i}`), `op${i}`))
+      expect(h.view(200).ops[0].summary).not.toBe('Initial')
+      expect(h.view(200).evicted).toBe(6)
+    })
+
+    it('zeroes on reset (the replace_state path)', () => {
+      const h = new History(freshProject('seed'), U, 'op0')
+      for (let i = 0; i < 210; i++) h.record(entry(freshProject(`e${i}`), `op${i}`))
+      expect(h.view(200).evicted).toBeGreaterThan(0)
+      h.reset(freshProject('new'), U, 'op-reset')
+      expect(h.view(200).evicted).toBe(0)
+      expect(h.len()).toBe(1)
+    })
+  })
+
+  describe('deleteCheckpoint', () => {
+    it('removes a present checkpoint and reports true; a second delete reports false', () => {
+      const h = new History(freshProject('0'), U, 'op0')
+      h.checkpoint('cp', U, 'cpid')
+      expect(h.hasCheckpoint('cpid')).toBe(true)
+      expect(h.deleteCheckpoint('cpid')).toBe(true)
+      expect(h.hasCheckpoint('cpid')).toBe(false)
+      expect(h.listCheckpoints()).toEqual([])
+      expect(h.deleteCheckpoint('cpid')).toBe(false) // absent → false, no throw
+    })
+
+    it('reports false for an id that never existed, and leaves the others alone', () => {
+      const h = new History(freshProject('0'), U, 'op0')
+      h.checkpoint('keep', U, 'keep-id')
+      expect(h.deleteCheckpoint('never-existed')).toBe(false)
+      expect(h.listCheckpoints().map((c) => c.id)).toEqual(['keep-id'])
+    })
+
+    it('leaves the stack and cursor untouched — a checkpoint is not a stack row', () => {
+      const h = new History(freshProject('0'), U, 'op0')
+      h.record(entry(freshProject('1'), 'op1'))
+      h.checkpoint('cp', U, 'cpid')
+      const len = h.len(); const cursor = h.cursorIndex()
+      h.deleteCheckpoint('cpid')
+      expect(h.len()).toBe(len)
+      expect(h.cursorIndex()).toBe(cursor)
+    })
   })
 
   it('blocks revert while locked and reports the reason', () => {

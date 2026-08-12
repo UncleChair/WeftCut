@@ -38,6 +38,7 @@ add an entry, and Ctrl-Z walks straight past them.
 | Passive duration shrink on layer delete / inward trim (unpinned) | **no separate entry** — rides the layer-edit commit that triggered it |
 | `replace_state` (open / new project) | **no** — resets `History` to a fresh one-entry stack and clears checkpoints |
 | `undo`, `redo` | cursor-only, no new entry |
+| `jump_to { index }` (history panel: click a row) | cursor-only, no new entry — `undo`/`redo` generalized to an arbitrary stack index, so it records nothing for the same reason and rejects under `lock_history` for the same reason |
 | `restore_checkpoint` | yes (deliberate user/agent action) |
 
 **Why the snags.** Imports are additive — no reference in any older snapshot
@@ -90,7 +91,7 @@ always errors.
 distinguish them, but Ctrl-Z walks back across both — selective undo on a
 shared mutable state graph is the "history as DAG" problem and out of scope.
 While an agent holds `lock_history(reason)`, every revert path (`undo`,
-`redo`, `restore_checkpoint`) rejects with `HistoryLocked`; the lock is
+`redo`, `jump_to`, `restore_checkpoint`) rejects with `HistoryLocked`; the lock is
 ephemeral (released via `unlock_history` or workspace swap) and never
 affects what records. Deferred: `begin_transaction`/`commit_transaction`
 bracketing to collapse an agent batch into one undoable entry — revisit
