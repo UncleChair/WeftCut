@@ -12,13 +12,14 @@ import { seededGen } from '../ids'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 42 in-scope renderer channels', () => {
+  it('contains exactly the 43 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
       'delete_layer', 'duplicate_layer',
       'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
-      'move_layer', 'paste_layer', 'project_create_checkpoint', 'project_delete_checkpoint',
+      'move_layer', 'move_layers_to_new_track', 'paste_layer',
+      'project_create_checkpoint', 'project_delete_checkpoint',
       'project_jump_to', 'project_redo', 'project_restore_checkpoint', 'project_undo',
       'remove_effect', 'remove_media', 'remove_transition', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_grouped',

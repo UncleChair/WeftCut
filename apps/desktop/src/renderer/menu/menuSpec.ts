@@ -64,6 +64,12 @@ export const EDIT_MENU: MenuSection = {
     // available; the Blade needs a layer to cut.
     "selectTool",
     "toggleBladeMode",
+    "---",
+    // Z-order rearrangement, and the only route to a new lane that needs no
+    // pointer. Its home is Edit rather than a clip-scoped or top-level section:
+    // there is no clip menu, and a new section would pull in `AppMenuBar` and
+    // the native-menu path for one item.
+    "moveToNewTrack",
   ],
 };
 

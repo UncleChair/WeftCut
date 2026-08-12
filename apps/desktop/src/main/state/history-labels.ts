@@ -31,6 +31,7 @@ export const HISTORY_SUMMARY = {
   layerPaste: { key: 'history.layer.paste', text: 'Pasted layer' },
   layerDuplicate: { key: 'history.layer.duplicate', text: 'Duplicated layer' },
   layerMove: { key: 'history.layer.move', text: 'Moved layer' },
+  layerMoveToNewTrack: { key: 'history.layer.move_to_new_track', text: 'Moved to a new track' },
   layerTrim: { key: 'history.layer.trim', text: 'Trimmed layer' },
   layerSplit: { key: 'history.layer.split', text: 'Split layer' },
   layerSplitByShots: { key: 'history.layer.split_by_shots', text: 'Split layer by shots' },

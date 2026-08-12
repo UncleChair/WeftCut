@@ -1,7 +1,9 @@
 // apps/desktop/src/main/state/mutations/move.ts
 import type { Layer, Project, Uuid } from '../model'
+import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
-import { applyDurationAutofit, locateLayer, pruneEmptiedTrack } from './helpers'
+import { applyAddTrack } from './add'
+import { applyDurationAutofit, checkTrackLock, locateLayer, pruneEmptiedTrack } from './helpers'
 import { groupSiblingsExcluding, checkGroupLock } from './groups'
 import { CommandFailure } from '../errors'
 
@@ -109,4 +111,57 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // has already put the layer back. Only the target changes tracks — every sibling
   // is re-inserted on the one it came from — so this is the only track a move empties.
   pruneEmptiedTrack(p, srcTrackId)
+}
+
+/** Raise a set of layers onto ONE fresh lane at the tail of the track vector —
+ *  the top of the z-stack, which is the only spawn point (ADR 0042 decision 2).
+ *  Returns the new track's id.
+ *
+ *  Lives beside `applyMoveLayer` because it is a lane change and nothing else:
+ *  the new lane is the destination, not the subject. Z-order is rearranged by
+ *  repeating this, and every repetition has to clean up after itself, which is
+ *  the rule this file already owns.
+ *
+ *  Each layer keeps its `t_start_us` / `t_end_us` verbatim. No re-snap: an
+ *  endpoint grid follows the layer's KIND, not its track, so times that were
+ *  canonical stay canonical. That is also why `applyDurationAutofit` is NOT
+ *  called — nothing is added, removed or retimed, so `max(t_end_us)` cannot
+ *  move, and running it would fold unrelated duration drift into this entry.
+ *
+ *  Two same-class layers landing on top of each other is left to `validate`
+ *  (`LayerOverlap`), which runs after this inside `commit`. The command's
+ *  `enabled` predicate prevents that request up front; re-checking it here would
+ *  give one rule two homes to drift between.
+ *
+ *  Group membership is untouched: `p.groups` names layer ids and no invariant
+ *  ties a group to a track, so the caller's explicit selection moves and nothing
+ *  is dragged along — unlike `applyMoveLayer`, which has a time delta for
+ *  siblings to follow. */
+export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: readonly Uuid[]): Uuid {
+  const ids = [...new Set(layerIds)]
+  if (ids.length === 0) throw new CommandFailure({ error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' })
+  // Locate and lock-check EVERY layer before the lane is minted, so a refusal
+  // burns no id. The distinct source ids are read here, while the layers are
+  // still on them: pruning needs the lanes they LEFT, and one raise can empty
+  // several of them.
+  const sourceTrackIds: Uuid[] = []
+  for (const id of ids) {
+    checkTrackLock(p, id) // LayerNotFound, then TrackLocked
+    const srcTrackId = p.tracks[locateLayer(p, id)![0]].id // located by checkTrackLock
+    if (!sourceTrackIds.includes(srcTrackId)) sourceTrackIds.push(srcTrackId)
+  }
+  // `label: null` lets the renderer derive the name — a literal written here
+  // could never be localized (ADR 0042).
+  const trackId = applyAddTrack(p, idGen, null)
+  const dest = p.tracks.find((t) => t.id === trackId)! // just inserted
+  for (const id of ids) {
+    const loc = locateLayer(p, id)! // verified above, and nothing has removed it
+    const layer = p.tracks[loc[0]].layers.splice(loc[1], 1)[0]
+    const at = dest.layers.findIndex((l) => l.t_start_us > layer.t_start_us)
+    dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
+  }
+  // Once per DISTINCT source lane, on settled state: a multi-clip raise off two
+  // lanes has to take both with it, in this same history entry.
+  for (const srcTrackId of sourceTrackIds) pruneEmptiedTrack(p, srcTrackId)
+  return trackId
 }

@@ -3,6 +3,7 @@ import type { DecodeRoute } from '../../../shared/decode-route'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
+import { pruneEmptiedTrack } from './helpers'
 
 /** The canonical VideoClip layer shape. blend_mode
  *  default = Normal, transform default per defaultTransform. */
@@ -153,9 +154,15 @@ export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uui
   // the lane falls back to a derived name of its own. Blank counts as absent.
   const srcLabel = source.label?.trim()
   const label = srcLabel ? `${srcLabel} (audio)` : null
+  const sourceTrackId = source.id // read before the splices; the prune names a lane, not an index
   source.layers.splice(li, 1)
   const newTrack: Track = { id: newId, label, enabled: true, locked: false, muted: false, solo: false,
     removable: true, role: null, transient: true, height_px: 64, layers: [layer] }
   p.tracks.splice(ti, 0, newTrack)
+  // Lifting is a layer leaving a lane, so the one cleanup rule applies here too —
+  // reachable only when the audio was that lane's last layer, which the usual
+  // A/V-pair case never is. The lifted lane was inserted at the source's own
+  // index, so it ends up occupying the slot the pruned lane vacated.
+  pruneEmptiedTrack(p, sourceTrackId)
   return newId
 }

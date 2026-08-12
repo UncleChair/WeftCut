@@ -1156,6 +1156,16 @@ export async function moveLayer(
   });
 }
 
+/// Raise layers onto one fresh lane at the top of the z-stack — the "Move to a
+/// new track" command (ADR 0042). One commit: the lane appears, every listed
+/// layer moves onto it keeping its times, and every lane the raise emptied goes
+/// with it, so one undo restores all of them. Returns the new track's id.
+export async function moveLayersToNewTrack(
+  layerIds: string[],
+): Promise<string> {
+  return invoke<string>("move_layers_to_new_track", { layerIds });
+}
+
 /** `docs/features.md#groups` — group-aware trim. `edge` is `"in"` or `"out"`. */
 export async function trimLayer(
   layerId: string,

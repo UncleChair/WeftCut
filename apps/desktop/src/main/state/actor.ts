@@ -9,7 +9,7 @@ import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
-import { applyMoveLayer } from './mutations/move'
+import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, pasteLayerInterval } from './mutations/duplicate'
@@ -632,6 +632,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_track': return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null)) }
         case 'add_marker': return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
+        // decision 2). ONE commit: the lane is minted, the layers move onto it
+        // keeping their times, and every lane the raise emptied goes with them, so
+        // one undo restores all of it. `affected` takes commit's function form
+        // because the lane's id is minted inside the recipe.
+        case 'move_layers_to_new_track': {
+          const layers = a.layers as Uuid[]
+          return { ok: true, value: commit(HISTORY_SUMMARY.layerMoveToNewTrack,
+            (newTrackId: Uuid) => [...layerRefs(layers), { kind: 'Track', id: newTrackId }],
+            { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers)) }
+        }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
         case 'delete_layer': commit(HISTORY_SUMMARY.layerDelete, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
         case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }

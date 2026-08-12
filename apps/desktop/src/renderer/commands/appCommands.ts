@@ -2,7 +2,15 @@ import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import { followPlayheadEnabled } from "../settings/appSettingsStore";
 import { hasMarkedRange } from "../state/rangeStore";
+import { useProjectStore } from "../state/projectStore";
+import { useSelectionStore } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
+import { layerOverlapClass } from "../timeline/geometry";
+import {
+  evaluateTimelinePlacements,
+  SPAWN_TRACK_ID,
+  type TimelinePlacement,
+} from "../timeline/placement";
 import type { CommandDef } from "./registry";
 
 /// App-level command catalog for the palette: derived from the shortcut
@@ -36,6 +44,10 @@ export const MENU_ONLY_COMMAND_IDS = [
   // No keyboard binding either — `Mod+Z` / `Mod+Shift+Z` are the history keys
   // and stay untouched; a checkpoint is a deliberate, named act, not a reflex.
   "createCheckpoint",
+  // Raise-to-top. No binding on purpose — the key budget belongs to
+  // higher-frequency operations, and z-order rearrangement is not one
+  // (ADR 0042).
+  "moveToNewTrack",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -52,7 +64,53 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   openAgentPanel: "actions.open_agent_panel",
   enterAgentMode: "actions.enter_agent_mode",
   createCheckpoint: "actions.create_checkpoint",
+  moveToNewTrack: "actions.move_to_new_track",
 };
+
+/// "Move to a new track" is offered only when one fresh lane could actually hold
+/// the whole selection, so the impossible request is prevented rather than
+/// refused afterwards.
+///
+/// Both stores are read LIVE, for the reason `clearRange` reads `rangeStore`:
+/// App does not subscribe to `selectedLayerIds` (a multi-select change would
+/// re-render the whole tree), so a flag captured at App render time would freeze
+/// the moment the user clicked a clip.
+///
+/// The overlap question is `evaluateTimelinePlacements`' own: projecting every
+/// selected layer onto `SPAWN_TRACK_ID` asks exactly "could one empty lane take
+/// them all", and `"collision"` is its answer for no.
+function canMoveSelectionToNewTrack(): boolean {
+  const selected = useSelectionStore.getState().selectedLayerIds;
+  if (selected.size === 0) return false;
+  const tracks = useProjectStore.getState().summary?.tracks ?? [];
+  const placements: TimelinePlacement[] = [];
+  for (const track of tracks) {
+    for (const layer of track.layers) {
+      if (!selected.has(layer.id)) continue;
+      placements.push({
+        layerId: layer.id,
+        trackId: SPAWN_TRACK_ID,
+        tStartUs: layer.t_start_us,
+        tEndUs: layer.t_end_us,
+        overlapClass: layerOverlapClass(layer),
+        // Lock is not this predicate's question, and `"locked"` OUTRANKS
+        // `"collision"` in the verdict — feeding one in would let a locked clip
+        // mask the self-overlap this exists to catch. A locked source lane is
+        // the actor's refusal (`TrackLocked`).
+        locked: false,
+      });
+    }
+  }
+  // A selection the summary no longer holds: nothing to place.
+  if (placements.length === 0) return false;
+  return (
+    evaluateTimelinePlacements({
+      tracks,
+      placements,
+      replacedLayerIds: selected,
+    }).validity !== "collision"
+  );
+}
 
 export function buildAppCommands(
   handlers: HandlerMap,
@@ -106,8 +164,20 @@ export function buildAppCommands(
     });
   }
 
+  // Menu-only ids get gates too — same shape as `enabledFor` above, keyed on the
+  // other half of the id namespace.
+  const menuEnabledFor: Partial<Record<MenuOnlyCommandId, () => boolean>> = {
+    moveToNewTrack: canMoveSelectionToNewTrack,
+  };
+
   for (const id of MENU_ONLY_COMMAND_IDS) {
-    defs.push({ id, labelKey: MENU_ONLY_LABEL_KEYS[id], run: menu[id] });
+    const enabled = menuEnabledFor[id];
+    defs.push({
+      id,
+      labelKey: MENU_ONLY_LABEL_KEYS[id],
+      ...(enabled ? { enabled } : {}),
+      run: menu[id],
+    });
   }
   return defs;
 }

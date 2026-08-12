@@ -706,6 +706,30 @@ describe('dispatch: separate_audio', () => {
     // halves of the exception).
     expect(tracks[0].label).toBeNull()
   })
+  // Lifting is a layer leaving a lane, so the one cleanup rule reaches here too.
+  // Unreachable in the usual A/V-pair case (the video keeps the lane occupied) and
+  // never on A-roll above, which carries a role — so the lone-audio-on-a-spawned-
+  // lane case is the only one that can observe it.
+  it('separate_audio prunes the lane it emptied, and one undo restores both', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sa3')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_media', { id: AID, kind: 'Audio', duration_us: 3_000_000 })
+    const extra = (actor.dispatch('add_track', {}) as { ok: true; value: string }).value
+    const l = (actor.dispatch('add_layer', { track: extra, kind: 'audio', media: AID, src_in_us: 0, src_out_us: 3_000_000, t_start_us: 0, t_end_us: 3_000_000 }) as { ok: true; value: string }).value
+    expect(actor.snapshot().tracks).toHaveLength(3)
+
+    const lifted = (actor.dispatch('separate_audio', { layer: l }) as { ok: true; value: string }).value
+    const after = actor.snapshot().tracks
+    expect(after.map((t) => t.id)).not.toContain(extra) // emptied by the lift
+    expect(after).toHaveLength(3) // the lifted lane took the pruned one's slot
+    expect(after.find((t) => t.id === lifted)!.layers.map((x) => x.id)).toEqual([l])
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    const undone = actor.snapshot().tracks
+    expect(undone.map((t) => t.id)).toContain(extra)
+    expect(undone.find((t) => t.id === extra)!.layers.map((x) => x.id)).toEqual([l])
+    expect(undone.map((t) => t.id)).not.toContain(lifted)
+  })
   it('separate_audio on a color layer → WrongLayerKind', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'sa2'); const a = initial.tracks[0].id
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
@@ -1176,5 +1200,126 @@ describe('dispatch: emptied-track cleanup', () => {
     expect(lanes(actor)).toContain(lifted)
     expect(actor.dispatch('delete_layer', { layer: audio }).ok).toBe(true)
     expect(lanes(actor)).not.toContain(lifted)
+  })
+})
+
+// Raise-to-top — the whole of z-order rearrangement (ADR 0042 decision 2). Read
+// off the snapshot for the same reason the block above is: what matters is that
+// the lane appeared, that the lanes it emptied are gone, and that ONE undo puts
+// both back.
+describe('dispatch: move to a new track', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'raise')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, aRoll: initial.tracks[0].id, bRoll: initial.tracks[1].id }
+  }
+  type Actor = ReturnType<typeof createActor>
+  function value(r: DispatchResult): string {
+    if (!r.ok) throw new Error(`dispatch refused: ${JSON.stringify(r.error)}`)
+    return r.value as string
+  }
+  const lanes = (actor: Actor): string[] => actor.snapshot().tracks.map((t) => t.id)
+  const addLane = (actor: Actor): string => value(actor.dispatch('add_track', { label: null }))
+  const addClip = (actor: Actor, track: string, t0 = 0, t1 = 1_000_000): string =>
+    value(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: t0, t_end_us: t1 }))
+  const clipsOn = (actor: Actor, track: string) => actor.snapshot().tracks.find((t) => t.id === track)?.layers ?? []
+  const raise = (actor: Actor, layers: string[]): DispatchResult =>
+    actor.dispatch('move_layers_to_new_track', { layers })
+
+  it('puts the layer on a new lane at the tail of the vector — the top of the z-stack', () => {
+    const { actor, aRoll } = setup()
+    const clip = addClip(actor, aRoll, 1_000_000, 2_000_000)
+    const before = lanes(actor)
+    const newLane = value(raise(actor, [clip]))
+    expect(lanes(actor)).toEqual([...before, newLane])
+    // A lane change, not a time change.
+    expect(clipsOn(actor, newLane).map((l) => [l.id, l.t_start_us, l.t_end_us]))
+      .toEqual([[clip, 1_000_000, 2_000_000]])
+    expect(clipsOn(actor, aRoll)).toHaveLength(0)
+  })
+
+  it('takes the source lane with it when that was its last layer', () => {
+    const { actor } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane)
+    const before = actor.historyStatus().len
+    const newLane = value(raise(actor, [clip]))
+    expect(lanes(actor)).not.toContain(lane)
+    expect(clipsOn(actor, newLane).map((l) => l.id)).toEqual([clip])
+    expect(actor.historyStatus().len).toBe(before + 1) // cleanup rode along
+  })
+
+  it('one undo restores both the previous lane and the layer on it', () => {
+    const { actor } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane, 2_000_000, 3_000_000)
+    const before = actor.historyStatus().len
+    const newLane = value(raise(actor, [clip]))
+    expect(actor.historyStatus().len).toBe(before + 1) // ONE entry, not two
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(lanes(actor)).toContain(lane)
+    expect(lanes(actor)).not.toContain(newLane)
+    expect(clipsOn(actor, lane).map((l) => [l.id, l.t_start_us])).toEqual([[clip, 2_000_000]])
+  })
+
+  it('lands a two-lane selection on one new lane and takes BOTH source lanes', () => {
+    const { actor } = setup()
+    const laneA = addLane(actor)
+    const laneB = addLane(actor)
+    const first = addClip(actor, laneA, 0, 1_000_000)
+    const second = addClip(actor, laneB, 2_000_000, 3_000_000)
+    const newLane = value(raise(actor, [second, first]))
+    expect(lanes(actor)).not.toContain(laneA)
+    expect(lanes(actor)).not.toContain(laneB)
+    // Inserted t-start-sorted regardless of the order the caller listed them.
+    expect(clipsOn(actor, newLane).map((l) => l.id)).toEqual([first, second])
+  })
+
+  it('leaves a source lane standing when it still holds another layer', () => {
+    const { actor } = setup()
+    const lane = addLane(actor)
+    const raised = addClip(actor, lane, 0, 1_000_000)
+    const stays = addClip(actor, lane, 2_000_000, 3_000_000)
+    value(raise(actor, [raised]))
+    expect(lanes(actor)).toContain(lane)
+    expect(clipsOn(actor, lane).map((l) => l.id)).toEqual([stays])
+  })
+
+  it('refuses a layer on a locked lane and changes nothing', () => {
+    const { actor } = setup()
+    const lane = addLane(actor)
+    const clip = addClip(actor, lane)
+    expect(actor.dispatch('update_track_flags', { track: lane, patch: { locked: true } }).ok).toBe(true)
+    const before = lanes(actor)
+    const r = raise(actor, [clip])
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('TrackLocked')
+    expect(lanes(actor)).toEqual(before) // no lane minted, none removed
+    expect(clipsOn(actor, lane).map((l) => l.id)).toEqual([clip])
+  })
+
+  it('leaves the reserved A/B-roll lane standing when the raise empties it', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const clip = addClip(actor, aRoll)
+    const newLane = value(raise(actor, [clip]))
+    expect(lanes(actor)).toEqual([aRoll, bRoll, newLane])
+    expect(clipsOn(actor, aRoll)).toHaveLength(0)
+  })
+
+  it('refuses a layer id the project does not hold', () => {
+    const { actor } = setup()
+    const before = lanes(actor)
+    const r = raise(actor, ['ghost'])
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('LayerNotFound')
+    expect(lanes(actor)).toEqual(before)
+  })
+
+  it('names the moved layers AND the new lane in the entry`s affected refs', () => {
+    const { actor, aRoll } = setup()
+    const clip = addClip(actor, aRoll)
+    const newLane = value(raise(actor, [clip]))
+    const top = actor.historyView(1).ops.at(-1)!
+    expect(top.affected).toEqual([{ kind: 'Layer', id: clip }, { kind: 'Track', id: newLane }])
   })
 })

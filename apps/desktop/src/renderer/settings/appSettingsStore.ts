@@ -139,6 +139,12 @@ export function followPlayheadEnabled(): boolean {
   return useAppSettingsStore.getState().settings.timeline_follow_playhead;
 }
 
+/// Imperative read for command handlers that have to decide whether a freshly
+/// spawned, role-less lane would be hidden by the A/B filter.
+export function displayMode(): DisplayMode {
+  return useAppSettingsStore.getState().settings.display_mode;
+}
+
 /// Change the UI language AND persist it to app_settings.json — the single
 /// source of truth for language. i18next is updated synchronously so the UI
 /// switches immediately; the disk write is fire-and-forget (the

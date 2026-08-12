@@ -474,8 +474,9 @@ derived from the layers it actually contains.
 The live track-header controls are the **eye** and the **lock**. The
 eye sets `enabled` — the whole-track gate that hides the track's video
 and silences its audio together. The lock sets `locked` (the actor
-rejects `move_layer`, `trim_layer`, `split_layer`, `delete_layer`,
-`update_layer`, and `update_layer_params` on layers that belong to a
+rejects `move_layer`, `move_layers_to_new_track`, `trim_layer`,
+`split_layer`, `delete_layer`, `update_layer`, and
+`update_layer_params` on layers that belong to a
 locked track, including via group fan-out). Both are toggled through
 `update_track_flags`, an **unrecorded** mutation (same
 `replace_settings_everywhere` convention as `ProjectSettings` patches)
@@ -520,8 +521,13 @@ cannot recompute it once the layer has moved on.
 
 Cleanup has one rule: **a track disappears when its last layer leaves
 it.** `transient && !locked` is the predicate, and every path that can
-empty a track — `delete_layer` and `move_layer` — calls the same prune
-with the track it just emptied. No preference gates it.
+empty a track — `delete_layer`, `move_layer`, `move_layers_to_new_track`
+and `separate_audio` — calls the same prune with the track it just
+emptied, once per distinct track a multi-layer edit emptied. No
+preference gates it.
+
+`remove_media --force` is the one deliberate exception: it removes layers
+inline and calls no prune, so it can strand an empty track.
 
 `transient` means "not part of the reserved skeleton", so it is stamped
 on every track whose `role` is `None` — including one an agent creates

@@ -31,6 +31,7 @@ function commandIds(): Set<string> {
       openAgentPanel: () => {},
       enterAgentMode: () => {},
       createCheckpoint: () => {},
+      moveToNewTrack: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, canBlade: false, exportLocked: false },
   );

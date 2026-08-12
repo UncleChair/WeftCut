@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildAppCommands } from "./appCommands";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts";
+import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
+import { useProjectStore } from "../state/projectStore";
+import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 import { setTool } from "../state/toolStore";
 import en from "../i18n/locales/en-US";
 
@@ -26,6 +29,7 @@ const menu = {
   openMotifPicker: noop,
   openAgentPanel: noop, enterAgentMode: noop,
   createCheckpoint: noop,
+  moveToNewTrack: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -54,6 +58,7 @@ describe("buildAppCommands", () => {
       "openAgentPanel",
       "enterAgentMode",
       "createCheckpoint",
+      "moveToNewTrack",
     ]) {
       expect(ids).toContain(id);
     }
@@ -103,5 +108,89 @@ describe("buildAppCommands", () => {
     const save = buildAppCommands(handlers, menu, flags).find((d) => d.id === "save")!;
     expect(save.labelKey).toBe(ACTION_DEFS.save.labelKey);
     expect(save.actionId).toBe("save");
+  });
+
+  // "Move to a new track" offers itself only when ONE fresh lane could hold the
+  // whole selection, so the impossible request never has to be refused after the
+  // fact. Both inputs are read live: the commands are built BEFORE the selection
+  // is made in every case below, which a build-time snapshot would freeze.
+  describe("moveToNewTrack enabled", () => {
+    function layer(
+      id: string,
+      tStartUs: number,
+      tEndUs: number,
+      cls: "visual" | "audio" = "visual",
+    ): LayerSummary {
+      const kind = cls === "audio" ? "Audio" : "Color";
+      return {
+        id, kind, label: id, t_start_us: tStartUs, t_end_us: tEndUs,
+        enabled: true, locked: false, color_hint: "#888",
+        params: { kind } as LayerSummary["params"], effects: [],
+      };
+    }
+    function track(id: string, layers: LayerSummary[]): TrackSummary {
+      return {
+        id, kind: "Video", label: id, enabled: true, locked: false,
+        muted: false, solo: false, role: null, transient: false, layers,
+      };
+    }
+    function seed(tracks: TrackSummary[]): void {
+      const summary: ProjectSummary = {
+        project_id: "p", name: "p",
+        composition: { width: 640, height: 360, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
+        track_count: tracks.length,
+        layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
+        duration_us: 0,
+        history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+        media: [], tracks, markers: [], transitions: [], groups: [], audio_roles: [],
+      };
+      useProjectStore.getState().apply(summary);
+    }
+    const predicate = () =>
+      buildAppCommands(handlers, menu, flags).find((d) => d.id === "moveToNewTrack")!
+        .enabled!();
+
+    afterEach(() => {
+      clearLayerSelection();
+      useProjectStore.getState().apply(null);
+    });
+
+    it("is disabled with an empty selection", () => {
+      seed([track("t1", [layer("a", 0, 1_000_000)])]);
+      expect(predicate()).toBe(false);
+    });
+
+    it("is disabled when two selected clips of one class overlap in time", () => {
+      seed([
+        track("t1", [layer("a", 0, 2_000_000)]),
+        track("t2", [layer("b", 1_000_000, 3_000_000)]),
+      ]);
+      setLayerSelection("a", ["a", "b"]);
+      expect(predicate()).toBe(false);
+    });
+
+    it("is enabled when the overlapping pair is visual + audio — one lane takes both", () => {
+      seed([
+        track("t1", [layer("a", 0, 2_000_000)]),
+        track("t2", [layer("b", 1_000_000, 3_000_000, "audio")]),
+      ]);
+      setLayerSelection("a", ["a", "b"]);
+      expect(predicate()).toBe(true);
+    });
+
+    it("is enabled for two same-class clips that do not overlap", () => {
+      seed([
+        track("t1", [layer("a", 0, 1_000_000)]),
+        track("t2", [layer("b", 1_000_000, 2_000_000)]),
+      ]);
+      setLayerSelection("a", ["a", "b"]);
+      expect(predicate()).toBe(true);
+    });
+
+    it("is enabled for a lone clip", () => {
+      seed([track("t1", [layer("a", 0, 1_000_000)])]);
+      setLayerSelection("a", ["a"]);
+      expect(predicate()).toBe(true);
+    });
   });
 });

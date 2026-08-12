@@ -6,6 +6,7 @@ import {
   addColorLayer,
   addTextLayer,
   deleteLayer,
+  moveLayersToNewTrack,
   pasteLayer,
   projectRedo,
   projectSave,
@@ -33,6 +34,7 @@ import {
   clearLayerSelection,
   setLayerSelection,
   usePrimaryLayerId,
+  useSelectionStore,
 } from "./state/selectionStore";
 import {
   clampSeekUs,
@@ -77,6 +79,7 @@ import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
 import {
+  displayMode,
   toggleDisplayMode,
   toggleFollowPlayhead,
 } from "./settings/appSettingsStore";
@@ -706,6 +709,27 @@ export function App({ onCloseProject }: AppProps) {
     await refresh();
   }, [refresh]);
 
+  // Raise the selection to a fresh lane at the top of the z-stack (ADR 0042).
+  // The selection is read from the store, not from a captured value: App does
+  // not re-render on a multi-select change, which is the same reason the
+  // command's `enabled` predicate reads it live.
+  //
+  // The new lane carries no role, so the A/B filter would hide the clip the user
+  // just raised — routed through the existing inline reveal rather than a second
+  // visibility rule. `revealTrack(id, null)` disturbs no selection, and naming a
+  // lane the summary has not delivered yet simply matches nothing until it does.
+  const handleMoveToNewTrack = useCallback(async () => {
+    const layerIds = [...useSelectionStore.getState().selectedLayerIds];
+    if (layerIds.length === 0) return;
+    try {
+      const trackId = await moveLayersToNewTrack(layerIds);
+      if (displayMode() !== "ShowAll") revealTrack(trackId, null);
+    } catch (err) {
+      logMutationFailure(err, "move_layers_to_new_track");
+    }
+    await refresh();
+  }, [refresh, revealTrack]);
+
   // Local agent-mode entry (View menu + palette). The reason labels the
   // record-panel header and the "Pre-agent: …" auto-checkpoint.
   const handleEnterAgentMode = useCallback(
@@ -732,6 +756,7 @@ export function App({ onCloseProject }: AppProps) {
           workspaceController?.openPanel("history");
           openCheckpointPrompt();
         },
+        moveToNewTrack: handleMoveToNewTrack,
       },
       {
         busy,
