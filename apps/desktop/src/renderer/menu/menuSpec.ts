@@ -53,6 +53,11 @@ export const EDIT_MENU: MenuSection = {
   entries: [
     "undo",
     "redo",
+    // Sits with Undo/Redo because it is the same faculty — a way back — not
+    // with the View menu's panel toggles. The hint carries the session-only
+    // caveat, since the command can be run without ever opening the History
+    // Panel where that copy otherwise lives.
+    { id: "createCheckpoint", hintKey: "actions.create_checkpoint_hint" },
     "---",
     // Modal tools: checkmarks make the armed tool visible here too, so blade
     // mode isn't discoverable only by the timeline cursor. Selection is always

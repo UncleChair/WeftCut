@@ -40,6 +40,7 @@ add an entry, and Ctrl-Z walks straight past them.
 | `undo`, `redo` | cursor-only, no new entry |
 | `jump_to { index }` (history panel: click a row) | cursor-only, no new entry — `undo`/`redo` generalized to an arbitrary stack index, so it records nothing for the same reason and rejects under `lock_history` for the same reason |
 | `restore_checkpoint` | yes (deliberate user/agent action) |
+| `create_checkpoint { label }`, `delete_checkpoint { checkpoint_id }` | **no entry and no `project:changed` broadcast** — neither changes project state, so waking autosave would rewrite `project.json` for nothing. Neither is gated on `lock_history` either: the lock rejects revert paths, and creating or dropping a checkpoint reverts nothing. A surface showing the checkpoint list must refetch it itself after either — the History panel does |
 
 **Why the snags.** Imports are additive — no reference in any older snapshot
 can break, so `add_media_item` patches every snapshot in place. `remove_media`

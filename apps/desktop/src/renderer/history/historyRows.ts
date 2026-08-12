@@ -10,6 +10,18 @@ import type { HistoryStackEntry } from "../ipc";
 /// is exactly what a human auditing an agent needs. The group is a rendering
 /// affordance over a run, never a collapse of it.
 
+/// `HH:MM:SS` in the user's local zone, for a wire ISO timestamp. Locale-free
+/// (no month or weekday names), so it lives here with the other pure helpers
+/// and is shared by the stack rows and the checkpoint rows — the two surfaces
+/// must agree on time formatting, they sit one above the other.
+/// An unparseable timestamp renders as nothing rather than `Invalid Date`.
+export function formatClock(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /// One line of a group header's aggregate: `Split layer ×2`.
 export interface HistoryAggregateItem {
   labelKey: string;

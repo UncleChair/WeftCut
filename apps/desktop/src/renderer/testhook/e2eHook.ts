@@ -32,6 +32,7 @@ import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
+import { useSelectionStore } from "../state/selectionStore";
 import {
   setPreferProxies,
   setProxyOverride,
@@ -433,6 +434,11 @@ export interface E2EHook {
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
   /// moved the playhead, without importing the bundled store module.
   getPlayheadUs(): number;
+  /// Imperative read of the global layer selection's primary id (null = no
+  /// layer selected). The history panel e2e uses it to prove a jump SELECTED
+  /// what the entry touched; the timeline's LayerBlock carries no id attribute,
+  /// so selection is not observable from the DOM at all.
+  getSelectedLayerId(): string | null;
   /// Live Dock Workspace snapshot as plain JSON — open Panel kinds (sorted), the
   /// focused/active Panel, the maximized Panel, and whether the workspace is
   /// empty. WeftCut-owned observability so the Electron acceptance specs can
@@ -569,6 +575,8 @@ export function installBootstrapHook(
     enterEditor();
   };
   hookSlot().getPlayheadUs = () => playheadTimeUs();
+  hookSlot().getSelectedLayerId = () =>
+    useSelectionStore.getState().primaryLayerId;
 }
 
 /// App-side: expose the live Dock Workspace snapshot to Electron acceptance

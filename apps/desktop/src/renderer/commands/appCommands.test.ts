@@ -25,6 +25,7 @@ const menu = {
   addColorLayer: noop, addTextLayer: noop,
   openMotifPicker: noop,
   openAgentPanel: noop, enterAgentMode: noop,
+  createCheckpoint: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -52,6 +53,7 @@ describe("buildAppCommands", () => {
       "openMotifPicker",
       "openAgentPanel",
       "enterAgentMode",
+      "createCheckpoint",
     ]) {
       expect(ids).toContain(id);
     }

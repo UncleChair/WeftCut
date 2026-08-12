@@ -23,16 +23,82 @@
   font-size: var(--font-size-body);
 }
 
-/* Reserved slot for the checkpoint section (create / restore / delete).
-   Empty until ticket 04 fills it — it draws nothing and claims no height,
-   but it is the first child, so the stack never has to move to make room. */
+/* The checkpoint section (create / restore / delete). Its own block above the
+   stack, separated by a rule: checkpoints are NOT stack rows — restore records
+   a new entry instead of moving the cursor, so a shared list would lie about
+   what a click does (spec decision 9). */
 .history-checkpoints {
+  display: flex;
   flex: none;
-}
-
-.history-checkpoints:not(:empty) {
+  flex-direction: column;
+  gap: 4px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.history-checkpoints-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.history-checkpoints-title {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Session-only warning. Checkpoints are absent from serialize.ts /
+   persistence.ts and `replace_state` clears them — a user who reads them as
+   durable saves loses work, so this line is load-bearing, not chrome. */
+.checkpoint-session-note {
+  margin: 0;
+  color: var(--color-amber-400);
+  font-size: var(--font-size-caption);
+}
+
+.history-checkpoints-empty {
+  margin: 0;
+  color: var(--color-gray-500);
+  font-size: var(--font-size-caption);
+  font-style: italic;
+}
+
+/* Capped: a session can accumulate many checkpoints and the stack below is the
+   Panel's main event — the list scrolls rather than pushing it off-screen. */
+.history-checkpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.history-checkpoint-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.history-checkpoint-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Delete confirmation — the `settings-panel` skin MediaPool's remove-media
+   confirmation uses, narrowed: this dialog carries two short lines, not a
+   reference list. */
+.checkpoint-delete-dialog {
+  width: min(440px, calc(100vw - 32px));
 }
 
 .history-lock-badge {

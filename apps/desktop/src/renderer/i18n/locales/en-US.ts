@@ -272,6 +272,9 @@ const enUS = {
       "Pick a motif overlay (lower third, title card, callout, …) and drop it on the timeline.",
     open_agent_panel: "Open Agent Panel",
     enter_agent_mode: "Enter Agent Mode",
+    create_checkpoint: "Create Checkpoint…",
+    create_checkpoint_hint:
+      "Name the current state so you can come back to it. This session only — checkpoints are not saved with the project.",
     // Not menu items — these labels show up in the Settings → Keyboard
     // panel for shortcuts that don't have a menu home (transport,
     // timeline edits).
@@ -1270,6 +1273,34 @@ const enUS = {
     list_separator: ", ",
     // Aggregate counting: `Split layer ×2, Added marker ×4`.
     aggregate_item: "{{label}} ×{{count}}",
+    // ── Checkpoints (own section above the stack, spec decision 9) ──────────
+    checkpoints_title: "Checkpoints",
+    // Load-bearing, not chrome: checkpoints are absent from serialize.ts /
+    // persistence.ts and `replace_state` clears them, so a user reading them as
+    // durable saves loses work. Persistence is issue #14.
+    checkpoints_note: "This session only — checkpoints are not saved with the project.",
+    checkpoints_empty:
+      "No checkpoints yet. Create one before a risky edit to keep a named way back.",
+    checkpoint_create: "New",
+    checkpoint_create_hint: "Save the current state as a named checkpoint",
+    checkpoint_create_title: "New Checkpoint",
+    checkpoint_create_confirm: "Create",
+    checkpoint_cancel: "Cancel",
+    checkpoint_label: "Checkpoint name",
+    checkpoint_label_placeholder: "e.g. Before the recut",
+    checkpoint_restore: "Restore",
+    // Says "records a new entry" because that is the surprise: restore does NOT
+    // move the cursor, it appends to the stack below.
+    checkpoint_restore_hint:
+      "Replace the timeline with this checkpoint (records a new history entry)",
+    checkpoint_delete: "Delete",
+    checkpoint_delete_hint: "Delete this checkpoint",
+    checkpoint_delete_title: "Delete checkpoint?",
+    checkpoint_delete_body:
+      "“{{label}}” will be removed, and the state it holds can no longer be restored.",
+    checkpoint_delete_note: "Deleting a checkpoint records nothing — Undo will not bring it back.",
+    checkpoint_delete_confirm: "Delete checkpoint",
+    checkpoint_deleting: "Deleting…",
   },
   // Display labels for Rust-side enum discriminants. Keep keys lowercase so
   // `t("kinds." + value.toLowerCase())` works directly.

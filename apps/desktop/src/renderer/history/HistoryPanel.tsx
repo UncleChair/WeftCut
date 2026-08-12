@@ -5,13 +5,16 @@ import { Bot, ChevronDown, ChevronRight, Lock, User } from "lucide-react";
 import { tryMutate } from "../errors/tryMutate";
 import {
   projectJumpTo,
+  type HistoryCheckpointSummary,
   type HistoryEntityLabel,
   type HistoryStackEntry,
 } from "../ipc";
 import { useHistoryStore, wireHistoryStore } from "../state/historyStore";
+import { CheckpointSection } from "./CheckpointSection";
 import { afterNextProjectSummary, revealAffected } from "./historyLinkage";
 import {
   buildHistoryItems,
+  formatClock,
   groupState,
   historyGroupId,
   rowState,
@@ -32,13 +35,7 @@ import {
 /// down on unmount, so a closed Panel issues no IPC at all.
 
 const EMPTY_OPS: HistoryStackEntry[] = [];
-
-function formatClock(ts: string): string {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
+const EMPTY_CHECKPOINTS: HistoryCheckpointSummary[] = [];
 
 export function HistoryPanel() {
   const { t } = useTranslation();
@@ -66,6 +63,7 @@ export function HistoryPanel() {
   }, []);
 
   const ops = view?.ops ?? EMPTY_OPS;
+  const checkpoints = view?.checkpoints ?? EMPTY_CHECKPOINTS;
   const cursor = view?.cursor ?? 0;
   const evicted = view?.evicted ?? 0;
   const lockReason = view?.lock_reason ?? null;
@@ -293,9 +291,8 @@ export function HistoryPanel() {
       {/* Checkpoints live above the stack in their own section — they are not
           stack rows: `restore_checkpoint` RECORDS a new entry rather than
           moving the cursor, so drawing them inline would lie about what a
-          click does (spec decision 9). Ticket 04 fills this slot; it is empty
-          on purpose, not forgotten. */}
-      <section className="history-checkpoints" data-history-section="checkpoints" />
+          click does (spec decision 9). */}
+      <CheckpointSection checkpoints={checkpoints} lockReason={lockReason} />
       {lockReason && (
         <div className="history-lock-badge" title={lockReason}>
           <Lock size={12} aria-hidden="true" />

@@ -98,6 +98,8 @@ import {
   type WorkspaceNameMode,
 } from "./app/WorkspaceNameDialog";
 import type { ViewMenuWorkspaces } from "./app/ViewMenu";
+import { CheckpointPromptDialog } from "./history/CheckpointPromptDialog";
+import { openCheckpointPrompt } from "./history/checkpointPrompt";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -720,6 +722,16 @@ export function App({ onCloseProject }: AppProps) {
         openMotifPicker: () => setMotifPickerOpen(true),
         openAgentPanel: () => workspaceController?.openPanel("agent"),
         enterAgentMode: handleEnterAgentMode,
+        // Opens the History Panel first, on purpose: the checkpoint list is
+        // the ONLY surface where the result of this command is visible, and
+        // creating one blind (no toast, no timeline change — create records
+        // nothing and broadcasts nothing) would look like the command did
+        // nothing at all. `openPanel` is idempotent, so invoking it from the
+        // Panel's own header button costs a focus and nothing else.
+        createCheckpoint: () => {
+          workspaceController?.openPanel("history");
+          openCheckpointPrompt();
+        },
       },
       {
         busy,
@@ -821,6 +833,11 @@ export function App({ onCloseProject }: AppProps) {
           {...(workspaceProfiles ? { onResetWorkspace: workspaceProfiles.reset } : {})}
         />
       </main>
+
+      {/* Checkpoint name prompt. Owned here rather than by the History Panel
+          so the `createCheckpoint` command works with the Panel closed; it
+          renders nothing until something calls `openCheckpointPrompt()`. */}
+      <CheckpointPromptDialog />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

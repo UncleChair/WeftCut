@@ -28,6 +28,14 @@ export const MENU_ONLY_COMMAND_IDS = [
   "openMotifPicker",
   "openAgentPanel",
   "enterAgentMode",
+  // Checkpoint CREATE only. Restore and Delete are per-row actions with no
+  // command form: a palette entry would have to name one of N checkpoints, and
+  // the registry has no parameterized-command shape (`CommandDef.run` takes
+  // nothing). The History Panel's section is their home.
+  //
+  // No keyboard binding either — `Mod+Z` / `Mod+Shift+Z` are the history keys
+  // and stay untouched; a checkpoint is a deliberate, named act, not a reflex.
+  "createCheckpoint",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -43,6 +51,7 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   openMotifPicker: "actions.motifs",
   openAgentPanel: "actions.open_agent_panel",
   enterAgentMode: "actions.enter_agent_mode",
+  createCheckpoint: "actions.create_checkpoint",
 };
 
 export function buildAppCommands(

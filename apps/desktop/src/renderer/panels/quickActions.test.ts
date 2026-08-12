@@ -30,6 +30,7 @@ function commandIds(): Set<string> {
       openMotifPicker: () => {},
       openAgentPanel: () => {},
       enterAgentMode: () => {},
+      createCheckpoint: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, canBlade: false, exportLocked: false },
   );
