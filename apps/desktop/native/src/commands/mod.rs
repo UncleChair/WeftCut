@@ -9,6 +9,7 @@ use serde::Serialize;
 
 #[cfg(feature = "speech")]
 pub mod speech;
+pub mod content;
 #[cfg(feature = "export")]
 pub mod export;
 #[cfg(feature = "jobs")]

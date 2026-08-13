@@ -887,6 +887,8 @@ const enUS = {
       "This engine reports precise per-word timestamps itself; cloud Whisper approximates them from subtitle cue spans.",
     content_whisper_runtime: "whisper.cpp engine (v1.9.1)",
     content_whisper_model_base: "Whisper Base model (multilingual)",
+    content_funasr_runtime: "sherpa-onnx engine (v1.13.4)",
+    content_funasr_model_paraformer: "Paraformer-zh model (Chinese)",
     content_prereq_msvc14:
       "Requires the Microsoft Visual C++ 2015–2022 x64 runtime (usually already installed).",
     content_download_pair: "Download engine & model",

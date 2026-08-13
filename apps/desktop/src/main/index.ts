@@ -1359,6 +1359,11 @@ app.whenReady().then(async () => {
       const entries = unzipSync(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength))
       return Object.entries(entries).map(([p, data]) => ({ path: p, data }))
     },
+    // Rust stateless compute (ADR 0043) — native bzip2 for the 234 MB model
+    // archive; the tar crate's unpack containment is the traversal guard.
+    extractTarBz2: async (archivePath, destDir) => {
+      await backend!.invoke('content_extract_archive', JSON.stringify({ archivePath, destDir }))
+    },
     join: path.join,
     downloadsDir: dataRoot.downloadsDir,
     partialDir: path.join(dataRoot.cacheDir, 'content-partial'),
@@ -1384,6 +1389,7 @@ app.whenReady().then(async () => {
       CONTENT_CATALOG,
       (item) => itemStatus(contentDeps, item, contentPlatform),
       speechConfig.get().local,
+      path.join,
     )
     for (const { backend: tag, config } of plan) {
       const next = speechConfig.apply({ local: { backend: tag, config } })

@@ -839,6 +839,8 @@ const zhCN: Resources = {
       "该引擎自身输出逐词精确时间戳；云端 Whisper 只能按字幕时间段近似推算。",
     content_whisper_runtime: "whisper.cpp 引擎（v1.9.1）",
     content_whisper_model_base: "Whisper Base 模型（多语言）",
+    content_funasr_runtime: "sherpa-onnx 引擎（v1.13.4）",
+    content_funasr_model_paraformer: "Paraformer-zh 模型（中文）",
     content_prereq_msvc14:
       "需要 Microsoft Visual C++ 2015–2022 x64 运行库（通常已随系统安装）。",
     content_download_pair: "下载引擎与模型",

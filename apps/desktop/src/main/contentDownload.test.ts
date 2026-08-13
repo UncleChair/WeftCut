@@ -93,15 +93,18 @@ async function* streamOf(
   }
 }
 
-// One deps bundle per test: payload-configurable http, optional zip entries.
+// One deps bundle per test: payload-configurable http, optional zip entries,
+// optional scripted tar.bz2 extraction (entries the fake extractor "unpacks").
 function makeDeps(opts: {
   fs?: ContentFs;
   responses: Array<Uint8Array | Error>;
   zipEntries?: readonly ZipEntry[];
-}): ContentDeps & { fetches: number } {
+  tarEntries?: readonly ZipEntry[] | Error;
+}): ContentDeps & { fetches: number; extractCalls: string[][] } {
   const fs = opts.fs ?? memFs();
   const bundle = {
     fetches: 0,
+    extractCalls: [] as string[][],
     fs,
     http: {
       get: async (_url: string, _signal: AbortSignal) => {
@@ -113,6 +116,13 @@ function makeDeps(opts: {
       },
     },
     readZipEntries: async () => opts.zipEntries ?? [],
+    extractTarBz2: async (archivePath: string, destDir: string) => {
+      bundle.extractCalls.push([archivePath, destDir]);
+      if (opts.tarEntries instanceof Error) throw opts.tarEntries;
+      for (const entry of opts.tarEntries ?? []) {
+        fs.writeBytes(`${destDir}/${entry.path}`, entry.data);
+      }
+    },
     join: (...parts: string[]) => parts.join("/"),
     downloadsDir: "root/downloads",
     partialDir: "root/cache/content-partial",
@@ -180,6 +190,7 @@ describe("downloadItem — raw payload happy path", () => {
       ok: true,
       entryPath: "root/downloads/test-model/rev1/model.bin",
     });
+    expect(deps.extractCalls).toEqual([]);
     expect(
       deps.fs.statBytes("root/downloads/test-model/rev1/model.bin"),
     ).toBe(PAYLOAD.byteLength);
@@ -331,6 +342,70 @@ describe("downloadItem — zip extraction", () => {
   });
 });
 
+describe("downloadItem — tar.bz2 extraction (delegated to the injected extractor)", () => {
+  const archive = new TextEncoder().encode("tar-bz2-archive-stand-in");
+
+  function tarItem(): ContentItem {
+    return {
+      id: "test-tarball",
+      kind: "speech-runtime",
+      version: "2.0.0",
+      labelKey: "x",
+      license: { name: "Apache-2.0", upstreamUrl: "https://example.com" },
+      platforms: {
+        "win32-x64": {
+          url: "https://example.com/bundle.tar.bz2",
+          sha256: sha256(archive),
+          bytes: archive.byteLength,
+          archive: "tar.bz2",
+          entryPath: "bundle/bin/tool.exe",
+        },
+      },
+    };
+  }
+
+  it("extracts via the adapter into staging and installs atomically", async () => {
+    const deps = makeDeps({
+      responses: [archive],
+      tarEntries: [
+        { path: "bundle/bin/tool.exe", data: new TextEncoder().encode("exe") },
+        { path: "bundle/tokens.txt", data: new TextEncoder().encode("a b") },
+      ],
+    });
+    const result = await downloadItem(deps, tarItem(), "win32-x64", noProgress, live());
+    expect(result).toEqual({
+      ok: true,
+      entryPath: "root/downloads/test-tarball/2.0.0/bundle/bin/tool.exe",
+    });
+    // The extractor ran on the verified partial, targeting the staging dir.
+    expect(deps.extractCalls).toEqual([
+      [
+        "root/cache/content-partial/test-tarball.part",
+        "root/downloads/test-tarball/.staging-2.0.0",
+      ],
+    ]);
+    expect(
+      deps.fs.statBytes("root/downloads/test-tarball/2.0.0/bundle/tokens.txt"),
+    ).toBe(3);
+    expect(
+      deps.fs.statBytes("root/cache/content-partial/test-tarball.part"),
+    ).toBeNull();
+  });
+
+  it("an extractor refusal (hostile archive) fails without retrying", async () => {
+    const deps = makeDeps({
+      responses: [archive, archive, archive],
+      tarEntries: new Error("archive entry escapes the destination: ../x"),
+    });
+    const result = await downloadItem(deps, tarItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(false);
+    expect(deps.fetches).toBe(1);
+    expect(
+      deps.fs.statBytes("root/downloads/test-tarball/2.0.0/manifest.json"),
+    ).toBeNull();
+  });
+});
+
 describe("itemStatus", () => {
   it("walks the whole ladder: unavailable → not_installed → installed → corrupt", async () => {
     const deps = makeDeps({ responses: [PAYLOAD] });
@@ -345,6 +420,7 @@ describe("itemStatus", () => {
     expect(itemStatus(deps, item, "win32-x64")).toEqual({
       state: "installed",
       entryPath: "root/downloads/test-model/rev1/model.bin",
+      installDir: "root/downloads/test-model/rev1",
     });
 
     // Payload vanishes but the manifest claim remains → corrupt, not
@@ -379,60 +455,99 @@ describe("sweepPartials", () => {
   });
 });
 
-describe("speechAutofillPlan — the only-if-blank / whole-pair consumer rules", () => {
+describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", () => {
+  const join = (...parts: string[]) => parts.join("/");
   const runtime: ContentItem = {
     ...rawItem(),
     id: "engine",
     kind: "speech-runtime",
-    speech: { backend: "whisper_cpp", field: "binary" },
+    speech: { backend: "whisper_cpp", fields: { binary: "bin/cli.exe" } },
   };
   const model: ContentItem = {
     ...rawItem(),
     id: "model",
     kind: "speech-model",
-    speech: { backend: "whisper_cpp", field: "model" },
+    speech: { backend: "whisper_cpp", fields: { model: "m.bin" } },
   };
-  const installed = (path: string) =>
-    ({ state: "installed", entryPath: path }) as const;
+  const installed = (dir: string) =>
+    ({ state: "installed", entryPath: `${dir}/x`, installDir: dir }) as const;
 
-  it("both installed + blank config → one whisper_cpp entry with both paths", () => {
+  it("both installed + blank config → one entry with fields resolved against install dirs", () => {
     const plan = speechAutofillPlan(
       [runtime, model],
-      (i) => installed(i.id === "engine" ? "/dl/engine/cli.exe" : "/dl/model/m.bin"),
+      (i) => installed(i.id === "engine" ? "/dl/engine/v1" : "/dl/model/v1"),
       {},
+      join,
     );
     expect(plan).toEqual([
       {
         backend: "whisper_cpp",
-        config: { binary: "/dl/engine/cli.exe", model: "/dl/model/m.bin" },
+        config: { binary: "/dl/engine/v1/bin/cli.exe", model: "/dl/model/v1/m.bin" },
       },
     ]);
   });
 
-  it("a half pair configures nothing (engine installed, model missing)", () => {
+  it("one archive can fill several fields (the Paraformer model+tokens shape)", () => {
+    const funasrRuntime: ContentItem = {
+      ...rawItem(),
+      id: "fa-engine",
+      speech: { backend: "funasr", fields: { binary: "sherpa/bin/sherpa-onnx-offline.exe" } },
+    };
+    const funasrModel: ContentItem = {
+      ...rawItem(),
+      id: "fa-model",
+      speech: {
+        backend: "funasr",
+        fields: { model: "para/model.int8.onnx", tokens: "para/tokens.txt" },
+      },
+    };
+    const plan = speechAutofillPlan(
+      [funasrRuntime, funasrModel],
+      (i) => installed(i.id === "fa-engine" ? "/dl/fa-e/1" : "/dl/fa-m/1"),
+      {},
+      join,
+    );
+    expect(plan).toEqual([
+      {
+        backend: "funasr",
+        config: {
+          binary: "/dl/fa-e/1/sherpa/bin/sherpa-onnx-offline.exe",
+          model: "/dl/fa-m/1/para/model.int8.onnx",
+          tokens: "/dl/fa-m/1/para/tokens.txt",
+        },
+      },
+    ]);
+  });
+
+  it("a half set configures nothing (engine installed, model missing)", () => {
     const plan = speechAutofillPlan(
       [runtime, model],
       (i) =>
-        i.id === "engine"
-          ? installed("/dl/engine/cli.exe")
-          : { state: "not_installed" },
+        i.id === "engine" ? installed("/dl/engine/v1") : { state: "not_installed" },
       {},
+      join,
     );
     expect(plan).toEqual([]);
   });
 
   it("any manual path wins outright — even a partially-filled manual entry", () => {
     const statusOf = (i: ContentItem) =>
-      installed(i.id === "engine" ? "/dl/engine/cli.exe" : "/dl/model/m.bin");
+      installed(i.id === "engine" ? "/dl/engine/v1" : "/dl/model/v1");
     expect(
-      speechAutofillPlan([runtime, model], statusOf, {
-        whisper_cpp: { binary: "C:/my/whisper.exe", model: "" },
-      }),
+      speechAutofillPlan(
+        [runtime, model],
+        statusOf,
+        { whisper_cpp: { binary: "C:/my/whisper.exe", model: "" } },
+        join,
+      ),
     ).toEqual([]);
     expect(
-      speechAutofillPlan([runtime, model], statusOf, {
-        whisper_cpp: { binary: "", model: "C:/my/model.bin" },
-      }),
+      speechAutofillPlan(
+        [runtime, model],
+        statusOf,
+        { whisper_cpp: { binary: "", model: "C:/my/model.bin" } },
+        join,
+      ),
     ).toEqual([]);
   });
 
@@ -441,15 +556,16 @@ describe("speechAutofillPlan — the only-if-blank / whole-pair consumer rules",
       [runtime, model],
       (i) => installed(i.id === "engine" ? "/e" : "/m"),
       { whisper_cpp: { binary: "", model: "  " } },
+      join,
     );
     expect(plan).toHaveLength(1);
   });
 
-  it("platform-unavailable items don't block the pair (they're not part of it here)", () => {
+  it("platform-unavailable items don't block the set (they're not part of it here)", () => {
     const other: ContentItem = {
       ...rawItem(),
       id: "other-os-tokens",
-      speech: { backend: "whisper_cpp", field: "tokens" },
+      speech: { backend: "whisper_cpp", fields: { tokens: "t.txt" } },
     };
     const plan = speechAutofillPlan(
       [runtime, model, other],
@@ -458,9 +574,10 @@ describe("speechAutofillPlan — the only-if-blank / whole-pair consumer rules",
           ? { state: "unavailable" }
           : installed(i.id === "engine" ? "/e" : "/m"),
       {},
+      join,
     );
     expect(plan).toEqual([
-      { backend: "whisper_cpp", config: { binary: "/e", model: "/m" } },
+      { backend: "whisper_cpp", config: { binary: "/e/bin/cli.exe", model: "/m/m.bin" } },
     ]);
   });
 });

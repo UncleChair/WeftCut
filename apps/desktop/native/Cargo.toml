@@ -88,6 +88,14 @@ async-trait = "0.1"
 # decoded-frame probes. RAII drop on `NamedTempFile` cleans temps automatically.
 # Already a dev-dep; promoted to production.
 tempfile = "3"
+# `content_extract_archive` (ADR 0043): app-managed content downloads arrive as
+# .tar.bz2 (sherpa-onnx publishes no zips) and extraction runs here as
+# stateless compute — native bzip2 decodes a 234 MB archive in seconds where a
+# JS decoder would take an order of magnitude longer. `tar` was already in the
+# dependency graph transitively; `tar::Archive::unpack` is also the
+# path-traversal guard (entries escaping the destination are refused).
+tar = "0.4"
+bzip2 = "0.6"
 # P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —

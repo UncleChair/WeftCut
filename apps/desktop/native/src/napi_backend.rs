@@ -598,6 +598,19 @@ impl Backend {
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
+            // App-managed content (ADR 0043): stateless .tar.bz2 extraction for
+            // the main-process downloader. Main-only — router.ts never
+            // classifies it, so the renderer cannot reach it.
+            "content_extract_archive" => {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct ExtractArchiveArgs {
+                    archive_path: String,
+                    dest_dir: String,
+                }
+                let a: ExtractArchiveArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::content::extract_tar_bz2(a.archive_path, a.dest_dir).await)
+            }
             #[cfg(feature = "jobs")]
             "import_cancel" => {
                 let a: crate::commands::MediaIdArgs =

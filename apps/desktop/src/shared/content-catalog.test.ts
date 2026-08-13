@@ -61,6 +61,16 @@ describe("content catalog pinning invariants", () => {
     }
   });
 
+  it("speech consumer field paths obey the same relative/traversal-free rule", () => {
+    for (const item of CONTENT_CATALOG) {
+      for (const rel of Object.values(item.speech?.fields ?? {})) {
+        expect(rel, item.id).not.toMatch(/^([a-zA-Z]:)?[\\/]/);
+        expect(rel, item.id).not.toContain("..");
+        expect(rel.length, item.id).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("platform keys are the ContentPlatformKey scheme", () => {
     for (const { id, platform } of allArtifacts) {
       const [os, arch] = platform.split("-");
@@ -80,7 +90,10 @@ describe("the ADR 0039 slice is present verbatim", () => {
       "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
     );
     expect(win?.entryPath).toBe("Release/whisper-cli.exe");
-    expect(runtime?.speech).toEqual({ backend: "whisper_cpp", field: "binary" });
+    expect(runtime?.speech).toEqual({
+      backend: "whisper_cpp",
+      fields: { binary: "Release/whisper-cli.exe" },
+    });
   });
 
   it("multilingual Base model at the pinned HF revision", () => {
@@ -93,6 +106,49 @@ describe("the ADR 0039 slice is present verbatim", () => {
     // The multilingual Base, not base.en and not a quantized variant.
     expect(win?.entryPath).toBe("ggml-base.bin");
     expect(model?.version).toBe("5359861c739e955e79d9a303bcbc70fb988958b1");
-    expect(model?.speech).toEqual({ backend: "whisper_cpp", field: "model" });
+    expect(model?.speech).toEqual({
+      backend: "whisper_cpp",
+      fields: { model: "ggml-base.bin" },
+    });
+  });
+});
+
+describe("the ADR 0043 slice is present verbatim", () => {
+  it("sherpa-onnx v1.13.4 shared-MD-Release Windows runtime", () => {
+    const runtime = CONTENT_CATALOG.find((i) => i.id === "funasr-runtime");
+    const win = runtime?.platforms["win32-x64"];
+    expect(win?.bytes).toBe(20034576);
+    expect(win?.sha256).toBe(
+      "d4dacc8be5afe03f22ade4d50cfd587c03a625eaca8c41f2d99a24d3db463eab",
+    );
+    expect(win?.archive).toBe("tar.bz2");
+    // The versioned tag URL, not the rolling one.
+    expect(win?.url).toContain("/releases/download/v1.13.4/");
+    expect(runtime?.speech).toEqual({
+      backend: "funasr",
+      fields: {
+        binary:
+          "sherpa-onnx-v1.13.4-win-x64-shared-MD-Release/bin/sherpa-onnx-offline.exe",
+      },
+    });
+  });
+
+  it("Paraformer-zh 2023-09-14: one archive fills model AND tokens", () => {
+    const model = CONTENT_CATALOG.find(
+      (i) => i.id === "funasr-model-paraformer-zh",
+    );
+    const win = model?.platforms["win32-x64"];
+    expect(win?.bytes).toBe(234051698);
+    expect(win?.sha256).toBe(
+      "9c49fd9c6fb63de8e18c1054cf3d100f804741b7e608e187923cd8ff09fa9f03",
+    );
+    expect(win?.archive).toBe("tar.bz2");
+    expect(model?.speech).toEqual({
+      backend: "funasr",
+      fields: {
+        model: "sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx",
+        tokens: "sherpa-onnx-paraformer-zh-2023-09-14/tokens.txt",
+      },
+    });
   });
 });

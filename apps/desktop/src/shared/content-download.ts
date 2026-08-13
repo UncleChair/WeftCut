@@ -19,26 +19,31 @@ export type ContentPlatformKey =
 /// One downloadable payload for one platform. Supply-chain rule
 /// (docs/licensing.md): the URL is versioned and immutable — never a rolling
 /// "latest" — and sha256 + exact byte count are pinned so the artifact, not
-/// the claim, is what gets verified.
+/// the claim, is what gets verified. (The one URL exception on record: the
+/// Paraformer model hangs off a rolling release tag — ADR 0043 — where the
+/// pinned sha256 is what carries the trust.)
 export interface ContentArtifact {
   url: string;
   sha256: string;
   /// Exact size of the archive (or raw payload) in bytes. Doubles as the
   /// progress denominator and as a cheap integrity floor for status checks.
   bytes: number;
-  archive: "zip" | "none";
+  archive: "zip" | "tar.bz2" | "none";
   /// Path of the item's entry point relative to its install dir once
   /// installed — e.g. "Release/whisper-cli.exe" inside the extracted zip, or
   /// the payload file's own name for `archive: "none"`.
   entryPath: string;
 }
 
-/// Which speech backend consumes an item, and which LocalEngineConfig field
-/// its entry point fills. The main-process auto-fill consumer keys off this
+/// Which speech backend consumes an item, and which LocalEngineConfig
+/// field(s) its installed files fill — each value a path relative to the
+/// item's install dir. A map rather than a single field because one archive
+/// can carry several config inputs (the Paraformer bundle ships model AND
+/// tokens — ADR 0043). The main-process auto-fill consumer keys off this
 /// instead of hard-coding item ids.
 export interface SpeechConsumer {
-  backend: "whisper_cpp";
-  field: "binary" | "model" | "tokens";
+  backend: "whisper_cpp" | "funasr";
+  fields: Partial<Record<"binary" | "model" | "tokens", string>>;
 }
 
 /// One catalog entry. `version` names the install directory
@@ -63,8 +68,10 @@ export interface ContentItem {
 export type ContentItemStatus =
   | { state: "not_installed" }
   | { state: "downloading"; receivedBytes: number; totalBytes: number }
-  /// `entryPath` is the ABSOLUTE path of the installed entry point.
-  | { state: "installed"; entryPath: string }
+  /// `entryPath` is the ABSOLUTE path of the installed entry point;
+  /// `installDir` the ABSOLUTE install root the SpeechConsumer field paths
+  /// resolve against.
+  | { state: "installed"; entryPath: string; installDir: string }
   /// A manifest exists but the payload is missing or size-mismatched —
   /// surfaced instead of silently re-listing as not_installed so the UI can
   /// offer a re-download that explains itself.

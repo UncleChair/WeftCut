@@ -61,6 +61,14 @@ export interface ContentDeps {
   http: ContentHttp;
   /** Read every file entry of a zip on disk (fflate in production). */
   readZipEntries(archivePath: string): Promise<readonly ZipEntry[]>;
+  /**
+   * Unpack a .tar.bz2 into a directory (the Rust `content_extract_archive`
+   * command in production — ADR 0043). Unlike the zip lane, whose entries
+   * flow through this module's guard, tar traversal containment lives in the
+   * extractor itself (the `tar` crate refuses entries escaping the dest);
+   * the adapter must throw on refusal.
+   */
+  extractTarBz2(archivePath: string, destDir: string): Promise<void>;
   join(...parts: string[]): string;
   downloadsDir: string;
   partialDir: string;
@@ -117,7 +125,11 @@ export function itemStatus(
     entryBytes != null &&
     (artifact.archive !== "none" || entryBytes === artifact.bytes);
   if (!entryOk) return { state: "corrupt" };
-  return { state: "installed", entryPath: entryAbsPath(deps, item, artifact) };
+  return {
+    state: "installed",
+    entryPath: entryAbsPath(deps, item, artifact),
+    installDir: installDir(deps, item),
+  };
 }
 
 /**
@@ -300,6 +312,10 @@ async function installVerified(
         deps.fs.writeBytes(deps.join(stagingDir, ...segments), entry.data);
       }
       deps.fs.rm(partialPath);
+    } else if (artifact.archive === "tar.bz2") {
+      // Traversal containment lives in the extractor (see ContentDeps).
+      await deps.extractTarBz2(partialPath, stagingDir);
+      deps.fs.rm(partialPath);
     } else {
       deps.fs.rename(
         partialPath,
@@ -350,17 +366,20 @@ export function sweepPartials(deps: ContentDeps): void {
 
 /**
  * The speech-config entries that installed managed content should create —
- * the ADR 0039 consumer's decision logic, pure so the only-if-blank rule is
- * testable. Per backend: every `speech`-tagged item must be installed to form
- * an entry (a half pair configures nothing), and an existing entry with ANY
- * non-blank path wins outright — a manual path is never overwritten, and a
- * partially-manual entry is left entirely alone (mixing provenance in one
- * entry is worse than none).
+ * the ADR 0039/0043 consumer's decision logic, pure so the only-if-blank rule
+ * is testable. Per backend: every `speech`-tagged item must be installed to
+ * form an entry (a half pair configures nothing), and an existing entry with
+ * ANY non-blank path wins outright — a manual path is never overwritten, and
+ * a partially-manual entry is left entirely alone (mixing provenance in one
+ * entry is worse than none). Each installed item contributes every field its
+ * SpeechConsumer maps (the Paraformer archive fills model AND tokens),
+ * resolved against the item's install dir.
  */
 export function speechAutofillPlan(
   items: readonly ContentItem[],
   statusOf: (item: ContentItem) => ContentItemStatus,
   existingLocal: Record<string, { binary: string; model: string }>,
+  join: (...parts: string[]) => string,
 ): Array<{ backend: string; config: { binary: string; model: string; tokens?: string } }> {
   const byBackend = new Map<
     string,
@@ -371,10 +390,15 @@ export function speechAutofillPlan(
     const slot = byBackend.get(item.speech.backend) ?? { complete: true };
     const status = statusOf(item);
     if (status.state === "installed") {
-      slot[item.speech.field] = status.entryPath;
+      for (const [field, rel] of Object.entries(item.speech.fields)) {
+        slot[field as "binary" | "model" | "tokens"] = join(
+          status.installDir,
+          ...rel.split("/"),
+        );
+      }
     } else if (status.state !== "unavailable") {
       // A catalog item this backend needs exists for the platform but is not
-      // installed — the pair is incomplete, so nothing is configured.
+      // installed — the set is incomplete, so nothing is configured.
       slot.complete = false;
     }
     byBackend.set(item.speech.backend, slot);
@@ -382,6 +406,9 @@ export function speechAutofillPlan(
 
   const plan: Array<{ backend: string; config: { binary: string; model: string; tokens?: string } }> = [];
   for (const [backend, slot] of byBackend) {
+    // binary + model are the universal minimum; tokens rides along whenever
+    // the catalog provides it (FunASR's availability probe requires it, and
+    // its model archive always carries it).
     if (!slot.complete || !slot.binary || !slot.model) continue;
     const existing = existingLocal[backend];
     if (existing && (existing.binary.trim() !== "" || existing.model.trim() !== "")) continue;
