@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
@@ -66,6 +67,7 @@ export function MiniTimeline({
   fpsNum,
   fpsDen,
 }: MiniTimelineProps) {
+  const { t } = useTranslation();
   // Frame-rate playhead subscription (tier 4, playheadStore.ts): the
   // agent-mode progress strip is a tiny leaf subtree, so per-frame React
   // updates here are cheap and keep the playhead butter-smooth.
@@ -178,7 +180,7 @@ export function MiniTimeline({
                     }
                   : { left: `${left}%`, background: m.color_hint }
               }
-              title={m.label || "(unnamed marker)"}
+              title={m.label || t("kinds.marker")}
             />
           );
         })}

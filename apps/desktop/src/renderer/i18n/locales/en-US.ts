@@ -418,6 +418,11 @@ const enUS = {
     add_transition_wipe: "Add wipe · {{direction}}",
     add_transition_slide: "Add slide · {{direction}}",
     transition_chip_title: "{{kind}} transition · {{start}} → {{end}}",
+    // Hover text for a mark in the ruler's lower half; `label` falls back to
+    // `$t(kinds.marker)` at the call site. Which pattern a marker gets is
+    // TimelineRuler.tsx's `markerTitle`.
+    marker_tooltip_point: "{{label}} · {{timecode}}",
+    marker_tooltip_region: "{{label}} · {{start}} – {{end}}",
   },
   // Derived track names (`lib/trackName.ts`): what a lane is called when the
   // user has not named it. Kebab role keys so the lookup is the wire value

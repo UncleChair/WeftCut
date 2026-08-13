@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@/bridge/events";
 import {
   projectSummary,
   type LayerSummary,
+  type MarkerSummary,
   type MediaSummary,
   type ProjectSummary,
   type RoleMixView,
@@ -147,6 +148,11 @@ export const useProjectSummary = (): ProjectSummary | null =>
 export const useAudioRoles = (): RoleMixView[] =>
   useProjectStore((s) => s.summary?.audio_roles ?? EMPTY_ROLES);
 
+/// The project's markers. Absent on stub summaries and pre-workspace, which is
+/// why this reads through the empty sentinel rather than asserting the field.
+export const useProjectMarkers = (): MarkerSummary[] =>
+  useProjectStore((s) => s.summary?.markers ?? EMPTY_MARKERS);
+
 /// Resolve a media item by id without forcing the caller to subscribe
 /// to the whole media array. The selector reads from `mediaById`, which
 /// only changes when a `summary` apply runs.
@@ -157,3 +163,4 @@ export const useMediaById = (id: string | null | undefined): MediaSummary | unde
 // every render (which would defeat referential-equality short-circuits
 // in any caller doing `useShallow` over derived combinations).
 const EMPTY_ROLES: RoleMixView[] = [];
+const EMPTY_MARKERS: MarkerSummary[] = [];

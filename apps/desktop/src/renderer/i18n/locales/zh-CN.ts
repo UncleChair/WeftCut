@@ -406,6 +406,9 @@ const zhCN: Resources = {
     add_transition_wipe: "添加划像 · {{direction}}",
     add_transition_slide: "添加滑动 · {{direction}}",
     transition_chip_title: "{{kind}}转场 · {{start}} → {{end}}",
+    // 时间标尺下半区标记的悬停文案；标记无名称时调用处退回 `$t(kinds.marker)`。
+    marker_tooltip_point: "{{label}} · {{timecode}}",
+    marker_tooltip_region: "{{label}} · {{start}} – {{end}}",
   },
   tracks: {
     roles: {

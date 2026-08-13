@@ -11,9 +11,12 @@ import {
   timeUsAtFrame,
 } from "../frames";
 import {
+  MARKER_MIN_REGION_PX,
   RULER_OVERSCAN_PX,
   RULER_SCROLL_QUANTUM_PX,
+  computeRulerMarkers,
   computeRulerModel,
+  type RulerMarkerSource,
   type RulerModel,
   type RulerModelInput,
   type RulerTick,
@@ -426,5 +429,195 @@ describe("labels", () => {
     expect(
       model.ticks.filter((t) => t.isMajor).map((t) => t.label),
     ).toEqual(["0:00", "0:02", "0:04", "0:06", "0:08", "0:10"]);
+  });
+});
+
+// ===== Markers =============================================================
+
+/// 1000 px/s throughout, so 1 ms of marker time is exactly 1 px of row and every
+/// expectation below can be read as a distance.
+const MARKER_PX_PER_SEC = 1000;
+
+function marker(
+  over: Partial<RulerMarkerSource> & Pick<RulerMarkerSource, "id" | "t_us">,
+): RulerMarkerSource {
+  return {
+    end_t_us: null,
+    label: "",
+    color_hint: "#ff0000",
+    ...over,
+  };
+}
+
+/// Zero overscan by default, so a windowing expectation is about the interval the
+/// case names rather than about `RULER_OVERSCAN_PX`. The one case that is about
+/// the overscan passes its own.
+function markersIn(
+  markers: RulerMarkerSource[],
+  over: Partial<Parameters<typeof computeRulerMarkers>[0]> = {},
+) {
+  return computeRulerMarkers({
+    markers,
+    pxPerSec: MARKER_PX_PER_SEC,
+    scrollLeftPx: 0,
+    viewportWidthPx: 1000,
+    overscanPx: 0,
+    ...over,
+  });
+}
+
+describe("marker windowing", () => {
+  it("emits only the markers the window can show", () => {
+    const views = markersIn([
+      marker({ id: "before", t_us: 500_000 }),
+      marker({ id: "inside", t_us: 1_500_000 }),
+      marker({ id: "after", t_us: 4_000_000 }),
+    ], { scrollLeftPx: 1000, viewportWidthPx: 1000 });
+    expect(views.map((v) => v.id)).toEqual(["inside"]);
+  });
+
+  it("keeps a region that only overlaps the window at one edge", () => {
+    // Both regions start or end outside the 1000–2000 px window but cross it.
+    const views = markersIn([
+      marker({ id: "straddles-left", t_us: 200_000, end_t_us: 1_200_000 }),
+      marker({ id: "straddles-right", t_us: 1_800_000, end_t_us: 3_000_000 }),
+      marker({ id: "spans-both", t_us: 0, end_t_us: 5_000_000 }),
+      marker({ id: "clear-of-it", t_us: 3_500_000, end_t_us: 3_600_000 }),
+    ], { scrollLeftPx: 1000, viewportWidthPx: 1000 });
+    expect(views.map((v) => v.id)).toEqual([
+      "spans-both",
+      "straddles-left",
+      "straddles-right",
+    ]);
+  });
+
+  it("paints the overscan the ticks already use", () => {
+    // 400 px of overscan each side of a 1000–2000 px viewport, i.e. 600–2400 px.
+    const inOverscan = markersIn([marker({ id: "m", t_us: 700_000 })], {
+      scrollLeftPx: 1000,
+      viewportWidthPx: 1000,
+      overscanPx: RULER_OVERSCAN_PX,
+    });
+    expect(inOverscan.map((v) => v.id)).toEqual(["m"]);
+    const pastIt = markersIn([marker({ id: "m", t_us: 500_000 })], {
+      scrollLeftPx: 1000,
+      viewportWidthPx: 1000,
+      overscanPx: RULER_OVERSCAN_PX,
+    });
+    expect(pastIt).toEqual([]);
+  });
+
+  it("costs nothing per off-screen marker on a project carrying hundreds", () => {
+    // The count must follow the window, never the project — a shot-detection
+    // sweep drops hundreds of markers in one commit.
+    const many = Array.from({ length: 500 }, (_, i) =>
+      marker({ id: `m${i}`, t_us: i * 1_000_000 }),
+    );
+    expect(markersIn(many, { scrollLeftPx: 0, viewportWidthPx: 1000 })).toHaveLength(2);
+  });
+
+  it("has no layout to compute at a non-positive zoom", () => {
+    expect(markersIn([marker({ id: "m", t_us: 0 })], { pxPerSec: 0 })).toEqual([]);
+  });
+});
+
+describe("marker geometry", () => {
+  it("puts a point marker's mark on its own time", () => {
+    const [view] = markersIn([marker({ id: "m", t_us: 500_000 })]);
+    expect(view).toMatchObject({ xPx: 500, widthPx: 0, shape: "point" });
+    // A point has no range to report, so the tooltip has no end to print.
+    expect(view!.endTUs).toBeNull();
+  });
+
+  it("spans a region marker from its start to its end", () => {
+    const [view] = markersIn([
+      marker({ id: "m", t_us: 200_000, end_t_us: 700_000 }),
+    ]);
+    expect(view).toMatchObject({
+      xPx: 200,
+      widthPx: 500,
+      shape: "region",
+      endTUs: 700_000,
+    });
+  });
+
+  it("degrades a region under the threshold to the point shape", () => {
+    const [view] = markersIn([
+      marker({ id: "m", t_us: 1_000_000, end_t_us: 1_002_000 }),
+    ]);
+    expect(view!.shape).toBe("point");
+    expect(view!.widthPx).toBe(0);
+    // The lie is about the SHAPE only — the tooltip still gets the real range.
+    expect(view!.endTUs).toBe(1_002_000);
+  });
+
+  it("anchors a degraded region at its exact start, neither centred nor widened", () => {
+    const [view] = markersIn([
+      marker({ id: "m", t_us: 1_000_000, end_t_us: 1_002_000 }),
+    ]);
+    expect(view!.xPx).toBe(1000);
+  });
+
+  it("switches shape exactly at the threshold width", () => {
+    const at = (widthUs: number) =>
+      markersIn([marker({ id: "m", t_us: 0, end_t_us: widthUs })])[0]!.shape;
+    const thresholdUs = MARKER_MIN_REGION_PX * 1000;
+    expect(at(thresholdUs)).toBe("region");
+    expect(at(thresholdUs - 1)).toBe("point");
+  });
+
+  it("re-earns the bar when the zoom makes the region wide enough", () => {
+    const short = [marker({ id: "m", t_us: 0, end_t_us: 2_000 })];
+    expect(markersIn(short, { pxPerSec: 1000 })[0]!.shape).toBe("point");
+    expect(markersIn(short, { pxPerSec: 2000 })[0]!.shape).toBe("region");
+  });
+
+  it("treats a non-advancing end as a point", () => {
+    // Defensive: a zero-length or inverted region has no range to report, so it
+    // must not produce a `start – start` tooltip.
+    for (const end of [1_000_000, 900_000]) {
+      const [view] = markersIn([
+        marker({ id: "m", t_us: 1_000_000, end_t_us: end }),
+      ]);
+      expect(view).toMatchObject({ shape: "point", widthPx: 0, endTUs: null });
+    }
+  });
+});
+
+describe("marker ordering and payload", () => {
+  it("orders by time, so a later marker paints over an earlier one", () => {
+    const views = markersIn([
+      marker({ id: "c", t_us: 900_000 }),
+      marker({ id: "a", t_us: 100_000 }),
+      marker({ id: "b", t_us: 500_000 }),
+    ]);
+    expect(views.map((v) => v.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("breaks a same-time tie deterministically", () => {
+    const ids = () =>
+      markersIn([
+        marker({ id: "z", t_us: 100_000 }),
+        marker({ id: "a", t_us: 100_000 }),
+      ]).map((v) => v.id);
+    expect(ids()).toEqual(["a", "z"]);
+    expect(ids()).toEqual(ids());
+  });
+
+  it("carries the authored colour and label through untouched", () => {
+    const [view] = markersIn([
+      marker({
+        id: "m",
+        t_us: 100_000,
+        label: "needs VO",
+        color_hint: "#0a1b2c",
+      }),
+    ]);
+    expect(view).toMatchObject({
+      id: "m",
+      label: "needs VO",
+      color: "#0a1b2c",
+      tUs: 100_000,
+    });
   });
 });
