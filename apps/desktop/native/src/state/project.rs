@@ -64,13 +64,15 @@ impl Project {
         // z-order convention on the `tracks` field. Separated-audio rows insert
         // adjacent to their source video; on-screen order is derived from this
         // data order, not stored.
+        //
+        // `label` is left `None`: a reserved track's name is DERIVED from its
+        // `role` in the renderer (ADR 0042), so a literal written here could
+        // never be localized. Mirrors TS `blankProject` (model.ts).
         let mut a_roll = Track::new();
-        a_roll.label = Some("A roll".into());
         a_roll.removable = false;
         a_roll.role = Some(TrackRole::ARoll);
 
         let mut b_roll = Track::new();
-        b_roll.label = Some("B roll".into());
         b_roll.removable = false;
         b_roll.role = Some(TrackRole::BRoll);
 

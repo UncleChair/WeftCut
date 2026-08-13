@@ -33,18 +33,22 @@ pub struct Track {
     pub removable: bool,
     /// A/B-roll role stamp (`docs/data-model.md`). Role-stamped tracks are
     /// the only tracks visible in AB display mode; everything else is hidden.
-    /// Set on the two reserved tracks at project creation (A roll → ARoll, B
-    /// roll → BRoll). The `AudioA`/`AudioB` variants stamp the audio side of a
-    /// roll pair (see `TrackRole::paired`). `None` for every track imported
-    /// afterwards.
+    /// Set on the two reserved tracks at project creation (the A-roll track →
+    /// `ARoll`, B-roll → `BRoll`); a role-stamped track carries no stored
+    /// `label`, its name deriving from the role instead (ADR 0042). The
+    /// `AudioA`/`AudioB` variants stamp the audio side of a roll pair (see
+    /// `TrackRole::paired`). `None` for every track created afterwards.
     #[serde(default)]
     pub role: Option<TrackRole>,
-    /// Auto-prune flag for the "every import lands a fresh hidden track"
-    /// rule (`docs/data-model.md`). When `true`, the actor's mutation paths
-    /// delete this track once its `layers` becomes empty so the timeline
-    /// doesn't accumulate a graveyard. Set on tracks created by
-    /// `import_media`; left `false` for reserved tracks and explicit
-    /// user / agent adds.
+    /// `true` marks a track as NOT part of the reserved skeleton, which is
+    /// exactly the cleanup-eligibility flag (ADR 0042; `docs/data-model.md`):
+    /// the invariant is `transient == (role is None)` at every creation site,
+    /// so it is stamped on every role-less track — including one an agent adds
+    /// through `add_track`, not just an import-spawned one. Cleanup is one
+    /// rule: a track disappears when its last layer leaves it, gated on
+    /// `transient && !locked` and applied to the track an edit just emptied,
+    /// never a project-wide sweep. Absent in a pre-field `.vproj` → `false`,
+    /// so a legacy track is never swept.
     #[serde(default)]
     pub transient: bool,
     pub height_px: u16,
