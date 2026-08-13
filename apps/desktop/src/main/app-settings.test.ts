@@ -147,6 +147,31 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "timeline_follow_playhead": "yes" }' }).get().timeline_follow_playhead).toBe(true)
   })
 
+  it('markers_visible defaults to ON on a file written before the field existed', () => {
+    // Same additive-boolean trap as timeline_follow_playhead, and the reason
+    // cross-restart persistence is asserted HERE rather than by relaunching the
+    // app in e2e: an absent key must NOT read as false, or every existing
+    // install opens with the marker layer silenced it never chose to silence.
+    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().markers_visible).toBe(true)
+    expect(store().get().markers_visible).toBe(true)
+    expect(store().apply({ markers_visible: false }).markers_visible).toBe(false)
+    expect(store({ [PATH]: '{ "markers_visible": false }' }).get().markers_visible).toBe(false)
+    // Hand-edited / wrong-typed values degrade to the default.
+    expect(store({ [PATH]: '{ "markers_visible": "off" }' }).get().markers_visible).toBe(true)
+    expect(store({ [PATH]: '{ "markers_visible": 0 }' }).get().markers_visible).toBe(true)
+  })
+
+  // The restart half of the same criterion: the flip has to survive the file,
+  // not just the in-memory snapshot the patch returned.
+  it('markers_visible survives a restart through the file', () => {
+    const { fs } = memFs()
+    createAppSettingsStore({ fs, path: PATH, dir: DIR }).apply({ markers_visible: false })
+    const nextLaunch = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    expect(nextLaunch.get().markers_visible).toBe(false)
+    expect(nextLaunch.apply({ markers_visible: true }).markers_visible).toBe(true)
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().markers_visible).toBe(true)
+  })
+
   it('data_root round-trips, and empty/missing/corrupt degrades to unset', () => {
     // No file → unset (resolver substitutes the default).
     expect(store().get().data_root).toBeUndefined()

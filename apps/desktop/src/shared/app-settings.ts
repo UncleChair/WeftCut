@@ -62,6 +62,13 @@ export interface AppSettings {
   /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). Off means
   /// the view only ever moves because the user moved it.
   timeline_follow_playhead: boolean;
+  /// Paint the project's markers in the timeline ruler's lower half
+  /// (`renderer/timeline/TimelineRuler.tsx`). A canvas-noise control and nothing
+  /// more: `add_markers` can spray hundreds in one commit, and this silences
+  /// them. App-level because it is a view preference of this user, not project
+  /// content — and the search palette keeps indexing and navigating to markers
+  /// either way.
+  markers_visible: boolean;
   /// Absolute path to the user-configurable data root that owns all large,
   /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
   /// unset means "use the default" — the main-process resolver
@@ -96,6 +103,7 @@ export interface AppSettingsPatch {
   playback_resolution?: PlaybackResolution;
   media_pool_layout?: MediaPoolLayout;
   timeline_follow_playhead?: boolean;
+  markers_visible?: boolean;
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
   /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
@@ -121,6 +129,10 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // On, like every mainstream NLE ships it: a playhead that walks off-screen
   // mid-playback is the surprising state, not the followed one.
   timeline_follow_playhead: true,
+  // On, because it is what every NLE that has markers does, and because a
+  // feature nobody can see is indistinguishable from one that doesn't work:
+  // markers have been write-only until now.
+  markers_visible: true,
   data_root: undefined,
   language: undefined,
 };

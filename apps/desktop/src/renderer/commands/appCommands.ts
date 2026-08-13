@@ -1,6 +1,6 @@
 import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
-import { followPlayheadEnabled } from "../settings/appSettingsStore";
+import { followPlayheadEnabled, markersVisible } from "../settings/appSettingsStore";
 import { hasMarkedRange } from "../state/rangeStore";
 import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
@@ -48,6 +48,12 @@ export const MENU_ONLY_COMMAND_IDS = [
   // higher-frequency operations, and z-order rearrangement is not one
   // (ADR 0042).
   "moveToNewTrack",
+  // Marker display. No binding on purpose, and the reason is a reservation
+  // rather than a budget: `M` is add-marker-at-playhead in Premiere, Resolve and
+  // FCP, and marker authoring is the next slice. Being a no-binding command is
+  // also what makes the Quick Actions button resolvable and puts the toggle in
+  // the search palette for free.
+  "toggleMarkersVisible",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -65,6 +71,7 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   enterAgentMode: "actions.enter_agent_mode",
   createCheckpoint: "actions.create_checkpoint",
   moveToNewTrack: "actions.move_to_new_track",
+  toggleMarkersVisible: "actions.toggle_markers_visible",
 };
 
 /// "Move to a new track" is offered only when one fresh lane could actually hold
@@ -170,12 +177,22 @@ export function buildAppCommands(
     moveToNewTrack: canMoveSelectionToNewTrack,
   };
 
+  // …and check state, for the same reason and by the same rule as `checkedFor`
+  // above. A no-binding command can be a toggle just as easily as a
+  // binding-backed one, and one that cannot report its state makes the palette
+  // guess which way a selection would flip it.
+  const menuCheckedFor: Partial<Record<MenuOnlyCommandId, () => boolean>> = {
+    toggleMarkersVisible: () => markersVisible(),
+  };
+
   for (const id of MENU_ONLY_COMMAND_IDS) {
     const enabled = menuEnabledFor[id];
+    const checked = menuCheckedFor[id];
     defs.push({
       id,
       labelKey: MENU_ONLY_LABEL_KEYS[id],
       ...(enabled ? { enabled } : {}),
+      ...(checked ? { checked } : {}),
       run: menu[id],
     });
   }

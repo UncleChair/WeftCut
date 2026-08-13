@@ -82,6 +82,7 @@ import {
   displayMode,
   toggleDisplayMode,
   toggleFollowPlayhead,
+  toggleMarkersVisible,
 } from "./settings/appSettingsStore";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
@@ -757,6 +758,7 @@ export function App({ onCloseProject }: AppProps) {
           openCheckpointPrompt();
         },
         moveToNewTrack: handleMoveToNewTrack,
+        toggleMarkersVisible: () => void toggleMarkersVisible(),
       },
       {
         busy,

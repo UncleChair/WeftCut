@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "../i18n";
 
-const settings = vi.hoisted(() => ({ displayMode: "AbRoll" as "AbRoll" | "ShowAll" }));
+const settings = vi.hoisted(() => ({
+  displayMode: "AbRoll" as "AbRoll" | "ShowAll",
+  markersVisible: true,
+}));
 
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => settings.displayMode,
+  useMarkersVisible: () => settings.markersVisible,
 }));
 
 import { registerCommandProvider, type CommandDef } from "../commands/registry";
@@ -85,6 +89,7 @@ beforeEach(() => {
   runs.length = 0;
   bladeEnabled = true;
   settings.displayMode = "AbRoll";
+  settings.markersVisible = true;
   useToolStore.setState({ tool: "select" });
   unregister = provideCommands();
 });
@@ -347,6 +352,68 @@ describe("QuickActionsPanel", () => {
       render(<QuickActionsPanel geometry={geometry(400, 44)} />);
       expect(button("markIn").title).toContain("I");
       expect(button("markOut").title).toContain("O");
+    });
+  });
+
+  // The strip's first button whose command carries no binding. Registered
+  // separately so the authored-order case above keeps describing the buttons that
+  // were there before it.
+  describe("marker toggle", () => {
+    let unregisterMarkers: (() => void) | null = null;
+
+    beforeEach(() => {
+      unregisterMarkers = registerCommandProvider(() => [
+        {
+          id: "toggleMarkersVisible",
+          labelKey: "actions.toggle_markers_visible",
+          run: () => {
+            runs.push("toggleMarkersVisible");
+          },
+        },
+      ]);
+    });
+
+    afterEach(() => {
+      unregisterMarkers?.();
+      unregisterMarkers = null;
+    });
+
+    it("runs the command and reports pressed state while markers show", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("toggleMarkersVisible").getAttribute("aria-pressed")).toBe("true");
+      expect(button("toggleMarkersVisible").dataset.active).toBe("true");
+      fireEvent.click(button("toggleMarkersVisible"));
+      expect(runs).toEqual(["toggleMarkersVisible"]);
+    });
+
+    it("reads as unpressed once the markers are hidden", () => {
+      settings.markersVisible = false;
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("toggleMarkersVisible").getAttribute("aria-pressed")).toBe("false");
+      expect(button("toggleMarkersVisible").dataset.active).toBe("false");
+    });
+
+    it("states the current state and what a click will do, both ways", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("toggleMarkersVisible").getAttribute("aria-label")).toBe(
+        "Showing timeline markers. Click to hide.",
+      );
+      cleanup();
+      settings.markersVisible = false;
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("toggleMarkersVisible").getAttribute("aria-label")).toBe(
+        "Timeline markers hidden. Click to show.",
+      );
+    });
+
+    // `M` stays reserved for add-marker-at-playhead, so this command has no
+    // action id and the effective-binding lookup returns nothing for it. The
+    // tooltip must then be the hint alone — never a trailing empty "( )".
+    it("shows no accelerator in its tooltip", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("toggleMarkersVisible").title).toBe(
+        "Showing timeline markers. Click to hide.",
+      );
     });
   });
 

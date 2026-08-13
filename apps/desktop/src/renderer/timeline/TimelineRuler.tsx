@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { formatTimecode } from "../frames";
+import { useMarkersVisible } from "../settings/appSettingsStore";
 import { useProjectMarkers } from "../state/projectStore";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import {
@@ -236,6 +237,10 @@ export function TimelineRuler({
   // that paints them, so they are not the timeline's prop surface. The array
   // changes once per project mutation, not once per frame.
   const markers = useProjectMarkers();
+  // Read here for the same reason the markers themselves are: the ruler is the
+  // only surface the flag governs, so it is not the timeline's prop surface. The
+  // agent-mode mini timeline and the search palette answer to nothing here.
+  const markersVisible = useMarkersVisible();
   const { t } = useTranslation();
   const { ticks } = useMemo(
     () =>
@@ -256,18 +261,25 @@ export function TimelineRuler({
   // of `formatTimecode` calls through the wasm frame grid, and a project
   // carrying hundreds of markers would otherwise pay for all of them on every
   // render rather than once per window.
+  //
+  // The visibility flag short-circuits HERE rather than at the JSX: with the
+  // layer off there is no reason to run the window or format a single timecode,
+  // and a project an agent sprayed markers across is exactly when someone
+  // reaches for the toggle.
   const markerViews = useMemo(
     () =>
-      computeRulerMarkers({
-        markers,
-        pxPerSec,
-        scrollLeftPx,
-        viewportWidthPx,
-      }).map((view) => ({
-        view,
-        title: markerTitle(view, fpsNum, fpsDen, t),
-      })),
-    [markers, pxPerSec, scrollLeftPx, viewportWidthPx, fpsNum, fpsDen, t],
+      markersVisible
+        ? computeRulerMarkers({
+            markers,
+            pxPerSec,
+            scrollLeftPx,
+            viewportWidthPx,
+          }).map((view) => ({
+            view,
+            title: markerTitle(view, fpsNum, fpsDen, t),
+          }))
+        : [],
+    [markersVisible, markers, pxPerSec, scrollLeftPx, viewportWidthPx, fpsNum, fpsDen, t],
   );
 
   return (

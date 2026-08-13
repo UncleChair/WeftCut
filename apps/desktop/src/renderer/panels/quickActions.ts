@@ -16,6 +16,7 @@
 import {
   ArrowRightFromLine,
   ArrowRightToLine,
+  Bookmark,
   FoldVertical,
   MousePointer2,
   Scissors,
@@ -37,6 +38,12 @@ export interface QuickActionState {
   /// the strip can't render one, and subscribing to the positions would
   /// re-render the whole strip on every handle drag.
   hasRange: boolean;
+  /// Whether the timeline ruler paints markers (app-level pref). Exactly ONE
+  /// field for the whole marker toggle: deliberately NOT paired with a "does
+  /// this project have any markers" flag, which an earlier draft wanted for a
+  /// three-state hint. Without it the strip takes no project-store
+  /// subscription at all, and the hint stays two-state.
+  markersVisible: boolean;
 }
 
 export interface QuickActionItem {
@@ -113,6 +120,23 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.displayMode === "AbRoll"
             ? "timeline.mode_ab_hint"
             : "timeline.mode_all_hint",
+      },
+      {
+        id: "toggleMarkersVisible",
+        // One fixed glyph, unlike the display toggle above: that button switches
+        // between two MODES whose glyphs depict which one is current, whereas
+        // this is a plain on/off switch whose state the pressed styling and
+        // `aria-pressed` already carry. A crossed-out bookmark would restate at
+        // 16 px what the button already says.
+        icon: Bookmark,
+        // Pressed = the marker layer is painting.
+        active: (s) => s.markersVisible,
+        // Two states, so two keys — same "showing X, click for Y" split as the
+        // display toggle's pair.
+        hint: (s) =>
+          s.markersVisible
+            ? "quick_actions.markers_shown_hint"
+            : "quick_actions.markers_hidden_hint",
       },
     ],
   },

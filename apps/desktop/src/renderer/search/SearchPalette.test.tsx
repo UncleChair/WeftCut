@@ -196,6 +196,60 @@ describe("SearchPalette", () => {
     expect(marked).toBe("sunset");
   });
 
+  // The palette lists every registered command, including toggles that have no
+  // binding to be found by. A toggle that doesn't say which way it is set makes
+  // the user guess which way selecting it would flip it.
+  it("shows a checkable command's current state, and re-reads it live", async () => {
+    let on = true;
+    unregister?.();
+    unregister = registerCommandProvider(() => [
+      {
+        id: "toggleMarkersVisible",
+        labelKey: "actions.toggle_markers_visible",
+        checked: () => on,
+        run: runSpy,
+      },
+      // A non-checkable command in the same result set: it must claim no state
+      // at all rather than read as an off switch.
+      { id: "save", labelKey: "actions.save", actionId: "save", run: runSpy },
+    ]);
+    useSearchIndexStore.setState({
+      entries: buildEntries(
+        fixtureSummary(),
+        [
+          {
+            id: "toggleMarkersVisible",
+            label: "Toggle timeline markers",
+            enLabel: "Toggle timeline markers",
+          },
+          { id: "save", label: "Save", enLabel: "Save", actionId: "save" },
+        ],
+        LOCALE,
+      ),
+      version: 1,
+    });
+
+    const { unmount } = render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard("markers");
+    const row = () =>
+      screen.getAllByRole("option").find((el) => el.textContent?.includes("markers"))!;
+    expect(row().getAttribute("aria-checked")).toBe("true");
+    expect(row().querySelector(".search-row-check")).toBeTruthy();
+
+    on = false;
+    unmount();
+    render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard("markers");
+    expect(row().getAttribute("aria-checked")).toBe("false");
+    expect(row().querySelector(".search-row-check")).toBeNull();
+
+    await userEvent.keyboard("{Backspace>7/}save");
+    const saveRow = screen
+      .getAllByRole("option")
+      .find((el) => el.textContent?.includes("Save"))!;
+    expect(saveRow.hasAttribute("aria-checked")).toBe(false);
+  });
+
   it("keeps the keyboard cursor on its row when an earlier group expands", async () => {
     // 6 commands "Save 0".."Save 5" (command group truncates to 5 visible +
     // a "Show 1 more…" expander) and a marker "save point" so the query

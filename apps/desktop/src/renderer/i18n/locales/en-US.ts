@@ -182,6 +182,9 @@ const enUS = {
     display_ab: "Display: A/B Roll only",
     display_all: "Display: Show all tracks",
     follow_playhead: "Follow playhead",
+    // Immediately below Follow playhead: both are "how my timeline is
+    // displayed", and neither has a shortcut to be found by.
+    show_markers: "Show markers",
     close_active_panel: "Close Active Panel",
     reset_workspace: "Reset Workspace",
     workspaces_heading: "Workspaces",
@@ -199,6 +202,11 @@ const enUS = {
     // Shown on the disabled Clear button — says why it's disabled rather than
     // repeating the label the user can't act on.
     clear_range_empty: "No in/out points marked",
+    // The marker toggle's two-state hint: current state, then what a click does.
+    // Both halves matter — the pressed border says WHICH state, not what
+    // pressing again would get you.
+    markers_shown_hint: "Showing timeline markers. Click to hide.",
+    markers_hidden_hint: "Timeline markers hidden. Click to show.",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -286,6 +294,7 @@ const enUS = {
     focus_log_search: "Focus activity-log search",
     toggle_display_mode: "Toggle A/B Roll / Show All",
     toggle_follow_playhead: "Toggle follow playhead",
+    toggle_markers_visible: "Toggle timeline markers",
     zoom_timeline_in: "Zoom timeline in",
     zoom_timeline_out: "Zoom timeline out",
     focus_next_panel: "Focus next Panel",

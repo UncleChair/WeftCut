@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { getCommand, type CommandDef } from "../commands/registry";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
-import { useDisplayMode } from "../settings/appSettingsStore";
+import { useDisplayMode, useMarkersVisible } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
 import { useHasMarkedRange } from "../state/rangeStore";
 import {
@@ -210,6 +210,10 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
   // The boolean selector means marking or dragging in/out re-renders the strip
   // only when the range appears or disappears, not on every position change.
   const hasRange = useHasMarkedRange();
+  // The marker toggle's whole state. One app-settings selector and nothing else:
+  // the button says whether the layer is painting, never whether this project
+  // has anything to paint, so the strip takes no project-store subscription.
+  const markersVisible = useMarkersVisible();
   const orientation = useStripOrientation(geometry);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -218,7 +222,7 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
     orientation,
   );
 
-  const state: QuickActionState = { tool, displayMode, hasRange };
+  const state: QuickActionState = { tool, displayMode, hasRange, markersVisible };
 
   // Buttons resolve against the command registry, so a command whose provider
   // hasn't mounted yet is simply absent rather than a dead button.

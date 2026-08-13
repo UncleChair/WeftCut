@@ -32,6 +32,7 @@ function commandIds(): Set<string> {
       enterAgentMode: () => {},
       createCheckpoint: () => {},
       moveToNewTrack: () => {},
+      toggleMarkersVisible: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, canBlade: false, exportLocked: false },
   );
@@ -41,7 +42,13 @@ function commandIds(): Set<string> {
 /// Build a state, naming only the fields a case actually exercises — so adding
 /// a field to `QuickActionState` doesn't rewrite every literal in this file.
 function state(over: Partial<QuickActionState> = {}): QuickActionState {
-  return { tool: "select", displayMode: "AbRoll", hasRange: false, ...over };
+  return {
+    tool: "select",
+    displayMode: "AbRoll",
+    hasRange: false,
+    markersVisible: true,
+    ...over,
+  };
 }
 
 describe("quickActions catalogue", () => {
@@ -139,6 +146,53 @@ describe("quickActions catalogue", () => {
     );
     expect(item?.active?.(state({ displayMode: "AbRoll" }))).toBe(true);
     expect(item?.active?.(state({ displayMode: "ShowAll" }))).toBe(false);
+  });
+
+  // The marker toggle is the strip's second independent toggle, and the first
+  // button of any kind whose command has no keybinding — `M` stays reserved for
+  // add-marker-at-playhead. State is carried by the pressed attributes and the
+  // hint alone: one fixed bookmark glyph, no `iconFor`.
+  describe("marker visibility toggle", () => {
+    const item = (): QuickActionItem => {
+      const found = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+        (i) => i.id === "toggleMarkersVisible",
+      );
+      if (!found) throw new Error("no strip item for toggleMarkersVisible");
+      return found;
+    };
+
+    it("sits in the independent-toggles section, not with the momentary commands", () => {
+      const section = QUICK_ACTION_SECTIONS.find((s) =>
+        s.items.some((i) => i.id === "toggleMarkersVisible"),
+      );
+      expect(section?.id).toBe("toggles");
+      expect(section?.mode).toBe("independent");
+    });
+
+    it("reads as pressed while markers are showing", () => {
+      expect(item().active?.(state({ markersVisible: true }))).toBe(true);
+      expect(item().active?.(state({ markersVisible: false }))).toBe(false);
+    });
+
+    // Both halves of the tooltip's job: state the current state, and say what a
+    // click will do. Two states, two distinct keys — a single key could not.
+    it("returns a distinct hint for each state", () => {
+      const showing = item().hint?.(state({ markersVisible: true }));
+      const hidden = item().hint?.(state({ markersVisible: false }));
+      expect(showing).toBe("quick_actions.markers_shown_hint");
+      expect(hidden).toBe("quick_actions.markers_hidden_hint");
+      expect(showing).not.toBe(hidden);
+    });
+
+    // Decision 13: state is already carried by the pressed styling and
+    // `aria-pressed`, so a crossed-out glyph variant would restate at 16 px what
+    // the button already says. One glyph, both ways.
+    it("keeps one fixed glyph in both states", () => {
+      expect(item().iconFor).toBeUndefined();
+      expect(resolveIcon(item(), state({ markersVisible: true }))).toBe(
+        resolveIcon(item(), state({ markersVisible: false })),
+      );
+    });
   });
 
   // The Clear button spends most of its life disabled; the hint is the only

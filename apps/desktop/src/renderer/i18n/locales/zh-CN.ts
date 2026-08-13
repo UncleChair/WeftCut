@@ -184,6 +184,7 @@ const zhCN: Resources = {
     display_ab: "显示：仅 A/B 轨",
     display_all: "显示：全部轨道",
     follow_playhead: "跟随播放头",
+    show_markers: "显示标记",
     close_active_panel: "关闭活动面板",
     reset_workspace: "重置工作区",
     workspaces_heading: "工作区",
@@ -200,6 +201,9 @@ const zhCN: Resources = {
     range: "入出点",
     // 显示在禁用的"清除"按钮上——说明为什么点不了，而不是重复一个用不了的标签。
     clear_range_empty: "未设置入出点",
+    // 标记开关的两态提示：先说当前状态，再说点击后会发生什么。
+    markers_shown_hint: "当前显示时间线标记。点击隐藏。",
+    markers_hidden_hint: "已隐藏时间线标记。点击显示。",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -281,6 +285,7 @@ const zhCN: Resources = {
     focus_log_search: "聚焦活动日志搜索",
     toggle_display_mode: "切换 A/B 轨 / 显示全部",
     toggle_follow_playhead: "切换跟随播放头",
+    toggle_markers_visible: "切换时间线标记",
     zoom_timeline_in: "放大时间线",
     zoom_timeline_out: "缩小时间线",
     focus_next_panel: "聚焦下一个面板",

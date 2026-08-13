@@ -91,6 +91,14 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.timeline_follow_playhead === 'boolean'
           ? parsed.timeline_follow_playhead
           : d.timeline_follow_playhead,
+      // Same additive-boolean-defaulting-TRUE shape as timeline_follow_playhead:
+      // every app_settings.json written before markers were painted at all has
+      // no key here, and reading that as false would open the ruler silenced for
+      // exactly the users who never asked for silence.
+      markers_visible:
+        typeof parsed.markers_visible === 'boolean'
+          ? parsed.markers_visible
+          : d.markers_visible,
       // Optional path; a non-string, empty, or whitespace-only value degrades to
       // unset (undefined) so the resolver falls back to the default root. Kept
       // out of the on-disk file when unset (JSON.stringify drops undefined).
@@ -133,6 +141,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.playback_resolution !== undefined) current.playback_resolution = patch.playback_resolution
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
       if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead
+      if (patch.markers_visible !== undefined) current.markers_visible = patch.markers_visible
       // Empty / whitespace-only clears the field back to unset (→ default root);
       // any other value is stored verbatim. Storing undefined keeps it off disk.
       if (patch.data_root !== undefined) current.data_root = patch.data_root.trim() === '' ? undefined : patch.data_root

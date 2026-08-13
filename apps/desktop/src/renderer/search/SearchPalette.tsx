@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CheckIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Dialog, DialogOverlay, DialogPortal } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -287,14 +288,21 @@ function ResultRow({
   const p = r.entry.payload;
   const binding = useEffectiveBindings(p.type === "command" ? p.actionId : undefined);
   const accelerator = binding ? resolveAccelerator(binding) : "";
-  const disabled =
-    p.type === "command" && getCommand(p.commandId)?.enabled?.() === false;
+  const command = p.type === "command" ? getCommand(p.commandId) : undefined;
+  const disabled = command?.enabled?.() === false;
+  // Which way a checkable command is currently set — `undefined` for everything
+  // that isn't checkable, which is most rows. Read live, in this row's own
+  // render, for the same reason `enabled` is: the index is rebuilt on a debounce
+  // and would carry a stale answer. Without it the palette lists a toggle
+  // without saying which way selecting it would flip it.
+  const checked = command?.checked?.();
   const unused = p.type === "media" && p.usages.length === 0;
   return (
     <div
       role="option"
       tabIndex={-1}
       aria-selected={active}
+      {...(checked === undefined ? {} : { "aria-checked": checked })}
       aria-disabled={disabled || undefined}
       className={cn("search-row", active && "is-active", disabled && "is-disabled")}
       // Keep focus in the input (AppInput clear-button precedent).
@@ -314,6 +322,16 @@ function ResultRow({
       <span className="search-row-context">
         {unused ? t("search.unused") : r.entry.context}
       </span>
+      {/* Right-hand end, beside the accelerator, rather than a leading check
+          slot like the menus': most rows here are not commands, so a leading
+          slot would either indent every label in the palette or indent only the
+          checkable rows. `aria-checked` on the row above carries this to a
+          screen reader, hence aria-hidden. */}
+      {checked && (
+        <span className="search-row-check" aria-hidden="true">
+          <CheckIcon size={12} />
+        </span>
+      )}
       {accelerator && <kbd className="search-row-kbd">{accelerator}</kbd>}
     </div>
   );

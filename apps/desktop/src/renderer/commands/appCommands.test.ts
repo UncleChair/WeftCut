@@ -4,6 +4,7 @@ import { ACTION_DEFS } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts";
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 import { setTool } from "../state/toolStore";
 import en from "../i18n/locales/en-US";
@@ -30,6 +31,7 @@ const menu = {
   openAgentPanel: noop, enterAgentMode: noop,
   createCheckpoint: noop,
   moveToNewTrack: noop,
+  toggleMarkersVisible: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -59,9 +61,36 @@ describe("buildAppCommands", () => {
       "enterAgentMode",
       "createCheckpoint",
       "moveToNewTrack",
+      "toggleMarkersVisible",
     ]) {
       expect(ids).toContain(id);
     }
+  });
+
+  // A no-binding command can be a toggle too, and one that can't report its
+  // state leaves the palette guessing which way a selection would flip it. The
+  // read is live for the same reason the tool checkmarks are: nothing rebuilds
+  // the catalogue when an app setting changes.
+  it("lets a no-binding command report check state, read live", () => {
+    // Built BEFORE the flip, like the tool-checkmark case: nothing rebuilds the
+    // catalogue when an app setting changes, so a build-time snapshot would
+    // report "showing" forever.
+    const defs = buildAppCommands(handlers, menu, flags);
+    const markers = defs.find((d) => d.id === "toggleMarkersVisible")!;
+    expect(markers.actionId).toBeUndefined();
+    expect(markers.checked!()).toBe(true);
+    try {
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: false },
+      }));
+      expect(markers.checked!()).toBe(false);
+    } finally {
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: true },
+      }));
+    }
+    // A no-binding command that is not checkable stays that way.
+    expect(defs.find((d) => d.id === "createCheckpoint")!.checked).toBeUndefined();
   });
 
   it("lists Settings once, from the catalogue rather than as a menu-only entry", () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "../i18n"; // real en-US bundle, so a tooltip is the shipped string
 import type { MarkerSummary, ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import {
   setTimelineScrollLeftPx,
   timelineScrollLeftPx,
@@ -421,6 +422,50 @@ describe("markers", () => {
     expect(marks(container)).toHaveLength(1);
     act(() => seed([]));
     expect(marks(container)).toHaveLength(0);
+  });
+
+  // The toggle's whole job, from the ruler's side. Not "the marks are hidden" —
+  // NOTHING renders, layer included, for the same node-count-gate reason the
+  // marker-less project renders nothing. And it happens in place: the flip is an
+  // app-settings write, so a project reload must not be part of the story.
+  describe("visibility setting", () => {
+    const setVisible = (visible: boolean) =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: visible },
+      }));
+
+    afterEach(() => setVisible(true));
+
+    it("paints no markers at all while the setting is off", () => {
+      setVisible(false);
+      seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
+      const { container } = renderRuler();
+      expect(marks(container)).toHaveLength(0);
+      expect(layer(container)).toBeNull();
+    });
+
+    it("brings them back on the same mount, with no project reload", () => {
+      seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
+      const { container } = renderRuler();
+      expect(marks(container)).toHaveLength(2);
+      act(() => setVisible(false));
+      expect(marks(container)).toHaveLength(0);
+      act(() => setVisible(true));
+      expect(marks(container)).toHaveLength(2);
+    });
+
+    // The in/out caps are the other permanent mark in the strip and answer to a
+    // different switch — hiding markers must not take them with it.
+    it("leaves the in/out caps alone", () => {
+      setVisible(false);
+      act(() => useRangeStore.setState({ inUs: 1_000_000, outUs: 2_000_000 }));
+      seed([point()]);
+      const { container } = renderRuler();
+      expect(marks(container)).toHaveLength(0);
+      expect(
+        container.querySelector('[data-testid="timeline-range-cap-in"]'),
+      ).not.toBeNull();
+    });
   });
 });
 

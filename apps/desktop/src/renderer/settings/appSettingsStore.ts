@@ -51,6 +51,7 @@ const FALLBACK: AppSettings = {
   playback_resolution: "full",
   media_pool_layout: "large",
   timeline_follow_playhead: true,
+  markers_visible: true,
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -98,6 +99,11 @@ export const useMediaPoolLayout = (): AppSettings["media_pool_layout"] =>
 /// Whether the timeline pages its view to keep the playhead visible.
 export const useFollowPlayheadEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
+/// Whether the timeline ruler paints the project's markers. Governs the normal
+/// timeline and nothing else — the agent-mode mini timeline keeps painting them
+/// and the search palette keeps finding them, whichever way this reads.
+export const useMarkersVisible = (): boolean =>
+  useAppSettingsStore((s) => s.settings.markers_visible);
 /// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
 /// (the renderer auto-detects the OS language). i18next remains the live
 /// language source; this is the persisted user choice.
@@ -132,11 +138,22 @@ export async function toggleFollowPlayhead(): Promise<AppSettings> {
   return setAppSettings({ timeline_follow_playhead: !current });
 }
 
+export async function toggleMarkersVisible(): Promise<AppSettings> {
+  const current = useAppSettingsStore.getState().settings.markers_visible;
+  return setAppSettings({ markers_visible: !current });
+}
+
 /// Imperative read for the command palette's checkmark, which is evaluated
 /// inside `listCommands()` rather than during a render — same reason
 /// `appCommands.ts` reads `toolStore` directly.
 export function followPlayheadEnabled(): boolean {
   return useAppSettingsStore.getState().settings.timeline_follow_playhead;
+}
+
+/// Same imperative-read reason as `followPlayheadEnabled`: the marker toggle's
+/// palette checkmark is evaluated inside `listCommands()`, not during a render.
+export function markersVisible(): boolean {
+  return useAppSettingsStore.getState().settings.markers_visible;
 }
 
 /// Imperative read for command handlers that have to decide whether a freshly

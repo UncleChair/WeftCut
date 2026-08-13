@@ -45,6 +45,9 @@
   font-size: var(--font-size-micro); padding: 1px 6px; border-radius: 999px;
   background: color-mix(in srgb, var(--destructive) 20%, transparent); color: var(--color-red-300);
 }
+/* "This toggle is currently on". Same blue as the menus' check slot, so one
+   glyph means one thing across the menu bar and the palette. */
+.search-row-check { display: inline-flex; align-items: center; color: var(--color-blue-300); }
 .search-row-kbd { font-size: var(--font-size-micro); opacity: 0.6; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 1px 5px; }
 .search-show-more {
   width: 100%; padding: 4px 12px; border: 0; background: none;

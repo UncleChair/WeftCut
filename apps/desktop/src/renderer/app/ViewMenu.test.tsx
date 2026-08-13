@@ -24,11 +24,18 @@ vi.mock("react-i18next", async (importOriginal) => ({
   }),
 }));
 
+const prefs = vi.hoisted(() => ({
+  markersVisible: true,
+  toggleMarkersVisible: vi.fn(),
+}));
+
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => "AbRoll",
   toggleDisplayMode: vi.fn(),
   useFollowPlayheadEnabled: () => true,
   toggleFollowPlayhead: vi.fn(),
+  useMarkersVisible: () => prefs.markersVisible,
+  toggleMarkersVisible: prefs.toggleMarkersVisible,
 }));
 
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
@@ -180,6 +187,61 @@ describe("ViewMenu workspace controls", () => {
     // Save As stays available on the built-in Workspace.
     expect(
       (await screen.findByText("Save as New Workspace…")).closest('[aria-disabled="true"]'),
+    ).toBeNull();
+  });
+});
+
+// The marker toggle's third entry point. It sits with the other timeline view
+// preferences and carries no accelerator, because `M` stays reserved for
+// add-marker-at-playhead.
+describe("ViewMenu marker display", () => {
+  const renderMenu = () =>
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={null}
+        onEnterAgentMode={vi.fn()}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+
+  afterEach(() => {
+    prefs.markersVisible = true;
+    prefs.toggleMarkersVisible.mockClear();
+  });
+
+  it("sits immediately below Follow playhead", async () => {
+    renderMenu();
+    openView();
+    await screen.findByText("Show markers");
+    // Read off the label spans, not the rows: a row's textContent also carries
+    // its accelerator, and Follow playhead has one (`Shift+F`) where this
+    // deliberately does not.
+    const labels = screen
+      .getAllByRole("menuitem")
+      .map((item) => item.querySelector(".app-menu-item-label")?.textContent ?? "");
+    expect(labels.indexOf("Show markers")).toBe(labels.indexOf("Follow playhead") + 1);
+    expect(labels).toContain("Follow playhead");
+  });
+
+  it("flips the setting and reflects it, both ways", async () => {
+    renderMenu();
+    openView();
+    const item = await screen.findByText("Show markers");
+    // Base UI puts the check glyph in the item's own leading slot.
+    expect(
+      item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
+    ).not.toBeNull();
+    fireEvent.click(item);
+    expect(prefs.toggleMarkersVisible).toHaveBeenCalledOnce();
+
+    cleanup();
+    prefs.markersVisible = false;
+    renderMenu();
+    openView();
+    const off = await screen.findByText("Show markers");
+    expect(
+      off.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
   });
 });

@@ -4,8 +4,10 @@ import { Menu, MenuHeading, MenuItem, MenuSeparator, SubMenu } from "../menu/Men
 import {
   toggleDisplayMode,
   toggleFollowPlayhead,
+  toggleMarkersVisible,
   useDisplayMode,
   useFollowPlayheadEnabled,
+  useMarkersVisible,
 } from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
@@ -38,9 +40,10 @@ export interface ViewMenuWorkspaces {
 /// The View menu — Panels (open/focus/close) flat at the top, Workspace
 /// profiles + management under the Workspaces submenu (low-frequency ops stay
 /// one level down), then the A/B-roll vs Show-All track-display radio, the
-/// follow-playhead toggle and the Agent-mode entry. Both settings are the ones
-/// the inline pill + `T` and `Shift+F` drive; the checkmarks read the app-pref
-/// store so they stay in sync however the value changed.
+/// follow-playhead and marker-display toggles, and the Agent-mode entry. Every
+/// checkmark here reads the app-pref store, so it stays in sync however the
+/// value changed — whether from `T` / `Shift+F`, the Quick Actions strip, or the
+/// search palette.
 interface ViewMenuProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
@@ -60,6 +63,7 @@ export function ViewMenu({
   const { t } = useTranslation();
   const mode = useDisplayMode();
   const followPlayhead = useFollowPlayheadEnabled();
+  const markersVisible = useMarkersVisible();
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
   // rebuild so recovery is never dead.
@@ -173,6 +177,14 @@ export function ViewMenu({
         })}
         checked={followPlayhead}
         onSelect={() => void toggleFollowPlayhead()}
+      />
+      {/* Directly below Follow playhead, and with no `actionId`: the marker
+          toggle has no binding on purpose (`M` is reserved for
+          add-marker-at-playhead), so there is no accelerator to right-align. */}
+      <MenuItem
+        label={t("view.show_markers", { defaultValue: "Show markers" })}
+        checked={markersVisible}
+        onSelect={() => void toggleMarkersVisible()}
       />
       <MenuSeparator />
       <MenuItem
