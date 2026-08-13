@@ -837,6 +837,19 @@ const zhCN: Resources = {
     speech_exact_words: "精确词级时间戳",
     speech_exact_words_hint:
       "该引擎自身输出逐词精确时间戳；云端 Whisper 只能按字幕时间段近似推算。",
+    content_whisper_runtime: "whisper.cpp 引擎（v1.9.1）",
+    content_whisper_model_base: "Whisper Base 模型（多语言）",
+    content_prereq_msvc14:
+      "需要 Microsoft Visual C++ 2015–2022 x64 运行库（通常已随系统安装）。",
+    content_download_pair: "下载引擎与模型",
+    content_redownload: "重新下载",
+    content_retry: "重试下载",
+    content_downloading: "正在下载 {{label}}…",
+    content_cancel: "取消",
+    content_managed: "引擎与模型已下载，由 WeftCut 管理。",
+    content_open_folder: "打开文件夹",
+    content_remove: "移除下载",
+    content_remove_confirm: "删除已下载的文件？",
     motifs_heading: "Motifs",
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:

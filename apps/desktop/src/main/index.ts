@@ -4,7 +4,7 @@ import os from 'node:os'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/capture.js'
@@ -36,6 +36,13 @@ import {
   type MigrationFs,
 } from './dataRootMigration.js'
 import type { DataRootMigrateResult, DataRootProgress } from '../shared/data-root.js'
+import { randomUUID } from 'node:crypto'
+import { CONTENT_CATALOG } from '../shared/content-catalog.js'
+import {
+  CONTENT_EVENTS, contentPlatformKey,
+  type ContentDownloadProgress, type ContentDownloadResult, type ContentListRow,
+} from '../shared/content-download.js'
+import { downloadItem, itemStatus, speechAutofillPlan, sweepPartials, type ContentDeps } from './contentDownload.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -1300,6 +1307,200 @@ app.whenReady().then(async () => {
   // prompt rather than a nag on every launch. Non-destructive.
   ipcMain.handle('dataRoot:dismissCleanup', () => {
     clearMarker(migrationMarkerPath, migrationFs)
+  })
+
+  // content:* — app-managed content downloads (ADR 0039; spec under
+  // .scratch/app-managed-content/). A dedicated main-owned family like
+  // dataRoot:* above. The lifecycle itself is pure + DI (contentDownload.ts);
+  // these handlers bind it to node:fs, fflate, and Electron net.fetch —
+  // Chromium's network stack, which honors the system proxy configuration
+  // (incl. SOCKS) that the ureq-based sidecar downloader documented in
+  // docs/setup.md cannot.
+  const contentDeps: ContentDeps = {
+    fs: {
+      mkdirp: (d) => { fs.mkdirSync(d, { recursive: true }) },
+      rm: (p) => { fs.rmSync(p, { recursive: true, force: true }) },
+      rename: (from, to) => { fs.renameSync(from, to) },
+      statBytes: (p) => {
+        try { const s = fs.statSync(p); return s.isFile() ? s.size : null } catch { return null }
+      },
+      writeText: (p, t) => { fs.writeFileSync(p, t, 'utf8') },
+      writeBytes: (p, data) => { fs.writeFileSync(p, data) },
+      openWrite: (p) => {
+        const fd = fs.openSync(p, 'w')
+        return {
+          write: (c: Uint8Array) => { fs.writeSync(fd, c) },
+          close: () => { fs.closeSync(fd) },
+        }
+      },
+    },
+    http: {
+      get: async (url, signal) => {
+        const res = await net.fetch(url, { signal })
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${url}`)
+        const reader = res.body.getReader()
+        // Manual reader loop instead of relying on ReadableStream's async
+        // iterability — Electron's fetch Response body is a web stream whose
+        // @@asyncIterator support varies by version; getReader() does not.
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (;;) {
+              const { done, value } = await reader.read()
+              if (done) return
+              yield value
+            }
+          },
+        }
+      },
+    },
+    readZipEntries: async (archivePath) => {
+      const { unzipSync } = await import('fflate')
+      const raw = fs.readFileSync(archivePath)
+      const entries = unzipSync(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength))
+      return Object.entries(entries).map(([p, data]) => ({ path: p, data }))
+    },
+    join: path.join,
+    downloadsDir: dataRoot.downloadsDir,
+    partialDir: path.join(dataRoot.cacheDir, 'content-partial'),
+    now: () => new Date().toISOString(),
+  }
+  // Crash leftovers from a previous run die here, before any new stream opens.
+  sweepPartials(contentDeps)
+
+  const contentPlatform = contentPlatformKey(process.platform, process.arch)
+  // One in-flight download per item; a second content:download for the same id
+  // is rejected, not queued. contentProgressById backs the `downloading` rows
+  // in content:list so a window that (re)mounts mid-stream still sees them.
+  const contentInflight = new Map<string, AbortController>()
+  const contentProgressById = new Map<string, ContentDownloadProgress>()
+
+  // Fill blank speech-config fields from installed managed content — the ADR
+  // 0039 consumer. The only-if-blank / whole-pair rules live in the pure
+  // speechAutofillPlan (unit-tested); this closure just applies the plan and
+  // pushes the store's SANITIZED entry to Rust, mirroring the
+  // settings_set_local_backend intercept above.
+  const autofillSpeechFromContent = (): void => {
+    const plan = speechAutofillPlan(
+      CONTENT_CATALOG,
+      (item) => itemStatus(contentDeps, item, contentPlatform),
+      speechConfig.get().local,
+    )
+    for (const { backend: tag, config } of plan) {
+      const next = speechConfig.apply({ local: { backend: tag, config } })
+      const entry = next.local[tag]
+      if (entry) {
+        backend!.setLocalBackend(
+          tag, entry.binary, entry.model,
+          entry.device ?? null, entry.threads ?? null, entry.tokens ?? null,
+        )
+      }
+    }
+  }
+  // Content installed in an earlier run but never wired (e.g. the app quit
+  // between install and apply) heals on the next boot.
+  autofillSpeechFromContent()
+
+  ipcMain.handle('content:list', (): ContentListRow[] =>
+    CONTENT_CATALOG.map((item) => {
+      const live = contentProgressById.get(item.id)
+      if (live && live.phase !== 'done' && live.phase !== 'error') {
+        return {
+          item,
+          status: {
+            state: 'downloading',
+            receivedBytes: live.receivedBytes,
+            totalBytes: live.totalBytes,
+          },
+        }
+      }
+      return { item, status: itemStatus(contentDeps, item, contentPlatform) }
+    }))
+
+  ipcMain.handle('content:download', async (_e, { id }: { id: string }): Promise<ContentDownloadResult> => {
+    const item = CONTENT_CATALOG.find((i) => i.id === id)
+    if (!item) return { ok: false, error: `unknown content id: ${id}` }
+    if (contentInflight.has(id)) return { ok: false, error: 'already downloading' }
+    const controller = new AbortController()
+    contentInflight.set(id, controller)
+
+    // One LogBus op per download (Started → throttled Progress → Ok/Err under
+    // one op_id, so the status bar collapses it to one row). Emitted through
+    // backend.invoke directly — the ts-actor-host emitLog seam omits
+    // op_id/op_state — and swallowed on failure: pre-workspace there IS no
+    // bus (docs/status-log.md), and a log failure must never abort a download.
+    const opId = randomUUID()
+    const emitOp = (
+      opState: { state: 'Started' | 'Ok' | 'Err' } | { state: 'Progress'; progress: number },
+      message: string,
+      level: 'info' | 'error' = 'info',
+    ): void => {
+      try {
+        void backend!.invoke('log_emit', JSON.stringify({
+          input: {
+            level,
+            category: { kind: 'Job' },
+            source: { kind: 'User' },
+            message,
+            op_id: opId,
+            op_state: opState,
+          },
+        })).catch(() => {})
+      } catch { /* no bus yet */ }
+    }
+
+    let lastEvt = 0
+    let lastLog = 0
+    const onProgress = (p: ContentDownloadProgress): void => {
+      contentProgressById.set(id, p)
+      const nowMs = Date.now()
+      // Phase transitions always reach the renderer; per-chunk download ticks
+      // are throttled to ~4 Hz (they can arrive thousands per second).
+      if (p.phase !== 'download' || nowMs - lastEvt >= 250) {
+        lastEvt = nowMs
+        emitToRenderer(CONTENT_EVENTS.progress, p)
+      }
+      if (p.phase === 'download' && p.totalBytes > 0 && nowMs - lastLog >= 1000) {
+        lastLog = nowMs
+        emitOp({ state: 'Progress', progress: p.receivedBytes / p.totalBytes }, `Downloading ${item.id}`)
+      }
+    }
+
+    emitOp({ state: 'Started' }, `Downloading ${item.id}`)
+    try {
+      const result = await downloadItem(contentDeps, item, contentPlatform, onProgress, controller.signal)
+      if (result.ok) {
+        emitOp({ state: 'Ok' }, `Downloaded ${item.id}`)
+        autofillSpeechFromContent()
+      } else if ('cancelled' in result) {
+        // A user cancel closes the op cleanly — it is not an error.
+        emitOp({ state: 'Ok' }, `Cancelled download of ${item.id}`)
+      } else {
+        emitOp({ state: 'Err' }, `Download failed for ${item.id}: ${result.error}`, 'error')
+      }
+      return result
+    } finally {
+      contentInflight.delete(id)
+      contentProgressById.delete(id)
+    }
+  })
+
+  ipcMain.handle('content:cancel', (_e, { id }: { id: string }) => {
+    contentInflight.get(id)?.abort()
+  })
+
+  // Remove every installed version of an item. Files only — speech config is
+  // deliberately untouched: availability is file-existence-based, so the
+  // Settings row degrades to NeedsBinary/NeedsModel truthfully on its own.
+  ipcMain.handle('content:remove', (_e, { id }: { id: string }) => {
+    const item = CONTENT_CATALOG.find((i) => i.id === id)
+    if (!item) throw new Error(`unknown content id: ${id}`)
+    if (contentInflight.has(id)) throw new Error('download in progress')
+    contentDeps.fs.rm(path.join(dataRoot.downloadsDir, item.id))
+  })
+
+  ipcMain.handle('content:openFolder', async () => {
+    const err = await openPathRobust(dataRoot.downloadsDir)
+    if (err) throw new Error(err)
   })
 
   // fs:* — direct main-process filesystem access for the renderer (write/append/

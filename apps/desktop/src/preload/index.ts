@@ -30,6 +30,10 @@ import type {
   DataRootMigrateResult,
   DataRootPendingCleanup,
 } from '../shared/data-root'
+import type {
+  ContentDownloadResult,
+  ContentListRow,
+} from '../shared/content-download'
 import type { MenuProjection } from '../shared/menu'
 
 type Listener = (payload: unknown) => void
@@ -288,6 +292,18 @@ const api: WeftcutApi = {
       ipcRenderer.invoke('dataRoot:pendingCleanup') as Promise<DataRootPendingCleanup | null>,
     deleteOld: (): Promise<void> => ipcRenderer.invoke('dataRoot:deleteOld') as Promise<void>,
     dismissCleanup: (): Promise<void> => ipcRenderer.invoke('dataRoot:dismissCleanup') as Promise<void>,
+  },
+
+  // App-managed content downloads (ADR 0039). Plain main-process actions; the
+  // running download's progress arrives out-of-band on `evt:content:progress`
+  // (subscribe via the generic `on()` above), not as a return value.
+  content: {
+    list: (): Promise<ContentListRow[]> => ipcRenderer.invoke('content:list') as Promise<ContentListRow[]>,
+    download: (id: string): Promise<ContentDownloadResult> =>
+      ipcRenderer.invoke('content:download', { id }) as Promise<ContentDownloadResult>,
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke('content:cancel', { id }) as Promise<void>,
+    remove: (id: string): Promise<void> => ipcRenderer.invoke('content:remove', { id }) as Promise<void>,
+    openFolder: (): Promise<void> => ipcRenderer.invoke('content:openFolder') as Promise<void>,
   },
 }
 

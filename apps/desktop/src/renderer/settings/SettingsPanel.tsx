@@ -43,6 +43,7 @@ import { KeybindingPanel } from "./KeybindingPanel";
 import { AgentSection } from "./AgentSection";
 import { PreviewSection } from "./PreviewSection";
 import { speechEngineOptions } from "./speechEngineOptions";
+import { SpeechManagedContent } from "./SpeechManagedContent";
 import {
   setAppSettings,
   usePrebakeMotifsEnabled,
@@ -1693,6 +1694,15 @@ function LocalBackendRow({
             : `✗ ${testResult.message}`}
         </p>
       )}
+      {/* ADR 0039: app-managed engine + model downloads. Renders nothing for
+          backends without catalog coverage on this platform; installed paths
+          land in the pickers above via the main-process auto-fill → onChanged
+          re-fetch (this row's useEffect resync), never via these edit buffers. */}
+      <SpeechManagedContent
+        backend={info.backend}
+        onChanged={onChanged}
+        onError={onError}
+      />
     </div>
   );
 }

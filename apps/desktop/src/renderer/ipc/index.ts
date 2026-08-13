@@ -2010,3 +2010,54 @@ export async function dataRootDeleteOld(): Promise<void> {
 export async function dataRootDismissCleanup(): Promise<void> {
   return window.api.dataRoot.dismissCleanup();
 }
+
+// ============================================================
+// App-managed content downloads (ADR 0039)
+// ============================================================
+//
+// Main-process actions (not backend/Rust commands) — thin wrappers over
+// window.api.content.* (see src/preload/index.ts). Types are single-sourced in
+// src/shared/content-download.ts and re-exported here for call sites. The
+// running download's progress arrives on the `content:progress` event
+// (CONTENT_EVENTS.progress) — subscribe via the bridge event surface.
+
+import type {
+  ContentDownloadResult,
+  ContentListRow,
+} from "../../shared/content-download";
+export type {
+  ContentDownloadProgress,
+  ContentDownloadResult,
+  ContentItem,
+  ContentItemStatus,
+  ContentListRow,
+} from "../../shared/content-download";
+export { CONTENT_EVENTS } from "../../shared/content-download";
+
+/// The whole catalog merged with local install state, one row per item.
+export async function contentList(): Promise<ContentListRow[]> {
+  return window.api.content.list();
+}
+
+/// Start one item's download; resolves with the terminal result (cancellation
+/// is its own quiet branch). Progress arrives on `content:progress`.
+export async function contentDownload(id: string): Promise<ContentDownloadResult> {
+  return window.api.content.download(id);
+}
+
+/// Abort an in-flight download; the matching contentDownload() call resolves
+/// `{ ok: false, cancelled: true }` and the partial file is deleted.
+export async function contentCancel(id: string): Promise<void> {
+  return window.api.content.cancel(id);
+}
+
+/// Delete every installed version of an item (files only — speech config is
+/// left alone; availability degrades truthfully on its own).
+export async function contentRemove(id: string): Promise<void> {
+  return window.api.content.remove(id);
+}
+
+/// Open the downloads bucket of the data root in the OS file manager.
+export async function contentOpenFolder(): Promise<void> {
+  return window.api.content.openFolder();
+}

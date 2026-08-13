@@ -885,6 +885,19 @@ const enUS = {
     speech_exact_words: "exact word timing",
     speech_exact_words_hint:
       "This engine reports precise per-word timestamps itself; cloud Whisper approximates them from subtitle cue spans.",
+    content_whisper_runtime: "whisper.cpp engine (v1.9.1)",
+    content_whisper_model_base: "Whisper Base model (multilingual)",
+    content_prereq_msvc14:
+      "Requires the Microsoft Visual C++ 2015–2022 x64 runtime (usually already installed).",
+    content_download_pair: "Download engine & model",
+    content_redownload: "Re-download",
+    content_retry: "Retry download",
+    content_downloading: "Downloading {{label}}…",
+    content_cancel: "Cancel",
+    content_managed: "Engine & model downloaded and managed by WeftCut.",
+    content_open_folder: "Open folder",
+    content_remove: "Remove download",
+    content_remove_confirm: "Delete the downloaded files?",
     motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:

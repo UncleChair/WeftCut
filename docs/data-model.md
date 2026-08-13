@@ -1005,8 +1005,18 @@ owns:
 <dataRoot>/            default: <userData>/data  (any absolute path via setting)
 ├── motifs/            user-authored Motifs (see motifs.md) — user content, not regenerable
 ├── cache/             the backend's app-level (cross-project) cache — regenerable
-└── downloads/         reserved for future downloaded assets (e.g. a runtime ffmpeg)
+└── downloads/         app-managed downloaded content — user content, not regenerable
 ```
+
+`<dataRoot>/downloads/` holds content the app downloads on the user's behalf
+(ADR 0039; today: the whisper.cpp engine + Base model on Windows). Layout is
+`downloads/<itemId>/<version>/…` with a `manifest.json` written last as the
+install-complete marker; the catalog of downloadable items (pinned URLs +
+SHA-256 + byte counts) is `src/shared/content-catalog.ts`, the lifecycle is
+`src/main/contentDownload.ts` (pure, fs/http-injected), and the renderer
+drives it over the `content:*` IPC family. In-flight partial files live under
+`cache/content-partial/` — regenerable by definition, so the migration below
+never copies a torn download.
 
 `<dataRoot>/cache/` is the **app-level** backend cache (the second argument to
 the `Backend` constructor). Do not confuse it with the per-project
