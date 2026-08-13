@@ -50,9 +50,9 @@ export const MENU_ONLY_COMMAND_IDS = [
   "moveToNewTrack",
   // Marker display. No binding on purpose, and the reason is a reservation
   // rather than a budget: `M` is add-marker-at-playhead in Premiere, Resolve and
-  // FCP, and marker authoring is the next slice. Being a no-binding command is
-  // also what makes the Quick Actions button resolvable and puts the toggle in
-  // the search palette for free.
+  // FCP, so it stays reserved for marker authoring. Being a no-binding command
+  // is also what makes the Quick Actions button resolvable and puts the toggle
+  // in the search palette for free.
   "toggleMarkersVisible",
 ] as const;
 
@@ -177,10 +177,8 @@ export function buildAppCommands(
     moveToNewTrack: canMoveSelectionToNewTrack,
   };
 
-  // …and check state, for the same reason and by the same rule as `checkedFor`
-  // above. A no-binding command can be a toggle just as easily as a
-  // binding-backed one, and one that cannot report its state makes the palette
-  // guess which way a selection would flip it.
+  // …and check state, same shape and same rule as `checkedFor` above: a
+  // no-binding command can be a toggle just as easily as a binding-backed one.
   const menuCheckedFor: Partial<Record<MenuOnlyCommandId, () => boolean>> = {
     toggleMarkersVisible: () => markersVisible(),
   };

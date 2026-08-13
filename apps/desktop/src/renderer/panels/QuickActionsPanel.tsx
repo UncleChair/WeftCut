@@ -210,9 +210,6 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
   // The boolean selector means marking or dragging in/out re-renders the strip
   // only when the range appears or disappears, not on every position change.
   const hasRange = useHasMarkedRange();
-  // The marker toggle's whole state. One app-settings selector and nothing else:
-  // the button says whether the layer is painting, never whether this project
-  // has anything to paint, so the strip takes no project-store subscription.
   const markersVisible = useMarkersVisible();
   const orientation = useStripOrientation(geometry);
   const scrollRef = useRef<HTMLDivElement | null>(null);

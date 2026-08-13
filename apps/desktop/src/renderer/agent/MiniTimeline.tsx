@@ -180,7 +180,10 @@ export function MiniTimeline({
                     }
                   : { left: `${left}%`, background: m.color_hint }
               }
-              title={m.label || t("kinds.marker")}
+              // Same empty-label fallback as the ruler's `markerTitle`, trim
+              // included: a whitespace-only label must read as the entity noun
+              // on both surfaces, not blank on one of them.
+              title={m.label.trim() || t("kinds.marker")}
             />
           );
         })}

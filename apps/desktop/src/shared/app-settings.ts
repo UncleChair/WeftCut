@@ -66,8 +66,8 @@ export interface AppSettings {
   /// (`renderer/timeline/TimelineRuler.tsx`). A canvas-noise control and nothing
   /// more: `add_markers` can spray hundreds in one commit, and this silences
   /// them. App-level because it is a view preference of this user, not project
-  /// content — and the search palette keeps indexing and navigating to markers
-  /// either way.
+  /// content — so the markers themselves are untouched, and neither the
+  /// agent-mode mini timeline nor the search palette answers to it.
   markers_visible: boolean;
   /// Absolute path to the user-configurable data root that owns all large,
   /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
@@ -129,9 +129,8 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // On, like every mainstream NLE ships it: a playhead that walks off-screen
   // mid-playback is the surprising state, not the followed one.
   timeline_follow_playhead: true,
-  // On, because it is what every NLE that has markers does, and because a
-  // feature nobody can see is indistinguishable from one that doesn't work:
-  // markers have been write-only until now.
+  // On, like every NLE that has markers ships it: a mark nobody can see is
+  // indistinguishable from one that was never written.
   markers_visible: true,
   data_root: undefined,
   language: undefined,

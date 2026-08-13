@@ -72,9 +72,8 @@ describe("buildAppCommands", () => {
   // read is live for the same reason the tool checkmarks are: nothing rebuilds
   // the catalogue when an app setting changes.
   it("lets a no-binding command report check state, read live", () => {
-    // Built BEFORE the flip, like the tool-checkmark case: nothing rebuilds the
-    // catalogue when an app setting changes, so a build-time snapshot would
-    // report "showing" forever.
+    // Built BEFORE the flip, like the tool-checkmark case: a build-time snapshot
+    // would report "showing" forever.
     const defs = buildAppCommands(handlers, menu, flags);
     const markers = defs.find((d) => d.id === "toggleMarkersVisible")!;
     expect(markers.actionId).toBeUndefined();

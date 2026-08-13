@@ -148,10 +148,8 @@ describe("quickActions catalogue", () => {
     expect(item?.active?.(state({ displayMode: "ShowAll" }))).toBe(false);
   });
 
-  // The marker toggle is the strip's second independent toggle, and the first
-  // button of any kind whose command has no keybinding — `M` stays reserved for
-  // add-marker-at-playhead. State is carried by the pressed attributes and the
-  // hint alone: one fixed bookmark glyph, no `iconFor`.
+  // An independent toggle whose state is carried by the pressed attributes and
+  // the hint alone: one fixed bookmark glyph, no `iconFor`.
   describe("marker visibility toggle", () => {
     const item = (): QuickActionItem => {
       const found = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
@@ -184,9 +182,9 @@ describe("quickActions catalogue", () => {
       expect(showing).not.toBe(hidden);
     });
 
-    // Decision 13: state is already carried by the pressed styling and
-    // `aria-pressed`, so a crossed-out glyph variant would restate at 16 px what
-    // the button already says. One glyph, both ways.
+    // State is already carried by the pressed styling and `aria-pressed`, so a
+    // crossed-out glyph variant would restate at 16 px what the button already
+    // says (spec decision 13). One glyph, both ways.
     it("keeps one fixed glyph in both states", () => {
       expect(item().iconFor).toBeUndefined();
       expect(resolveIcon(item(), state({ markersVisible: true }))).toBe(

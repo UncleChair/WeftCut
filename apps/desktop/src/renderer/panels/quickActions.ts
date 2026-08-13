@@ -38,11 +38,10 @@ export interface QuickActionState {
   /// the strip can't render one, and subscribing to the positions would
   /// re-render the whole strip on every handle drag.
   hasRange: boolean;
-  /// Whether the timeline ruler paints markers (app-level pref). Exactly ONE
-  /// field for the whole marker toggle: deliberately NOT paired with a "does
-  /// this project have any markers" flag, which an earlier draft wanted for a
-  /// three-state hint. Without it the strip takes no project-store
-  /// subscription at all, and the hint stays two-state.
+  /// Whether the timeline ruler paints markers (app-level pref). The strip's
+  /// whole marker state: it never reports whether the project HAS any markers,
+  /// so the strip takes no project-store subscription and the hint stays
+  /// two-state.
   markersVisible: boolean;
 }
 

@@ -83,7 +83,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         parsed.media_pool_layout === 'large' || parsed.media_pool_layout === 'grid' || parsed.media_pool_layout === 'list'
           ? parsed.media_pool_layout
           : d.media_pool_layout,
-      // Additive boolean defaulting TRUE — the one shape where "absent" and
+      // Additive booleans defaulting TRUE — the one shape where "absent" and
       // "off" must not collapse: every app_settings.json written before the
       // field existed has no key, and reading that as false would ship the
       // feature disabled to exactly the users who never chose to disable it.
@@ -91,10 +91,6 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.timeline_follow_playhead === 'boolean'
           ? parsed.timeline_follow_playhead
           : d.timeline_follow_playhead,
-      // Same additive-boolean-defaulting-TRUE shape as timeline_follow_playhead:
-      // every app_settings.json written before markers were painted at all has
-      // no key here, and reading that as false would open the ruler silenced for
-      // exactly the users who never asked for silence.
       markers_visible:
         typeof parsed.markers_visible === 'boolean'
           ? parsed.markers_visible

@@ -355,9 +355,9 @@ describe("QuickActionsPanel", () => {
     });
   });
 
-  // The strip's first button whose command carries no binding. Registered
-  // separately so the authored-order case above keeps describing the buttons that
-  // were there before it.
+  // A button whose command carries no binding, so its tooltip has no
+  // accelerator half. Registered separately so the authored-order case above
+  // keeps describing the buttons it already covers.
   describe("marker toggle", () => {
     let unregisterMarkers: (() => void) | null = null;
 
@@ -406,9 +406,9 @@ describe("QuickActionsPanel", () => {
       );
     });
 
-    // `M` stays reserved for add-marker-at-playhead, so this command has no
-    // action id and the effective-binding lookup returns nothing for it. The
-    // tooltip must then be the hint alone — never a trailing empty "( )".
+    // The command has no action id, so the effective-binding lookup returns
+    // nothing for it and the tooltip must be the hint alone — never a trailing
+    // empty "( )".
     it("shows no accelerator in its tooltip", () => {
       render(<QuickActionsPanel geometry={geometry(400, 44)} />);
       expect(button("toggleMarkersVisible").title).toBe(

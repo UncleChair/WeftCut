@@ -99,9 +99,8 @@ export const useMediaPoolLayout = (): AppSettings["media_pool_layout"] =>
 /// Whether the timeline pages its view to keep the playhead visible.
 export const useFollowPlayheadEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
-/// Whether the timeline ruler paints the project's markers. Governs the normal
-/// timeline and nothing else — the agent-mode mini timeline keeps painting them
-/// and the search palette keeps finding them, whichever way this reads.
+/// Whether the timeline ruler paints the project's markers. Governs that ruler
+/// and nothing else — see `markers_visible` in `shared/app-settings.ts`.
 export const useMarkersVisible = (): boolean =>
   useAppSettingsStore((s) => s.settings.markers_visible);
 /// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset

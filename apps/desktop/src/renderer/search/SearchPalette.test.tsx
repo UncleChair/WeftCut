@@ -196,9 +196,8 @@ describe("SearchPalette", () => {
     expect(marked).toBe("sunset");
   });
 
-  // The palette lists every registered command, including toggles that have no
-  // binding to be found by. A toggle that doesn't say which way it is set makes
-  // the user guess which way selecting it would flip it.
+  // The palette lists every registered command, toggles included — and a toggle
+  // is the one row kind whose label alone can't say what selecting it does.
   it("shows a checkable command's current state, and re-reads it live", async () => {
     let on = true;
     unregister?.();

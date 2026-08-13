@@ -191,9 +191,8 @@ describe("ViewMenu workspace controls", () => {
   });
 });
 
-// The marker toggle's third entry point. It sits with the other timeline view
-// preferences and carries no accelerator, because `M` stays reserved for
-// add-marker-at-playhead.
+// The marker toggle sits with the other timeline view preferences, and is the
+// one item here that carries no accelerator.
 describe("ViewMenu marker display", () => {
   const renderMenu = () =>
     render(

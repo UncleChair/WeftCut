@@ -182,8 +182,6 @@ const enUS = {
     display_ab: "Display: A/B Roll only",
     display_all: "Display: Show all tracks",
     follow_playhead: "Follow playhead",
-    // Immediately below Follow playhead: both are "how my timeline is
-    // displayed", and neither has a shortcut to be found by.
     show_markers: "Show markers",
     close_active_panel: "Close Active Panel",
     reset_workspace: "Reset Workspace",

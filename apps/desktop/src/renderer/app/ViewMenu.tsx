@@ -178,9 +178,10 @@ export function ViewMenu({
         checked={followPlayhead}
         onSelect={() => void toggleFollowPlayhead()}
       />
-      {/* Directly below Follow playhead, and with no `actionId`: the marker
-          toggle has no binding on purpose (`M` is reserved for
-          add-marker-at-playhead), so there is no accelerator to right-align. */}
+      {/* Directly below Follow playhead: both are "how my timeline is
+          displayed". No `actionId`, so no accelerator to right-align — see
+          `MENU_ONLY_COMMAND_IDS` in `commands/appCommands.ts` for why this
+          toggle has no binding. */}
       <MenuItem
         label={t("view.show_markers", { defaultValue: "Show markers" })}
         checked={markersVisible}

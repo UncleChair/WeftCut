@@ -13,12 +13,12 @@ import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
  * own store selector, and one app-level setting reaching the strip button, the
  * View menu checkbox and the marker layer at once.
  *
- * Markers are seeded over MCP because that is the only way they can be created
- * today — there is no human authoring path (that is the next slice) and no
- * renderer channel for `add_marker` either, so this is the read path's real
- * upstream, not a test-only shortcut. The connection details come from the same
- * `get_mcp_info` IPC the Settings → Agent tab reads, so this can boot through
- * `launchApp` like every other UI spec instead of parsing the connect log.
+ * Markers are seeded over MCP because that is the only way they can be created:
+ * there is no human authoring path and no renderer channel for `add_marker`
+ * either, so this is the read path's real upstream, not a test-only shortcut.
+ * The connection details come from the same `get_mcp_info` IPC the Settings →
+ * Agent tab reads, so this can boot through `launchApp` like every other UI spec
+ * instead of parsing the connect log.
  *
  * Cross-restart persistence is deliberately NOT here — it is asserted in the
  * main-process app-settings suite, because every spec in this suite boots

@@ -97,16 +97,18 @@ function RangeCap({ xPx, side }: { xPx: number; side: "in" | "out" }) {
 
 /// The reading rule in the 20 px strip is positional: full height is the
 /// playhead and the in/out caps, the upper half is timecode text, and the lower
-/// half — these three numbers — is markers. A full-height marker rule would be
-/// confusable with the caps, whose cyan was itself chosen to say "standing user
-/// mark".
-///
-/// The point glyph is a SQUARE rotated 45°, so what it paints is its diagonal:
-/// 7.07 px, not 5. Lifting it 1 px puts its bottom tip on the strip's floor
-/// (the strip is `overflow-hidden`, so an unlifted diamond loses that tip) and
-/// its top tip at 7 px — inside the 10 px lower half, which is the constraint
-/// that actually matters.
+/// half — everything the three constants below place — is markers. A full-height
+/// marker rule would be confusable with the caps, whose cyan was itself chosen
+/// to say "standing user mark".
+
+/// Box side of the point glyph, which is a SQUARE rotated 45° — so what it
+/// paints is the diagonal, `size·√2`, and it is the DIAGONAL plus
+/// `MARKER_POINT_BOTTOM_PX` that has to stay inside the strip's 10 px lower
+/// half. Sizing against the side instead is how a diamond ends up under the
+/// timecode labels.
 const MARKER_POINT_SIZE_PX = 5;
+/// Lifts the diamond off the strip's floor: the strip is `overflow-hidden`, so
+/// an unlifted diamond is clipped at its bottom tip.
 const MARKER_POINT_BOTTOM_PX = 1;
 const MARKER_BAR_HEIGHT_PX = 3;
 
@@ -157,26 +159,24 @@ function markerTitle(
   });
 }
 
-/**
- * One marker: a diamond at its frame, or a bar across its range.
- *
- * Painted in the marker's OWN colour — timeline chrome is semantic by kind
- * except where the colour is the content, and a marker's colour is an authored
- * taxonomy (problem / approved / needs-VO).
- *
- * Outlined TWICE, which is where this departs from `RangeCap`. A cap is always
- * cyan, so one dark hairline is all it needs to sit off the ruler. A marker's
- * colour is whatever its author chose, and the ruler is `rgb(17,20,25)`: a
- * marker authored near-black (measured with `#14141a`) plus a dark ring is a
- * smudge, not a mark. The dark ring stays — it is what separates a BRIGHT
- * colour — and a light ring outside it separates a dark one, so no authored
- * colour can vanish into the background.
- *
- * Takes pointer events so the native tooltip fires, but installs no handler and
- * stops no propagation: every event continues to the ruler, which stays the sole
- * scrub surface. A press that lands on a marker still starts a scrub, and a drag
- * still crosses it without interruption.
- */
+/// One marker: a diamond at its frame, or a bar across its range.
+///
+/// Painted in the marker's OWN colour — timeline chrome is semantic by kind
+/// except where the colour is the content, and a marker's colour is an authored
+/// taxonomy (problem / approved / needs-VO).
+///
+/// Outlined TWICE, which is where this departs from `RangeCap`. A cap is always
+/// cyan, so one dark hairline is all it needs to sit off the ruler. A marker's
+/// colour is whatever its author chose, and the ruler sits on the near-black
+/// `--card`: a near-black marker plus a dark ring is a smudge, not a mark. The
+/// dark ring stays — it is what separates a BRIGHT colour — and a light ring
+/// outside it separates a dark one, so no authored colour can vanish into the
+/// background.
+///
+/// Takes pointer events so the native tooltip fires, but installs no handler and
+/// stops no propagation: every event continues to the ruler, which stays the sole
+/// scrub surface. A press that lands on a marker still starts a scrub, and a drag
+/// still crosses it without interruption.
 function MarkerGlyph({ view, title }: { view: RulerMarker; title: string }) {
   const isRegion = view.shape === "region";
   return (
@@ -232,14 +232,12 @@ export function TimelineRuler({
   // selectors per `feedback_zustand_composite_selector`.
   const rangeInUs = useRangeInUs();
   const rangeOutUs = useRangeOutUs();
-  // Markers are read here rather than threaded down from the timeline, for the
-  // same reason the range and scroll stores are: the ruler is the only thing
-  // that paints them, so they are not the timeline's prop surface. The array
-  // changes once per project mutation, not once per frame.
+  // Both read here rather than threaded down from the timeline, for the same
+  // reason the range and scroll stores are: the ruler is the only surface that
+  // paints markers and the only one the flag governs, so neither belongs on the
+  // timeline's prop surface. The array changes once per project mutation, not
+  // once per frame.
   const markers = useProjectMarkers();
-  // Read here for the same reason the markers themselves are: the ruler is the
-  // only surface the flag governs, so it is not the timeline's prop surface. The
-  // agent-mode mini timeline and the search palette answer to nothing here.
   const markersVisible = useMarkersVisible();
   const { t } = useTranslation();
   const { ticks } = useMemo(
@@ -254,18 +252,14 @@ export function TimelineRuler({
       }),
     [fpsNum, fpsDen, pxPerSec, totalSec, scrollLeftPx, viewportWidthPx],
   );
-  // Same window as the ticks, so a marker far outside the viewport costs no
-  // DOM even on a project an agent has sprayed hundreds of markers across.
-  //
   // Hover text is composed HERE rather than at each glyph: every title is a pair
-  // of `formatTimecode` calls through the wasm frame grid, and a project
-  // carrying hundreds of markers would otherwise pay for all of them on every
-  // render rather than once per window.
+  // of `formatTimecode` calls through the wasm frame grid, so composing per
+  // glyph would re-run all of them on every render instead of once per window.
   //
   // The visibility flag short-circuits HERE rather than at the JSX: with the
-  // layer off there is no reason to run the window or format a single timecode,
-  // and a project an agent sprayed markers across is exactly when someone
-  // reaches for the toggle.
+  // layer off there is no reason to window the markers or format a timecode at
+  // all — and a project an agent has sprayed hundreds of markers across is
+  // exactly when someone reaches for the toggle.
   const markerViews = useMemo(
     () =>
       markersVisible
@@ -279,7 +273,16 @@ export function TimelineRuler({
             title: markerTitle(view, fpsNum, fpsDen, t),
           }))
         : [],
-    [markersVisible, markers, pxPerSec, scrollLeftPx, viewportWidthPx, fpsNum, fpsDen, t],
+    [
+      markersVisible,
+      markers,
+      pxPerSec,
+      scrollLeftPx,
+      viewportWidthPx,
+      fpsNum,
+      fpsDen,
+      t,
+    ],
   );
 
   return (
