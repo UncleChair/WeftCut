@@ -4,11 +4,11 @@ import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 
-const ALL_53_NAMES = new Set<string>([
-  // table-exec tools (32)
+const ALL_54_NAMES = new Set<string>([
+  // table-exec tools (33)
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'move_track',
   'update_layer', 'update_layer_params', 'set_scale_linked',
-  'move_layer', 'trim_layer', 'delete_layer',
+  'move_layer', 'restack_layer', 'trim_layer', 'delete_layer',
   'groups_create', 'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
@@ -29,8 +29,8 @@ const ALL_53_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 53 tool names (auto_split_by_shot hybrid def added by scene-analysis ticket 04)', () => {
-    expect(MCP_TOOLS).toEqual(ALL_53_NAMES)
+  it('MCP_TOOLS contains exactly the 54 tool names (auto_split_by_shot hybrid def added by scene-analysis ticket 04)', () => {
+    expect(MCP_TOOLS).toEqual(ALL_54_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -70,7 +70,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(32)
+    expect(table.length).toBe(33)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

@@ -10,6 +10,7 @@ import { validate, reconcileTransitions, type DroppedTransition } from './valida
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
+import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, pasteLayerInterval } from './mutations/duplicate'
@@ -642,6 +643,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: commit(HISTORY_SUMMARY.layerMoveToNewTrack,
             (newTrackId: Uuid) => [...layerRefs(layers), { kind: 'Track', id: newTrackId }],
             { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers)) }
+        }
+        // restack_layer — anchored z-reorder (ADR 0044): ONE commit; the mutation
+        // owns the smart degradation (sole-occupant lane splice vs split onto a
+        // fresh lane + prune) and returns the destination lane id, or null for
+        // the already-in-place call — commit's no-op guard then records nothing
+        // and burns no op_id, the same contract as move_track. `affected` takes
+        // the function form because the split path mints its lane inside the
+        // recipe; the null arm is unreachable (commit returns before calling it
+        // on a no-op) but keeps the annotation honest.
+        case 'restack_layer': {
+          const layer = a.layer as Uuid
+          commit(HISTORY_SUMMARY.layerRestack,
+            (destTrack: Uuid | null) => destTrack === null ? layerRef(layer) : [...layerRef(layer), ...trackRef(destTrack)],
+            { kind: 'Coarse' },
+            (d) => applyRestackLayer(d, idGen, layer, a.anchor as Uuid, a.position as RestackPosition))
+          return { ok: true, value: null }
         }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
         case 'delete_layer': commit(HISTORY_SUMMARY.layerDelete, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }

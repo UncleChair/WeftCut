@@ -1175,6 +1175,7 @@ const zhCN: Resources = {
       duplicate: "复制图层",
       move: "移动图层",
       move_to_new_track: "移动到新轨道",
+      restack: "重排图层层级",
       trim: "修剪",
       split: "分割图层",
       split_by_shots: "按镜头分割",

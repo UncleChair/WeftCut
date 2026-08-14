@@ -32,6 +32,7 @@ export const HISTORY_SUMMARY = {
   layerDuplicate: { key: 'history.layer.duplicate', text: 'Duplicated layer' },
   layerMove: { key: 'history.layer.move', text: 'Moved layer' },
   layerMoveToNewTrack: { key: 'history.layer.move_to_new_track', text: 'Moved to a new track' },
+  layerRestack: { key: 'history.layer.restack', text: 'Restacked layer' },
   layerTrim: { key: 'history.layer.trim', text: 'Trimmed layer' },
   layerSplit: { key: 'history.layer.split', text: 'Split layer' },
   layerSplitByShots: { key: 'history.layer.split_by_shots', text: 'Split layer by shots' },

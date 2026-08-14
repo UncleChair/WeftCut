@@ -175,11 +175,22 @@ _Avoid_: add-track row, new-track button, ghost lane, phantom track
 **Raise**:
 Moving a clip onto a fresh track at the top of the z-stack —
 `move_layers_to_new_track`, reachable by dragging into the drop strip or by the
-*Move to a new track* command. The whole of z-order rearrangement: any order
-composes from a sequence of raises, and each empties its source track, which
+*Move to a new track* command. The spawn-at-top gesture, and only that —
+anchored reordering is *Restack*. Each raise empties its source track, which
 cleanup then removes. One history entry, so one undo restores clip and track
 together.
-_Avoid_: add track and move, promote, bring to front, reorder tracks
+_Avoid_: add track and move, promote, bring to front, reorder tracks, restack
+
+**Restack**:
+Anchored z-reorder of one visual layer — `restack_layer(layer, above|below
+anchor)`, the verb behind the Nearby panel's stack ordering and the MCP command
+of the same name. Operates on the layer and degrades smartly: a sole occupant
+carries its whole track (id, name, lock, height); a layer sharing its track
+splits onto a fresh lane at the target position; a role-stamped source never
+moves. Anchors are layers, never indices, and may sit on a reserved track;
+audio neither moves nor anchors. One history entry, and an already-in-place
+call is a no-op that records nothing.
+_Avoid_: raise (that is spawn-at-top), reorder tracks, move above/below
 
 **Spawn**:
 The placement verdict meaning *no track can take this, so make one* — the fourth

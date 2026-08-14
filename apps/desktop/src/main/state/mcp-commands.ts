@@ -272,6 +272,13 @@ function asArray(v: unknown, field: string): string[] {
   return v as string[]
 }
 
+/** restack_layer's placement — a closed two-value enum, gated here so a typo
+ *  rejects at the boundary instead of reaching the actor. */
+export function parseRestackPosition(v: unknown): 'above' | 'below' {
+  if (v !== 'above' && v !== 'below') throw new McpArgError(`position must be 'above' | 'below', got ${String(v)}`, 'position')
+  return v
+}
+
 // ── ToolResult shapers (wire.rs:81-93) ──
 export function toolText(s: string): ToolResultJson { return { content: [{ type: 'text', text: s }] } }
 export function toolEmpty(): ToolResultJson { return { content: [] } }
@@ -580,6 +587,14 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination\'s existing layers — overlap rejects with structured options.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, new_t_start_us: { type: 'integer' }, new_track_id: { type: 'string' }, escape_group: { type: ['boolean', 'null'] } }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
     parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_group: parseBoolOpt(a.escape_group, 'escape_group', false) } }) },
+  { name: 'restack_layer', exec: 'table',
+    description: "Restack a visual layer in the z-order relative to an ANCHOR layer: position 'above' | 'below' places it directly above/below the track the anchor sits on, resolved at apply time (anchors are layers, not indices — an index drifts between your read and your write). Z is track-array order, and the op degrades smartly: a mover that is its track's sole occupant moves the whole track (its id, name, lock and height survive); a mover sharing its track (an off-screen neighbour or a co-resident audio layer) splits onto a new track at the target position, and the source is cleaned up only if that emptied it. A role-stamped (A/B-roll skeleton) source track never moves — the mover always splits off it and the skeleton stays put. The anchor MAY sit on a reserved track. Restacking a layer to where it already sits is a no-op that records nothing. Audio never stacks (mixing is by role): an Audio mover or Audio anchor rejects, as does anchoring a layer on itself. Front/back are not variants — derive them as above-the-top / below-the-bottom of the visual stack you are looking at. One recorded commit: a single undo restores the layer, its track and any pruned lane together.",
+    inputSchema: { type: 'object', properties: {
+      layer_id: { type: 'string', description: 'The visual layer to restack.' },
+      anchor_layer_id: { type: 'string', description: 'The visual layer to place it against; may sit on a reserved track.' },
+      position: { type: 'string', enum: ['above', 'below'], description: "Place the layer directly above or directly below the anchor layer's track." },
+    }, required: ['anchor_layer_id', 'layer_id', 'position'] },
+    parseArgs: (a) => ({ op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id'), position: parseRestackPosition(a.position) } }) },
   { name: 'trim_layer', exec: 'table',
     description: "Trim one edge of a layer's timeline range. `edge` is 'in' (t_start) or 'out' (t_end). For media-bearing layers the corresponding src bound (src_in_us or src_out_us) moves by the same delta; over-trimming past the source bound is clamped. When the layer is in a group and `escape_group` is false (default), every group member whose corresponding edge sits at the same t as the trimmed edge is moved by the same delta, clamped to the tightest aligned member's bounds. Pass `escape_group=true` to trim only this layer. See `docs/features.md#groups`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_group: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },

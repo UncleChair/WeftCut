@@ -1237,6 +1237,7 @@ const enUS = {
       duplicate: "Duplicated layer",
       move: "Moved layer",
       move_to_new_track: "Moved to a new track",
+      restack: "Restacked layer",
       trim: "Trimmed layer",
       split: "Split layer",
       split_by_shots: "Split layer by shots",
