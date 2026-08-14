@@ -216,6 +216,11 @@
 .app-input--clearable {
   padding-right: 24px;
 }
+/* The .app-input-clear ✕ is the one clear affordance — Chromium's native
+ * search-cancel ✕ would sit right beside it and double it up. */
+.app-input[type="search"]::-webkit-search-cancel-button {
+  display: none;
+}
 .app-input-clear {
   position: absolute;
   right: 4px;

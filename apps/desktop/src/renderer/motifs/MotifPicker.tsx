@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { FolderInputIcon, PlusIcon } from "lucide-react";
 import { listen } from "@/bridge/events";
 import { open as openDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -71,8 +72,7 @@ export function MotifPicker({
   const [motifs, setMotifs] = useState<MotifSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [newOpen, setNewOpen] = useState(false);
-  const [newName, setNewName] = useState("");
+  const [query, setQuery] = useState("");
 
   const aliveRef = useRef(true);
   const reload = () => {
@@ -124,10 +124,20 @@ export function MotifPicker({
     [tracks],
   );
 
+  // Catalog search. Matches the id too: it's off the card (tooltip-only),
+  // but agents quote ids in logs/chats and pasting one here should work.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q === "" || motifs === null) return motifs;
+    return motifs.filter(
+      (tpl) =>
+        tpl.name.toLowerCase().includes(q) || tpl.id.toLowerCase().includes(q),
+    );
+  }, [motifs, query]);
+
   const createDraft = async () => {
-    const name = newName.trim();
-    if (name === "") return;
     try {
+      const name = untitledName(motifs ?? [], t("motif_picker.untitled_name"));
       const { manifest, html } = newDraftSource(name);
       const draftId = await writeMotifDraft(manifest, html);
       // Keeps the picker useful if the auto-place below fails: the draft's
@@ -168,78 +178,90 @@ export function MotifPicker({
       onClose={onClose}
       closeLabel={t("motif_picker.close")}
       panelClassName="motif-picker"
-      headerExtra={
-        <>
-          {newOpen ? (
-            <form
-              className="motif-picker-new-form"
-              onSubmit={(e) => { e.preventDefault(); void createDraft(); }}
-            >
-              <AppInput
-                value={newName}
-                onValueChange={setNewName}
-                autoFocus
-                placeholder={t("motif_picker.new_name_placeholder")}
-                ariaLabel={t("motif_picker.new_prompt")}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    // Consume: this Escape collapses the inline form only;
-                    // without stopPropagation the dialog would close too.
-                    e.stopPropagation();
-                    setNewOpen(false);
-                    setNewName("");
-                  }
-                }}
-              />
-              <button type="submit" disabled={newName.trim() === ""}>
-                {t("motif_picker.new_create")}
-              </button>
-              <button type="button" onClick={() => { setNewOpen(false); setNewName(""); }}>
-                {t("motif_picker.new_cancel")}
-              </button>
-            </form>
-          ) : (
-            <button type="button" className="motif-picker-new" onClick={() => setNewOpen(true)}>
-              {t("motif_picker.new_button")}
-            </button>
-          )}
-          {!newOpen && (
-            <button type="button" className="motif-picker-new" onClick={importFile}>
-              {t("motif_picker.import_button")}
-            </button>
-          )}
-        </>
-      }
     >
         {error && <p className="settings-error">{error}</p>}
 
-        {motifs === null ? (
+        {motifs === null || filtered === null ? (
           <p className="settings-status">{t("motif_picker.loading")}</p>
         ) : (
           <div className="motif-picker-body">
-            <div className="motif-picker-list">
-              {motifs.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  type="button"
-                  className={
-                    tpl.id === selectedId
-                      ? "motif-card motif-card-selected"
-                      : "motif-card"
-                  }
-                  onClick={() => setSelectedId(tpl.id)}
+            <div className="motif-picker-catalog">
+              {/* Media-pool-style management bar: search claims the free
+                  width, the catalog actions (new draft / import) sit at the
+                  trailing edge. Fixed sibling above the scrolling list. */}
+              <div className="motif-picker-bar">
+                <AppInput
+                  type="search"
+                  clearable
+                  clearAriaLabel={t("motif_picker.search_clear")}
+                  placeholder={t("motif_picker.search_placeholder")}
+                  ariaLabel={t("motif_picker.search_placeholder")}
+                  value={query}
+                  onValueChange={setQuery}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape" && query !== "") {
+                      // Consume: this Escape clears the search only; without
+                      // stopPropagation the dialog would close too.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setQuery("");
+                    }
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  title={t("motif_picker.new_button")}
+                  aria-label={t("motif_picker.new_button")}
+                  onClick={() => void createDraft()}
                 >
-                  <MotifCardThumbnail motif={tpl} />
-                  <span className="motif-card-name">{tpl.name}</span>
-                  <span className="motif-card-meta">
-                    {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
-                  </span>
-                  <span className="motif-card-id">{tpl.id}</span>
-                  <span className={`motif-card-status status-${tpl.status ?? "builtin"}`}>
-                    {t(`motif_picker.status.${tpl.status ?? "builtin"}`)}
-                  </span>
-                </button>
-              ))}
+                  <PlusIcon size={14} aria-hidden />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  title={t("motif_picker.import_button")}
+                  aria-label={t("motif_picker.import_button")}
+                  onClick={() => void importFile()}
+                >
+                  <FolderInputIcon size={14} aria-hidden />
+                </Button>
+              </div>
+              <div className="motif-picker-list">
+                {filtered.length === 0 && (
+                  <p className="settings-status">
+                    {motifs.length === 0
+                      ? t("motif_picker.empty")
+                      : t("motif_picker.no_matches", { query: query.trim() })}
+                  </p>
+                )}
+                {filtered.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    // The id matters to agents (MCP `add_motif`) and bug
+                    // reports, not to picking — tooltip, not card real estate.
+                    title={tpl.id}
+                    className={
+                      tpl.id === selectedId
+                        ? "motif-card motif-card-selected"
+                        : "motif-card"
+                    }
+                    onClick={() => setSelectedId(tpl.id)}
+                  >
+                    <MotifCardThumbnail motif={tpl} />
+                    <span className="motif-card-title">
+                      <span className="motif-card-name">{tpl.name}</span>
+                      <span className={`motif-card-status status-${tpl.status ?? "builtin"}`}>
+                        {t(`motif_picker.status.${tpl.status ?? "builtin"}`)}
+                      </span>
+                    </span>
+                    <span className="motif-card-meta">
+                      {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="motif-picker-form">
@@ -277,6 +299,19 @@ export function MotifPicker({
         )}
     </AppDialog>
   );
+}
+
+/// Default name for a one-click draft: the localized base, or "base N" when
+/// taken. Names aren't a uniqueness key anywhere (drafts get fresh ids), so
+/// this is purely to keep the catalog legible until the user renames the
+/// draft in its manifest island (the source editor they land in).
+function untitledName(existing: MotifSummary[], base: string): string {
+  const names = new Set(existing.map((m) => m.name));
+  if (!names.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base} ${n}`;
+    if (!names.has(candidate)) return candidate;
+  }
 }
 
 function defaultPropValue(spec: PropSpec): unknown {
@@ -601,7 +636,7 @@ function PropField({
   switch (spec.type) {
     case "string":
       return (
-        <label className="motif-picker-field">
+        <label className="motif-picker-field motif-picker-field--code">
           <span>{propKey}</span>
           {spec.multiline ? (
             // Multi-line strings (e.g. a text block split on \n) need a
@@ -626,7 +661,7 @@ function PropField({
       );
     case "color":
       return (
-        <div className="motif-picker-field">
+        <div className="motif-picker-field motif-picker-field--code">
           <span>{propKey}</span>
           <ColorInput
             value={typeof value === "string" ? value : spec.default}
@@ -637,7 +672,7 @@ function PropField({
       );
     case "number":
       return (
-        <div className="motif-picker-field">
+        <div className="motif-picker-field motif-picker-field--code">
           <span>{propKey}</span>
           <AppNumberField
             value={typeof value === "number" ? value : spec.default}
@@ -656,7 +691,7 @@ function PropField({
       );
     case "enum":
       return (
-        <label className="motif-picker-field">
+        <label className="motif-picker-field motif-picker-field--code">
           <span>{propKey}</span>
           <AppSelect
             value={typeof value === "string" ? value : spec.default}

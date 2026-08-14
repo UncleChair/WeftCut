@@ -1237,13 +1237,32 @@
 .prop-bake-status.is-ready { color: var(--success); }
 .prop-motif-lifecycle { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
 .prop-motif-source { margin: 8px 0; }
+/* Recessed code well (--surface-sunken per docs/ui-tokens.md "inset editors").
+   Without an explicit skin the Tailwind preflight leaves the textarea as a
+   borderless transparent box — raw source floating on the panel. */
 .prop-motif-source-text {
   width: 100%;
+  box-sizing: border-box;
   min-height: 160px;
+  margin: 0 0 8px;
+  padding: 8px;
   font-family: var(--mono, ui-monospace, monospace);
   font-size: var(--font-size-caption);
+  line-height: var(--line-height-body);
+  color: var(--foreground);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
   resize: vertical;
   white-space: pre;
+}
+.prop-motif-source-text:focus {
+  outline: none;
+  border-color: var(--ring);
+}
+.prop-motif-source-text:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .kf-diamond-row { position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none; }
 .kf-diamond { position: absolute; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); background: #fff; border: 1px solid rgba(0,0,0,0.5); }
