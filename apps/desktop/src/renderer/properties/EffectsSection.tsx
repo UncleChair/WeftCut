@@ -66,10 +66,8 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
     liveRef.current = { layer, tInLayerUs };
   }, [layer, tInLayerUs]);
 
-  // Card reorder gesture — the shared pointer-reorder primitive owns the drag
-  // state, gap hit-testing, edge auto-scroll and disarm paths. Pure pointer
-  // events, never HTML5 drag-and-drop, so a card gesture can never become a
-  // Dockview Panel dock drag. Exactly one moveEffect command fires, at drop.
+  // Card reorder gesture — mechanics, and why pointer events, never HTML5
+  // DnD, live in usePointerReorder.
   const count = layer.effects.length;
   const { drag, indicatorGap, containerRef, setRowEl, startDrag } =
     usePointerReorder({

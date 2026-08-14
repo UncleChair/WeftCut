@@ -15,7 +15,7 @@ import { dockPanel, dockTab, invokeCmd, launchApp, newProject, tmpDir } from './
  *
  * No media fixtures: three overlapping Color layers build the At-playhead
  * stack. Each `add_color_layer` over an occupied interval spawns its own
- * role-less Overlay lane, which is exactly the hidden-in-A/B-Roll population
+ * role-less Overlay track, which is exactly the hidden-in-A/B-Roll population
  * the Nearby panel surfaces.
  */
 
@@ -28,20 +28,20 @@ interface StackSummary {
 
 const stackSummary = (page: Page) => invokeCmd<StackSummary>(page, 'project_summary', {})
 
-/// The overlay stack as the PROJECT holds it: layer ids on role-less lanes in
+/// The overlay stack as the PROJECT holds it: layer ids on role-less tracks in
 /// track-vector order, bottom-of-z first. The real-stacking assertions read
 /// this — not the panel's rows — so a restack that only rearranged the DOM
 /// could never pass.
 const overlayLayerOrder = (s: StackSummary): string[] =>
   s.tracks.filter((t) => t.role === null).flatMap((t) => t.layers.map((l) => l.id))
 
-/// The lane holding `layerId`, by id — for asserting the sole-occupant restack
-/// path moved the lane WHOLE (identity survives) instead of minting a new one.
-const laneOf = (s: StackSummary, layerId: string): string | null =>
+/// The track holding `layerId`, by id — for asserting the sole-occupant restack
+/// path moved the track WHOLE (identity survives) instead of minting a new one.
+const trackOf = (s: StackSummary, layerId: string): string | null =>
   s.tracks.find((t) => t.layers.some((l) => l.id === layerId))?.id ?? null
 
 /// Three Color layers over the same 0–4 s interval, playhead at 0 → all three
-/// span the playhead and each occupies its own role-less Overlay lane
+/// span the playhead and each occupies its own role-less Overlay track
 /// (appended, so added-last composites on top). Labelled via the recorded
 /// rename command so rows and grips are addressable by name instead of brittle
 /// positions. Returns ids bottom-of-z first: [under, mid, over].
@@ -60,7 +60,7 @@ async function threeOverlappingOverlays(
   await rename(over, 'Over')
 
   // The setup's own contract, checked before anything rides on it: three
-  // distinct role-less lanes in add order.
+  // distinct role-less tracks in add order.
   expect(overlayLayerOrder(await stackSummary(page))).toEqual([under, mid, over])
   return { under, mid, over }
 }
@@ -132,9 +132,9 @@ test('a Nearby grip drag restacks the real project and one undo restores it', as
     // ONE anchored op per completed drag — the gesture must not decompose into
     // a track-add + move pair.
     expect(after.history.len).toBe(before.history.len + 1)
-    // Sole-occupant path: the mover's LANE moved whole, identity intact, and
+    // Sole-occupant path: the mover's TRACK moved whole, identity intact, and
     // nothing was minted or pruned along the way.
-    expect(laneOf(after, over)).toBe(laneOf(before, over))
+    expect(trackOf(after, over)).toBe(trackOf(before, over))
     expect(after.tracks.map((t) => t.id).sort()).toEqual(before.tracks.map((t) => t.id).sort())
     // The panel re-renders to the new z order, top-of-stack first.
     await expect.poll(() => rowLabels(page)).toEqual(['Mid', 'Under', 'Over'])

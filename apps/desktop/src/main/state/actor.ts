@@ -644,14 +644,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (newTrackId: Uuid) => [...layerRefs(layers), { kind: 'Track', id: newTrackId }],
             { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers)) }
         }
-        // restack_layer — anchored z-reorder (ADR 0044): ONE commit; the mutation
-        // owns the smart degradation (sole-occupant track splice vs split onto a
-        // fresh track + prune) and returns the destination track id, or null for
-        // the already-in-place call — commit's no-op guard then records nothing
-        // and burns no op_id, the same contract as move_track. `affected` takes
-        // the function form because the split path mints its track inside the
-        // recipe; the null arm is unreachable (commit returns before calling it
-        // on a no-op) but keeps the annotation honest.
+        // restack_layer — anchored z-reorder (ADR 0044): ONE commit. Degradation
+        // and the destination-or-null return contract are applyRestackLayer's
+        // story (mutations/restack.ts). Here, `affected` takes the function form
+        // because the split path mints its track inside the recipe; null trips
+        // commit's no-op guard (nothing recorded, no op_id — the move_track
+        // contract), so the null arm is unreachable but keeps the annotation
+        // honest.
         case 'restack_layer': {
           const layer = a.layer as Uuid
           commit(HISTORY_SUMMARY.layerRestack,

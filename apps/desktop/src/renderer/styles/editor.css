@@ -320,9 +320,8 @@
   opacity: 0.5;
 }
 
-/* Insertion line. Drawn in --selection (the one true accent), NOT --accent —
-   which in this theme is a near-background SURFACE grey (see the effect
-   chain's identical note). */
+/* Insertion line — same --selection-not---accent rationale as the effect
+   chain's (.prop-effect-row--drop-*). */
 .peek-row--drop-before {
   box-shadow: 0 -2px 0 0 var(--selection);
 }

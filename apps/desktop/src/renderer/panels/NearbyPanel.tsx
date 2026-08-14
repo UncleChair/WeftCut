@@ -105,11 +105,7 @@ export function NearbyPanel({
   );
 
   // ── At-playhead restack gesture (ADR 0044 decision 6) ──────────────────
-  // The effect chain's pointer-reorder skeleton, inherited: drag state, gap
-  // hit-testing by row midlines, edge auto-scroll and the Escape /
-  // pointercancel disarm all live in the hook. Pure pointer events — never
-  // HTML5 drag-and-drop — so a row drag can never become a Dockview panel
-  // drag. Zero commands mid-gesture; exactly one restack at a non-noop drop.
+  // Mechanics — and why pointer events, never HTML5 DnD — live in usePointerReorder.
   //
   // The row snapshot freezes for the duration of a gesture: the playhead
   // ticks on a throttle and must never reshuffle rows under the pointer.
@@ -122,7 +118,7 @@ export function NearbyPanel({
   const reorder = usePointerReorder({
     // Read per render. A pointerdown can only start on the displayed rows,
     // which are the live ones whenever no gesture is armed.
-    rowIds: visualStackOf(live).map((row) => row.layer.id),
+    rowIds: live.atPlayheadVisual.map((row) => row.layer.id),
     onDrop: ({ fromIndex, gap }) => {
       // Resolve against the pointerdown snapshot — the same rows the user
       // grabbed and has been looking at all gesture long.
@@ -136,7 +132,7 @@ export function NearbyPanel({
 
   const sections = reorder.drag && frozen ? frozen : live;
   const { atPlayhead, nearby } = sections;
-  const visualRows = visualStackOf(sections);
+  const visualRows = sections.atPlayheadVisual;
 
   const startRestackDrag = (index: number, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
@@ -365,15 +361,6 @@ function Explainer({ title, message }: { title: string; message: string }) {
   );
 }
 
-/// The draggable prefix of the At-playhead section: splitPeekSections puts
-/// the z-ordered visual rows first, the grip-less audio tail after, so the
-/// reorderable list is exactly this filter's result in this order.
-function visualStackOf(sections: PeekSections): PeekItem[] {
-  return sections.atPlayhead.filter(
-    (item) => peekCategory(item.layer.params.kind) !== "audio",
-  );
-}
-
 function PeekRow({
   item,
   isSelected,
@@ -510,10 +497,9 @@ function PeekRow({
       onKeyDown={openMenuFromKeyboard}
     >
       <div className="peek-item-row">
-        {/* Pointer-only restack affordance (ADR 0044 decision 6): the row
-            body already spends click on select and double-click on rename,
-            so the drag needs its own handle. Pure pointer events — never
-            HTML5 draggable — so the gesture can't become a Dockview drag. */}
+        {/* Restack affordance (ADR 0044 decision 6): the row body already
+            spends click on select and double-click on rename, so the drag
+            needs its own handle. Pointer-only — see usePointerReorder. */}
         {onGripPointerDown && (
           <span
             className="peek-grip"

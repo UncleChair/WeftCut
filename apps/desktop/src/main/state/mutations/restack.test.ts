@@ -18,7 +18,7 @@ function audioL(id: string, t0: number, t1: number): Layer {
 }
 const C = colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1)
 
-/** [A-roll, B-roll, wash(x), logo(y)] — two transient overlay lanes above the
+/** [A-roll, B-roll, wash(x), logo(y)] — two transient overlay tracks above the
  *  reserved skeleton, one visual layer each. Track index = z (0 = bottom). */
 function overlayStack(): { p: Project; g: IdGen; washId: string; logoId: string; x: string; y: string } {
   const g = seededGen(); const p = blankProject(g, 't')
@@ -46,7 +46,7 @@ describe('applyRestackLayer — smart degradation', () => {
     wash.locked = true
     wash.height_px = 96
     const ret = applyRestackLayer(p, g, x, y, 'above')
-    expect(ret).toBe(washId) // the destination lane IS the moved track
+    expect(ret).toBe(washId) // the destination track IS the moved one
     expect(order(p)).toEqual([p.tracks[0].id, p.tracks[1].id, logoId, washId])
     const moved = track(p, washId)!
     expect(moved.label).toBe('wash')
@@ -63,26 +63,26 @@ describe('applyRestackLayer — smart degradation', () => {
     expect(order(p)).toEqual([aRoll, bRoll, logoId, washId])
   })
 
-  it('shared-track mover (audio co-resident) splits onto a new lane above the anchor; the source keeps its audio', () => {
+  it('shared-track mover (audio co-resident) splits onto a new track above the anchor; the source keeps its audio', () => {
     const { p, g, washId, x, y } = overlayStack()
     track(p, washId)!.layers.push(audioL('au', 0, 1_000_000))
     const before = order(p)
     const ret = applyRestackLayer(p, g, x, y, 'above')
     expect(ret).not.toBeNull()
-    expect(ret).not.toBe(washId) // a fresh lane, not the shared one
+    expect(ret).not.toBe(washId) // a fresh track, not the shared one
     expect(order(p)).toEqual([...before, ret]) // directly above logo = tail
     const fresh = track(p, ret!)!
     expect(fresh.layers.map((l) => l.id)).toEqual([x])
-    // new lane carries Track::new() defaults — the name derives from position
+    // the fresh track carries Track::new() defaults — the name derives from position
     expect(fresh.label).toBeNull()
     expect(fresh.role).toBeNull()
     expect(fresh.transient).toBe(true)
-    // the source survives with what it still holds — no prune of a non-empty lane
+    // the source survives with what it still holds — no prune of a non-empty track
     expect(track(p, washId)!.layers.map((l) => l.id)).toEqual(['au'])
   })
 
   it('shared-track mover splits below the anchor at exactly the anchor track position', () => {
-    // Three overlay lanes: wash(x + au) / mid / top(w). Dropping x below w is a
+    // Three overlay tracks: wash(x + au) / mid / top(w). Dropping x below w is a
     // real move (wash is NOT already adjacent), so the split lands at idx 4.
     const g = seededGen(); const p = blankProject(g, 't')
     const washId = applyAddTrack(p, g, 'wash') // idx 2
@@ -118,14 +118,14 @@ describe('applyRestackLayer — smart degradation', () => {
     const m = applyAddLayer(p, g, bRoll.id, C, 2_000_000, 3_000_000) // sole occupant of B roll
     const ret = applyRestackLayer(p, g, m, y, 'above')
     expect(ret).not.toBe(bRoll.id)
-    // the skeleton is still at index 1, emptied but NOT pruned (reserved lanes are not transient)
+    // the skeleton is still at index 1, emptied but NOT pruned (reserved tracks are not transient)
     expect(p.tracks[1].id).toBe(bRoll.id)
     expect(p.tracks[1].layers).toEqual([])
     expect(track(p, ret!)!.layers.map((l) => l.id)).toEqual([m])
   })
 
   // Positive prune wiring. In reachable states the split path can never empty a
-  // PRUNABLE lane — a transient, unlocked, sole-occupant source takes the
+  // PRUNABLE track — a transient, unlocked, sole-occupant source takes the
   // track-move path, and the forced-split sources (role-stamped) are exactly
   // the ones the predicate declines. This synthetic transient-stamped role
   // track violates the `transient == (role is None)` creation invariant on
@@ -224,7 +224,7 @@ function actorWithSharedStack() {
 }
 
 describe('restack_layer through the actor', () => {
-  it('records ONE entry with its own history label, and a single undo restores layer, lane and source together', () => {
+  it('records ONE entry with its own history label, and a single undo restores layer, track and source together', () => {
     const { actor, x, y } = actorWithSharedStack()
     const before = actor.snapshot()
     const lenBefore = actor.historyStatus().len
@@ -234,15 +234,15 @@ describe('restack_layer through the actor', () => {
     const last = actor.historyView(10).ops.at(-1)!
     expect(last.label_key).toBe('history.layer.restack')
     expect(last.summary).toBe('Restacked layer')
-    // the split landed: a fresh lane above the anchor's track holds x
+    // the split landed: a fresh track above the anchor's holds x
     expect(actor.snapshot().tracks.length).toBe(before.tracks.length + 1)
     expect(actor.snapshot().tracks.at(-1)!.layers.map((l) => l.id)).toEqual([x])
-    // ONE undo puts the layer back on its shared lane and drops the fresh one
+    // ONE undo puts the layer back on its shared track and drops the fresh one
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot()).toEqual(before)
   })
 
-  it('names the mover and its destination lane in the entry`s affected refs', () => {
+  it('names the mover and its destination track in the entry`s affected refs', () => {
     const { actor, x, y } = actorWithSharedStack()
     actor.dispatch('restack_layer', { layer: x, anchor: y, position: 'above' })
     const last = actor.historyView(10).ops.at(-1)!
@@ -259,9 +259,48 @@ describe('restack_layer through the actor', () => {
     const y = (actor.dispatch('add_layer', { track: t3, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
     const before = actor.snapshot()
     expect(actor.dispatch('restack_layer', { layer: x, anchor: y, position: 'above' }).ok).toBe(true)
-    expect(actor.snapshot().tracks.at(-1)!.id).toBe(t2) // the whole lane moved
+    expect(actor.snapshot().tracks.at(-1)!.id).toBe(t2) // the whole track moved
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot()).toEqual(before)
+  })
+
+  // Undo across a PRUNE, pinned. Reachable states never prune on this path (the
+  // synthetic-prune note on the unit suite above: a prunable sole-occupant
+  // source takes the track-move path instead), so the same deliberate
+  // `transient == (role is None)` violation is seeded through createActor's
+  // `initial` — the one seam that takes a project as-is (validate has no
+  // transient/role rule). This is what makes the spec's Testing Decisions
+  // promise testable — ONE undo restores layer + fresh track + pruned source
+  // together — and keeps the prune wiring's mutants killable.
+  it('single undo of a split + prune restores mover, fresh track and the pruned source with its identity', () => {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 't')
+    const bRoll = initial.tracks[1]
+    expect(bRoll.role).toBe('BRoll')
+    bRoll.transient = true // synthetic: forces the split (role) AND satisfies the prune predicate
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const t3 = (actor.dispatch('add_track', { label: 'logo' }) as { ok: true; value: string }).value
+    const m = (actor.dispatch('add_layer', { track: bRoll.id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value // sole occupant of B roll
+    const y = (actor.dispatch('add_layer', { track: t3, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    const before = actor.snapshot()
+    const lenBefore = actor.historyStatus().len
+
+    expect(actor.dispatch('restack_layer', { layer: m, anchor: y, position: 'above' }).ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(lenBefore + 1) // split + prune in ONE commit
+    const after = actor.snapshot()
+    expect(after.tracks.find((t) => t.id === bRoll.id)).toBeUndefined() // source pruned
+    const fresh = after.tracks.at(-1)!
+    expect(before.tracks.map((t) => t.id)).not.toContain(fresh.id) // a minted track holds the mover
+    expect(fresh.layers.map((l) => l.id)).toEqual([m])
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    const restored = actor.snapshot()
+    // the pruned source is back with its identity — id, role, position — holding the mover
+    expect(restored.tracks[1].id).toBe(bRoll.id)
+    expect(restored.tracks[1].role).toBe('BRoll')
+    expect(restored.tracks[1].layers.map((l) => l.id)).toEqual([m])
+    expect(restored.tracks.map((t) => t.id)).not.toContain(fresh.id) // the fresh track is gone
+    expect(restored).toEqual(before)
   })
 
   it('an already-in-place restack burns no op id (same contract as move_track)', () => {

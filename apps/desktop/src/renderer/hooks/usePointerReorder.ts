@@ -7,9 +7,7 @@ import {
 } from "react";
 
 /// An in-progress list-reorder gesture. `gap` is the insertion slot in
-/// [0..rowIds.length]: the dragged row would land before row `gap`. Pure
-/// pointer events — never HTML5 drag-and-drop — so a row gesture can never
-/// become a Dockview Panel dock drag.
+/// [0..rowIds.length]: the dragged row would land before row `gap`.
 export interface ReorderDrag {
   /// Row id captured at gesture start (`rowIds[fromIndex]` at pointerdown).
   id: string;
@@ -77,9 +75,11 @@ function scrollHostOf(el: HTMLElement | null): HTMLElement | null {
 /// Shared pointer-driven list-reorder gesture: drag state with a gap model,
 /// gap hit-testing by row-rect midlines, edge auto-scroll against the nearest
 /// scrollable ancestor, per-gesture window listeners, and Escape /
-/// pointercancel disarm. Emits nothing mid-gesture; exactly one `onDrop` at a
-/// non-noop drop. Presentation stays with the consumer — this hook only says
-/// which row is dragging and where the insertion indicator belongs.
+/// pointercancel disarm. Pure pointer events — never HTML5 drag-and-drop —
+/// so a consumer's row gesture can never become a Dockview Panel dock drag.
+/// Emits nothing mid-gesture; exactly one `onDrop` at a non-noop drop.
+/// Presentation stays with the consumer — this hook only says which row is
+/// dragging and where the insertion indicator belongs.
 export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
   // The ref mirrors the state so the window-level listeners registered once
   // per gesture always read the freshest gap.

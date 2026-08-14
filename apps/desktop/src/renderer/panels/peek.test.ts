@@ -79,6 +79,8 @@ describe("splitPeekSections", () => {
       "mid-motif",
       "bottom-video",
     ]);
+    // All-visual stack: the reorderable prefix is the whole section.
+    expect(sections.atPlayheadVisual).toEqual(sections.atPlayhead);
   });
 
   it("sinks spanning audio rows to the section tail in their input order", () => {
@@ -97,6 +99,12 @@ describe("splitPeekSections", () => {
       "a1",
       "a2",
     ]);
+    // The exposed visual prefix ends exactly where the audio tail begins —
+    // the panel's draggable stack, taken as-is.
+    expect(sections.atPlayheadVisual.map((i) => i.layer.id)).toEqual(["v"]);
+    expect(sections.atPlayheadVisual).toEqual(
+      sections.atPlayhead.slice(0, sections.atPlayheadVisual.length),
+    );
   });
 
   it("keeps the Nearby section in the existing proximity order", () => {
@@ -124,12 +132,15 @@ describe("splitPeekSections", () => {
       "audio",
     );
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["live-a"]);
+    // An audio-only stack has an empty visual prefix: nothing is draggable.
+    expect(sections.atPlayheadVisual).toEqual([]);
     expect(sections.nearby.map((i) => i.layer.id)).toEqual(["near-a"]);
   });
 
   it("a filter matching nothing leaves both sections empty", () => {
     const sections = splitPeekSections([item("v", "VideoClip")], "text");
     expect(sections.atPlayhead).toEqual([]);
+    expect(sections.atPlayheadVisual).toEqual([]);
     expect(sections.nearby).toEqual([]);
   });
 });

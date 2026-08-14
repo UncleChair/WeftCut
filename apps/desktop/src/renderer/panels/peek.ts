@@ -100,6 +100,10 @@ export interface PeekSections {
   /// convention); audio rows sink to the tail because audio mixes by
   /// role and z is meaningless for it.
   atPlayhead: PeekItem[];
+  /// The visual prefix of `atPlayhead` — the same items, ending where the
+  /// audio tail begins. This is the reorderable z-stack: consumers take it
+  /// as-is instead of re-deriving kinds.
+  atPlayheadVisual: PeekItem[];
   /// Everything else in the window, in `buildPeekItems`' proximity
   /// order, untouched.
   nearby: PeekItem[];
@@ -131,7 +135,11 @@ export function splitPeekSections(
     }
   }
   visual.sort((a, b) => b.trackIndex - a.trackIndex);
-  return { atPlayhead: [...visual, ...audio], nearby };
+  return {
+    atPlayhead: [...visual, ...audio],
+    atPlayheadVisual: visual,
+    nearby,
+  };
 }
 
 /// The anchored restack a drop means: the op's own addressing (ADR 0044
