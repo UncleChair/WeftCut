@@ -25,6 +25,17 @@ import {
 
 export const WEFTCUT_MEDIA_MIME_PREFIX = "application/x-weftcut-";
 
+/** How much of the workspace a whole-layout edge drop claims on its axis.
+ *  `WORKSPACE_EDGE_DROP_OVERLAY` (DockWorkspace.tsx) draws the drop band at
+ *  this same fraction, so the highlight IS the landing size — change one and
+ *  the other must follow. */
+export const EDGE_DOCK_FRACTION = 0.25;
+
+/** On the host element while the Quick Actions strip is the drag payload.
+ *  workspace.css keys off it to pin the drop highlight to the strip's real
+ *  44px landing thickness instead of the half-of-target default. */
+export const STRIP_DRAG_CLASS = "weft-strip-drag";
+
 export interface DockViewport {
   width: number;
   height: number;
@@ -42,9 +53,14 @@ interface DockPanelParams {
  *  sibling-equalizing relayout. */
 interface PendingSplitDropFix {
   axis: "width" | "height";
-  targetGroupId: string;
+  /** `null` marks a whole-workspace edge dock: no group gave up space, so
+   *  there is nothing to restore — the docked group just gets its promised
+   *  `EDGE_DOCK_FRACTION` slice and the rest of the branch absorbs it. */
+  targetGroupId: string | null;
   /** Pre-drop on-axis size of every group, target included. */
   sizes: Map<string, number>;
+  /** Workspace size on `axis` at capture time; only edge docks read it. */
+  containerSize: number;
   draggedPanelId: string | null;
   draggedGroupId: string;
 }
@@ -126,6 +142,63 @@ function overlayDataTransfer(
   return "dataTransfer" in nativeEvent ? nativeEvent.dataTransfer : null;
 }
 
+/** The deepest node under the pointer sits inside a tab strip. Reliable on
+ *  the edge band's capture-phase dragover: `target` is that deepest node. */
+function overTabStrip(event: DragEvent | PointerEvent): boolean {
+  return (
+    event.target instanceof Element &&
+    event.target.closest(".dv-tabs-and-actions-container") !== null
+  );
+}
+
+/** A drop Dockview itself would silently discard — its own drop handler
+ *  no-ops these same-group moves: a panel merged into the group it already
+ *  occupies, a group dropped anywhere onto itself, and a group split off its
+ *  own sole panel (which recreates the layout it left). Dockview still draws
+ *  the full drop preview for them, promising a layout change that can never
+ *  happen; suppressing the overlay keeps "highlight = landing layout" true.
+ *  Same-group moves that DO land — splitting one panel out of a multi-panel
+ *  group, reordering tabs — must keep their preview. Edge-band events carry
+ *  no group and fall through untouched. */
+function isNoOpSelfDrop(
+  viewId: string,
+  event: DockviewWillShowOverlayLocationEvent,
+): boolean {
+  const data = event.getData();
+  const group = event.group;
+  if (!data || !group) return false;
+  if (data.viewId !== viewId || data.groupId !== group.id) return false;
+  if (data.panelId === null) return !data.tabGroupId;
+  if (event.kind === "content" && event.position === "center") return true;
+  return group.panels.length === 1 && group.panels[0]?.id === data.panelId;
+}
+
+function isSoleStripGroup(group: DockviewGroupPanel): boolean {
+  return group.panels.length === 1 && group.panels[0]?.id === "quick-actions";
+}
+
+/** The on-axis size a group can actually land at: the drop preview promises
+ *  `proposed`, but the Quick Actions strip is pinned to its bar thickness and
+ *  every Panel declares a minimum — a promise below those is a lie the next
+ *  layout pass would break anyway. */
+function constrainedDropSize(
+  group: DockviewGroupPanel,
+  axis: SplitAxis,
+  proposed: number,
+): number {
+  if (isSoleStripGroup(group)) return STRIP_THICKNESS;
+  let minimum = 0;
+  for (const panel of group.panels) {
+    if (!isPanelId(panel.id)) continue;
+    const definition = PANEL_REGISTRY[panel.id];
+    minimum = Math.max(
+      minimum,
+      axis === "width" ? definition.minimumWidth : definition.minimumHeight,
+    );
+  }
+  return Math.max(proposed, minimum);
+}
+
 /**
  * Dockview is deliberately contained here. Callers deal only in PanelKind.
  */
@@ -136,9 +209,25 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   private hoveredPanel: PanelKind | null = null;
   private pendingSplitDropFix: PendingSplitDropFix | null = null;
 
-  constructor(private readonly api: DockviewApi) {
+  constructor(
+    private readonly api: DockviewApi,
+    stripDragHost?: HTMLElement,
+  ) {
     this.disposables.push(api.onWillShowOverlay((event) => {
       if (isBusinessDockDrag(overlayDataTransfer(event))) {
+        event.preventDefault();
+        return;
+      }
+      if (isNoOpSelfDrop(api.id, event)) {
+        event.preventDefault();
+        return;
+      }
+      // The whole-workspace edge band listens on the capture phase, so it
+      // sees drops aimed at the tab strips sitting inside it first. Bowing
+      // out here happens BEFORE the band claims the event (v8 fires this
+      // pre-claim), so the strip's own tab target still takes the drop the
+      // user actually aimed at.
+      if (event.kind === "edge" && overTabStrip(event.nativeEvent)) {
         event.preventDefault();
       }
     }));
@@ -155,11 +244,40 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       api.onDidActivePanelChange(() => this.emitChange()),
       api.onDidMaximizedGroupChange(() => this.emitChange()),
     );
+    if (stripDragHost) this.trackStripDrag(stripDragHost);
     // A StrictMode-ready replay may hand a fresh adapter an API whose Panels
     // were already registered by the first pass. Seed recovery metadata from
     // that live tree instead of waiting for another layout mutation.
     this.syncPreviewGroupChrome();
     this.captureOpenPlacements();
+  }
+
+  /** Mirror "the drag payload is the Quick Actions strip" onto the host as
+   *  `STRIP_DRAG_CLASS`. A DOM class rather than React state on purpose: a
+   *  re-render mid-drag can detach the drag-source node, which cancels an
+   *  HTML5 drag outright. */
+  private trackStripDrag(host: HTMLElement): void {
+    const mark = (active: boolean) =>
+      host.classList.toggle(STRIP_DRAG_CLASS, active);
+    const end = () => mark(false);
+    this.disposables.push(
+      this.api.onWillDragPanel((event) =>
+        mark(event.panel.id === "quick-actions"),
+      ),
+      this.api.onWillDragGroup((event) => mark(isSoleStripGroup(event.group))),
+      // A drop that moves the strip's tab detaches the drag source, so its
+      // `dragend` fires off-document where no listener sees it — the drop
+      // event has to close the window instead (same trap as
+      // useDockDragInFlight in DockWorkspace.tsx).
+      this.api.onWillDrop(() => queueMicrotask(end)),
+    );
+    document.addEventListener("dragend", end);
+    this.disposables.push({
+      dispose: () => {
+        document.removeEventListener("dragend", end);
+        end();
+      },
+    });
   }
 
   belongsTo(api: DockviewApi): boolean {
@@ -471,16 +589,17 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
 
   /** Dockview answers every split drop by inserting the new group with no
    *  explicit size, which makes Splitview *distribute*: every sibling in the
-   *  branch is resized to an equal share. The drop preview (50% of the
-   *  target) therefore lies — carefully sized columns jump to equal widths.
-   *  Capture the pre-drop geometry here (synchronously before the move) and
-   *  repair it right after: untouched groups keep their size, the target and
-   *  the new group split the freed space evenly — what the preview promised. */
+   *  branch is resized to an equal share. The drop preview therefore lies —
+   *  carefully sized columns jump to equal widths. Capture the pre-drop
+   *  geometry here (synchronously before the move) and repair it right
+   *  after, to what the preview promised: on a group split, untouched groups
+   *  keep their size and the target yields half to the newcomer; on a
+   *  whole-workspace edge dock, the newcomer takes the band's
+   *  `EDGE_DOCK_FRACTION`. Both bow to `constrainedDropSize` — a Panel never
+   *  lands below its minimum, and the Quick Actions strip stays a 44px bar. */
   private captureSplitDropFix(event: DockviewWillDropEvent): void {
     this.pendingSplitDropFix = null;
     const { position, group, kind } = event;
-    if (!group) return; // root edge drops carry no target group (and are off)
-    if (kind !== "content" && kind !== "header_space") return;
     if (
       position !== "left" &&
       position !== "right" &&
@@ -493,19 +612,37 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     if (!data || data.viewId !== this.api.id) return; // not a layout move
     const axis: SplitAxis =
       position === "left" || position === "right" ? "width" : "height";
-    const sizes = new Map<string, number>();
-    for (const candidate of this.api.groups) {
-      const size = measureOnAxis(candidate, axis);
-      if (size > 0) sizes.set(candidate.id, size);
+    if (kind === "edge") {
+      // A whole-workspace edge dock: no target group exists, distribute
+      // squeezes every branch sibling. The repair promises the docked group
+      // the fraction the edge band displayed.
+      this.pendingSplitDropFix = {
+        axis,
+        targetGroupId: null,
+        sizes: new Map(),
+        containerSize: axis === "width" ? this.api.width : this.api.height,
+        draggedPanelId: data.panelId ?? null,
+        draggedGroupId: data.groupId,
+      };
+    } else if (kind === "content" || kind === "header_space") {
+      if (!group) return;
+      const sizes = new Map<string, number>();
+      for (const candidate of this.api.groups) {
+        const size = measureOnAxis(candidate, axis);
+        if (size > 0) sizes.set(candidate.id, size);
+      }
+      if (!sizes.has(group.id)) return;
+      this.pendingSplitDropFix = {
+        axis,
+        targetGroupId: group.id,
+        sizes,
+        containerSize: 0,
+        draggedPanelId: data.panelId ?? null,
+        draggedGroupId: data.groupId,
+      };
+    } else {
+      return;
     }
-    if (!sizes.has(group.id)) return;
-    this.pendingSplitDropFix = {
-      axis,
-      targetGroupId: group.id,
-      sizes,
-      draggedPanelId: data.panelId ?? null,
-      draggedGroupId: data.groupId,
-    };
     // The move is processed synchronously right after this event, so a
     // microtask still beats the next paint: the repair is invisible.
     queueMicrotask(() => this.applySplitDropFix());
@@ -515,17 +652,33 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     const fix = this.pendingSplitDropFix;
     this.pendingSplitDropFix = null;
     if (!fix) return;
-    const target = this.api.groups.find(
-      (candidate) => candidate.id === fix.targetGroupId,
-    );
     const dragged = fix.draggedPanelId
       ? this.api.getPanel(fix.draggedPanelId)?.group
       : this.api.groups.find(
           (candidate) => candidate.id === fix.draggedGroupId,
         );
+    if (!dragged) return;
+    if (fix.targetGroupId === null) {
+      // Edge dock: one explicit resize is enough — setSize reclaims the
+      // delta from the rest of the branch proportionally, which is exactly
+      // the squeeze a "dock to the workspace edge" should cost.
+      setSizeOnAxis(
+        dragged,
+        fix.axis,
+        constrainedDropSize(
+          dragged,
+          fix.axis,
+          Math.round(fix.containerSize * EDGE_DOCK_FRACTION),
+        ),
+      );
+      return;
+    }
+    const target = this.api.groups.find(
+      (candidate) => candidate.id === fix.targetGroupId,
+    );
     // Merges, reorders, and rejected drops leave the dragged item inside the
     // target group; only a real split lands it beside the target.
-    if (!target || !dragged || dragged === target) return;
+    if (!target || dragged === target) return;
     for (const candidate of this.api.groups) {
       if (candidate === target || candidate === dragged) continue;
       const size = fix.sizes.get(candidate.id);
@@ -536,9 +689,13 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     const combined =
       measureOnAxis(target, fix.axis) + measureOnAxis(dragged, fix.axis);
     if (combined <= 0) return;
-    const half = Math.round(combined / 2);
-    setSizeOnAxis(target, fix.axis, half);
-    setSizeOnAxis(dragged, fix.axis, combined - half);
+    const draggedSize = constrainedDropSize(
+      dragged,
+      fix.axis,
+      Math.round(combined / 2),
+    );
+    setSizeOnAxis(target, fix.axis, combined - draggedSize);
+    setSizeOnAxis(dragged, fix.axis, draggedSize);
   }
 
   private capturePlacement(panel: IDockviewPanel): void {

@@ -61,6 +61,7 @@ import { setTool, useActiveTool } from "../state/toolStore";
 import { Menu, MenuItem } from "../menu/Menu";
 import {
   DockWorkspaceAdapter,
+  EDGE_DOCK_FRACTION,
   type DockWorkspaceController,
 } from "./dockWorkspaceAdapter";
 import {
@@ -715,6 +716,33 @@ const UNCAPPED_GROUP = {
   maximumHeight: UNCAPPED,
 } as const;
 
+type StripGroup = IDockviewPanelProps<DockPanelParams>["api"]["group"];
+
+interface StripGroupConstraints {
+  minimumWidth?: number;
+  maximumWidth?: number;
+  minimumHeight?: number;
+  maximumHeight?: number;
+}
+
+/** Every constraint write below goes through here so an unchanged value is
+ *  never re-applied. Dockview 8's `setConstraints` fires the group's
+ *  `onDidChange` — and with it a grid relayout — even when nothing changed
+ *  (v7 stayed quiet), and the pin re-applies on every layout change, so an
+ *  unconditional write closes the loop pin → relayout → pin…, which froze
+ *  the renderer on the first click after the v8 upgrade. Keyed weakly on the
+ *  group: a restore builds new group objects and naturally re-applies. */
+const lastAppliedConstraints = new WeakMap<object, string>();
+function applyGroupConstraints(
+  group: StripGroup,
+  constraints: StripGroupConstraints,
+): void {
+  const next = JSON.stringify(constraints);
+  if (lastAppliedConstraints.get(group) === next) return;
+  lastAppliedConstraints.set(group, next);
+  group.api.setConstraints(constraints);
+}
+
 /**
  * Hold the strip's Group to `STRIP_THICKNESS` across the axis its own splitter
  * moves, so the bar reads as chrome instead of a Panel: docked as a column it is
@@ -742,6 +770,10 @@ const UNCAPPED_GROUP = {
  * a Panel api fires into nothing (only Groups sit in the grid), and a
  * function-valued constraint — which would re-aim itself and need none of the
  * bookkeeping here — is evaluated once and frozen at the value it returned.
+ *
+ * Every write in here must be a real change — `applyGroupConstraints` and the
+ * `refused` set are what keep this hook from feeding Dockview 8's
+ * write→relayout→re-pin loop; see `applyGroupConstraints`.
  */
 function useFixedStripThickness(
   api: IDockviewPanelProps<DockPanelParams>["api"],
@@ -750,20 +782,23 @@ function useFixedStripThickness(
   sole: boolean,
 ): void {
   const dragging = useDockDragInFlight(containerApi);
-  // The size Dockview last settled on against our wishes, so a Group that
-  // cannot reach the thickness (a container too small to give it) stops trading
-  // resizes with the layout pass.
-  const refused = useRef<number | null>(null);
+  // The sizes Dockview settled on against our wishes, so a Group that cannot
+  // reach the thickness (a container too small to give it) stops trading
+  // resizes with the layout pass. A set, not the last value: a layout that
+  // ALTERNATES between two refusals would defeat a single-value guard and
+  // re-enter the resize trade on every pass.
+  const refused = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const group = api.group;
     if (!sole || dragging || axis === null) {
-      group.api.setConstraints(UNCAPPED_GROUP);
+      applyGroupConstraints(group, UNCAPPED_GROUP);
       return;
     }
-    refused.current = null;
+    refused.current.clear();
     const pin = () => {
-      group.api.setConstraints(
+      applyGroupConstraints(
+        group,
         axis === "width"
           ? {
               minimumWidth: STRIP_THICKNESS,
@@ -782,11 +817,11 @@ function useFixedStripThickness(
       // constraint sizes, and the header takes its slice out of the Panel.
       const current = group.api[axis];
       if (Math.round(current) === STRIP_THICKNESS) {
-        refused.current = null;
+        refused.current.clear();
         return;
       }
-      if (refused.current === current) return;
-      refused.current = current;
+      if (refused.current.has(current)) return;
+      refused.current.add(current);
       group.api.setSize({ [axis]: STRIP_THICKNESS });
     };
     pin();
@@ -795,7 +830,7 @@ function useFixedStripThickness(
     const disposable = containerApi.onDidLayoutChange(pin);
     return () => {
       disposable.dispose();
-      group.api.setConstraints(UNCAPPED_GROUP);
+      applyGroupConstraints(group, UNCAPPED_GROUP);
     };
   }, [api, axis, containerApi, dragging, sole]);
 }
@@ -1080,17 +1115,26 @@ const WEFT_DOCK_THEME: DockviewTheme = { ...themeAbyss, name: "weft", gap: 6 };
 
 /* Drop-target geometry, tuned so the highlight always equals the layout the
  * drop will produce (a 50/50 split or a full-area tab merge) and targets are
- * large enough to hit: a group's outer third splits, its middle merges, and
- * the outermost groups' edges double as the workspace edges. Dockview's
- * default was a 20% activation zone, which made edge drops hard to hit.
- *
- * The root-level edge band (`dndEdges`) stays off: it listens on the capture
- * phase, so any band wider than the default 10px hijacks drops aimed at the
- * 28px tab strips that live inside it — the exact "drop did not land where I
- * aimed" failure. Generous per-group zones cover the same edges predictably. */
+ * large enough to hit: a group's outer third splits, its middle merges.
+ * Dockview's default was a 20% activation zone, which made edge drops hard
+ * to hit. The adapter's split-drop repair is what makes the 50% band true —
+ * see captureSplitDropFix. */
 const GROUP_CONTENT_DROP_OVERLAY: DroptargetOverlayModel = {
   activationSize: { value: 30, type: "percentage" },
   size: { value: 50, type: "percentage" },
+};
+
+/* The whole-workspace edge band. Dockview's 10px default activation was
+ * nearly impossible to hit, so the band is widened to a real target; the
+ * band it draws spans `EDGE_DOCK_FRACTION` of the workspace because the
+ * adapter sizes an edge-docked group to exactly that fraction — again the
+ * highlight IS the landing size. The band listens on the capture phase and
+ * would swallow drops aimed at the tab strips inside it; the adapter bows it
+ * out over them (onWillShowOverlay) instead of keeping it disabled, which is
+ * what this option used to be. */
+const WORKSPACE_EDGE_DROP_OVERLAY: DroptargetOverlayModel = {
+  activationSize: { value: 32, type: "pixels" },
+  size: { value: EDGE_DOCK_FRACTION * 100, type: "percentage" },
 };
 
 function dropOverlayModel({
@@ -1158,7 +1202,7 @@ export function DockWorkspace({
     let adapter = adapterRef.current;
     if (!adapter?.belongsTo(api)) {
       adapter?.dispose();
-      adapter = new DockWorkspaceAdapter(api);
+      adapter = new DockWorkspaceAdapter(api, sectionRef.current ?? undefined);
       adapterRef.current = adapter;
     }
     adapter.initializeEditingLayout();
@@ -1196,12 +1240,11 @@ export function DockWorkspace({
             onReady={onReady}
             disableFloatingGroups
             dndStrategy="html5"
-            keyboardNavigation
             noPanelsOverlay="watermark"
             announcements
             messages={messages}
             dropOverlayModel={dropOverlayModel}
-            dndEdges={false}
+            dndEdges={WORKSPACE_EDGE_DROP_OVERLAY}
           />
         </section>
       </WorkspaceChromeContext.Provider>

@@ -459,6 +459,32 @@
   border-radius: var(--radius-sm);
 }
 
+/* While the Quick Actions strip is the drag payload (`weft-strip-drag`, set
+   by the adapter), the drop highlight is pinned to the strip's real landing
+   thickness — STRIP_THICKNESS, 44px — instead of Dockview's half-of-target
+   band, which promises a region the bar can never fill. `!important` beats
+   the inline geometry renderInPlaceOverlay writes every frame; the selection
+   box is relative-positioned, so `calc` pins the far edges. The thin-line
+   fallback for tiny targets keeps its own 4px inline size. */
+.weft-strip-drag
+  .dv-drop-target-selection:not(.dv-drop-target-selection-line).dv-drop-target-left {
+  width: 44px !important;
+}
+.weft-strip-drag
+  .dv-drop-target-selection:not(.dv-drop-target-selection-line).dv-drop-target-right {
+  left: calc(100% - 44px) !important;
+  width: 44px !important;
+}
+.weft-strip-drag
+  .dv-drop-target-selection:not(.dv-drop-target-selection-line).dv-drop-target-top {
+  height: 44px !important;
+}
+.weft-strip-drag
+  .dv-drop-target-selection:not(.dv-drop-target-selection-line).dv-drop-target-bottom {
+  top: calc(100% - 44px) !important;
+  height: 44px !important;
+}
+
 .weft-dock-empty {
   min-width: 280px;
   display: grid;

@@ -432,14 +432,16 @@ describe("DockWorkspace React integration", () => {
       tabComponents: Record<string, unknown>;
       disableFloatingGroups: boolean;
       dndStrategy: string;
-      keyboardNavigation: boolean;
+      keyboardNavigation: boolean | undefined;
       announcements: boolean;
     };
     expect(Object.keys(props.components)).toEqual([DOCK_COMPONENT_ID]);
     expect(Object.keys(props.tabComponents)).toEqual([DOCK_TAB_COMPONENT_ID]);
     expect(props.disableFloatingGroups).toBe(true);
     expect(props.dndStrategy).toBe("html5");
-    expect(props.keyboardNavigation).toBe(true);
+    // Keyboard docking moved to dockview-enterprise in v8; passing the option
+    // without that module only logs an error, so it stays off.
+    expect(props.keyboardNavigation).toBeUndefined();
     expect(props.announcements).toBe(true);
   });
 
@@ -806,7 +808,7 @@ describe("DockWorkspace React integration", () => {
         groupPanels: [{ id: "quick-actions" }],
       });
 
-      act(() => dock.onWillDragGroup.emit());
+      act(() => dock.onWillDragGroup.emit({ group }));
       expect(constraints(group)).toEqual({
         maximumWidth: UNBOUNDED,
         maximumHeight: UNBOUNDED,
@@ -833,7 +835,7 @@ describe("DockWorkspace React integration", () => {
         groupPanels: [{ id: "quick-actions" }],
       });
 
-      act(() => dock.onWillDragPanel.emit());
+      act(() => dock.onWillDragPanel.emit({ panel: { id: "quick-actions" } }));
       expect(constraints(group)).toEqual({
         maximumWidth: UNBOUNDED,
         maximumHeight: UNBOUNDED,
@@ -949,8 +951,13 @@ describe("DockWorkspace React integration", () => {
     expect(
       props.dropOverlayModel({ location: "header_space" }),
     ).toBeUndefined();
-    // Root edge bands stay off — they capture-phase-hijack tab-strip drops.
-    expect(props.dndEdges).toBe(false);
+    // The whole-workspace edge band: a hittable activation width, and a band
+    // matching the EDGE_DOCK_FRACTION slice the adapter's repair delivers.
+    // (Its capture-phase tab-strip hijack is bowed out in the adapter.)
+    expect(props.dndEdges).toEqual({
+      activationSize: { value: 32, type: "pixels" },
+      size: { value: 25, type: "percentage" },
+    });
   });
 
   it("renders Open Panel and Reset Workspace recovery for an empty tree", async () => {

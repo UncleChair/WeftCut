@@ -1,8 +1,10 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { type DockviewApi } from "dockview-react";
 
 import {
   DockWorkspaceAdapter,
+  STRIP_DRAG_CLASS,
   isBusinessDockDrag,
 } from "./dockWorkspaceAdapter";
 import {
@@ -67,7 +69,19 @@ function fakeDockview(
   let unavailableReference: string | null = null;
   let overlayListener:
     | ((event: {
-        nativeEvent: { dataTransfer?: Pick<DataTransfer, "types"> };
+        kind?: string;
+        position?: string;
+        group?: FakeGroup;
+        nativeEvent: {
+          dataTransfer?: Pick<DataTransfer, "types">;
+          target?: EventTarget | null;
+        };
+        getData(): {
+          viewId: string;
+          groupId: string;
+          panelId: string | null;
+          tabGroupId?: string;
+        } | undefined;
         preventDefault(): void;
       }) => void)
     | null = null;
@@ -81,6 +95,8 @@ function fakeDockview(
     kind: string;
     getData(): { viewId: string; groupId: string; panelId: string | null } | undefined;
   }>();
+  const willDragPanel = signal<{ panel: { id: string } }>();
+  const willDragGroup = signal<{ group: FakeGroup }>();
 
   function activate(panel: AddedPanel | undefined) {
     activePanel = panel;
@@ -197,6 +213,8 @@ function fakeDockview(
       return { dispose: disposeOverlay };
     }),
     onWillDrop: vi.fn(willDrop.event),
+    onWillDragPanel: vi.fn(willDragPanel.event),
+    onWillDragGroup: vi.fn(willDragGroup.event),
     onDidLayoutChange: vi.fn(layout.event),
     onDidActivePanelChange: vi.fn(active.event),
     onDidMaximizedGroupChange: vi.fn(maximized.event),
@@ -325,11 +343,48 @@ function fakeDockview(
     added,
     rawApi: api,
     willDrop,
+    willDragPanel,
+    willDragGroup,
     disposeOverlay,
     showOverlay(types: string[]) {
       const preventDefault = vi.fn();
       overlayListener?.({
         nativeEvent: { dataTransfer: { types } },
+        getData: () => undefined,
+        preventDefault,
+      });
+      return preventDefault;
+    },
+    showEdgeOverlay(target: EventTarget | null) {
+      const preventDefault = vi.fn();
+      overlayListener?.({
+        kind: "edge",
+        nativeEvent: { dataTransfer: { types: [] }, target },
+        getData: () => undefined,
+        preventDefault,
+      });
+      return preventDefault;
+    },
+    showDockOverlay(options: {
+      kind: string;
+      position: string;
+      group: FakeGroup | undefined;
+      data?: {
+        groupId: string;
+        panelId: string | null;
+        tabGroupId?: string;
+        viewId?: string;
+      };
+    }) {
+      const preventDefault = vi.fn();
+      const { data } = options;
+      overlayListener?.({
+        kind: options.kind,
+        position: options.position,
+        group: options.group,
+        nativeEvent: { dataTransfer: { types: [] } },
+        getData: () =>
+          data ? { ...data, viewId: data.viewId ?? "test-dockview" } : undefined,
         preventDefault,
       });
       return preventDefault;
@@ -538,6 +593,139 @@ describe("DockWorkspaceAdapter", () => {
     // …and target + new group split their combined space evenly.
     expect(timelineGroup.api.setSize).toHaveBeenCalledWith({ height: 277 });
     expect(newGroup.api.setSize).toHaveBeenCalledWith({ height: 277 });
+  });
+
+  it("pins a strip split drop to the bar thickness instead of half", async () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    const groupOf = (id: string) => {
+      const group = dock.groups.find((candidate) =>
+        candidate.panels.some((panel) => panel.id === id),
+      );
+      if (!group) throw new Error(`no group holds ${id}`);
+      return group;
+    };
+    const mediaGroup = groupOf("media");
+    const stripGroup = groupOf("quick-actions");
+    mediaGroup.api.boundingBox.width = 300;
+
+    dock.willDrop.fire({
+      position: "right",
+      group: mediaGroup,
+      kind: "content",
+      getData: () => ({
+        viewId: "test-dockview",
+        groupId: stripGroup.id,
+        panelId: "quick-actions",
+      }),
+    });
+    // Dockview moves the (sole-panel) strip group beside Media and distribute
+    // equalizes the pair — the promised half the 44px bar can never fill.
+    mediaGroup.api.boundingBox.width = 150;
+    stripGroup.api.boundingBox.width = 150;
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mediaGroup.api.setSize).toHaveBeenCalledWith({ width: 256 });
+    expect(stripGroup.api.setSize).toHaveBeenCalledWith({ width: 44 });
+  });
+
+  it("gives an edge dock the fraction the band displayed, floored at minimums", async () => {
+    const dock = fakeDockview(1_000, 800);
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    const mediaGroup = dock.groups.find((candidate) =>
+      candidate.panels.some((panel) => panel.id === "media"),
+    );
+    if (!mediaGroup) throw new Error("media group missing");
+
+    // Edge drops carry no target group: the docked group takes its
+    // EDGE_DOCK_FRACTION slice (25% of 1000 = 250 ≥ Media's 240 minimum).
+    dock.willDrop.fire({
+      position: "left",
+      group: undefined,
+      kind: "edge",
+      getData: () => ({
+        viewId: "test-dockview",
+        groupId: mediaGroup.id,
+        panelId: "media",
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mediaGroup.api.setSize).toHaveBeenCalledWith({ width: 250 });
+
+    // The strip stays a 44px bar even docked against the workspace edge.
+    const stripGroup = dock.groups.find((candidate) =>
+      candidate.panels.some((panel) => panel.id === "quick-actions"),
+    );
+    if (!stripGroup) throw new Error("strip group missing");
+    dock.willDrop.fire({
+      position: "top",
+      group: undefined,
+      kind: "edge",
+      getData: () => ({
+        viewId: "test-dockview",
+        groupId: stripGroup.id,
+        panelId: "quick-actions",
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stripGroup.api.setSize).toHaveBeenCalledWith({ height: 44 });
+  });
+
+  it("bows the edge band out over tab strips so their drops fall through", () => {
+    const dock = fakeDockview();
+    new DockWorkspaceAdapter(dock.api);
+
+    const strip = document.createElement("div");
+    strip.className = "dv-tabs-and-actions-container";
+    const tab = document.createElement("div");
+    strip.appendChild(tab);
+
+    expect(dock.showEdgeOverlay(tab)).toHaveBeenCalledOnce();
+    expect(dock.showEdgeOverlay(document.createElement("div"))).not.toHaveBeenCalled();
+    expect(dock.showEdgeOverlay(null)).not.toHaveBeenCalled();
+  });
+
+  it("marks the host while the Quick Actions strip is the drag payload", async () => {
+    const dock = fakeDockview();
+    const host = document.createElement("section");
+    const adapter = new DockWorkspaceAdapter(dock.api, host);
+    adapter.initializeEditingLayout();
+
+    dock.willDragPanel.fire({ panel: { id: "quick-actions" } });
+    expect(host.classList.contains(STRIP_DRAG_CLASS)).toBe(true);
+
+    // The drop ends the window (the strip's own dragend can fire off-document).
+    dock.willDrop.fire({
+      position: "center",
+      group: undefined,
+      kind: "tab",
+      getData: () => undefined,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(host.classList.contains(STRIP_DRAG_CLASS)).toBe(false);
+
+    // Any other payload never marks the host; an abandoned drag clears via
+    // the document-level dragend fallback.
+    dock.willDragPanel.fire({ panel: { id: "media" } });
+    expect(host.classList.contains(STRIP_DRAG_CLASS)).toBe(false);
+    const stripGroup = dock.groups.find((candidate) =>
+      candidate.panels.some((panel) => panel.id === "quick-actions"),
+    );
+    if (!stripGroup) throw new Error("strip group missing");
+    dock.willDragGroup.fire({ group: stripGroup });
+    expect(host.classList.contains(STRIP_DRAG_CLASS)).toBe(true);
+    document.dispatchEvent(new Event("dragend"));
+    expect(host.classList.contains(STRIP_DRAG_CLASS)).toBe(false);
+
+    // Disposal removes the class and the document listener with it.
+    dock.willDragGroup.fire({ group: stripGroup });
+    adapter.dispose();
+    expect(host.classList.contains(STRIP_DRAG_CLASS)).toBe(false);
   });
 
   it("leaves merges and rejected drops untouched", async () => {
@@ -853,6 +1041,94 @@ describe("DockWorkspaceAdapter", () => {
 
     adapter.dispose();
     expect(dock.disposeOverlay).toHaveBeenCalledOnce();
+  });
+
+  it("hides the drop preview for self-drops Dockview would silently ignore", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    // attribute/effect/nearby share one group; media sits alone in its own.
+    const toolGroup = dock.groups.find((group) =>
+      group.panels.some((panel) => panel.id === "attribute"),
+    );
+    const mediaGroup = dock.groups.find((group) =>
+      group.panels.some((panel) => panel.id === "media"),
+    );
+    if (!toolGroup || !mediaGroup) throw new Error("layout groups missing");
+
+    // A panel over its own group's center merge zone: the drop is a no-op.
+    expect(
+      dock.showDockOverlay({
+        kind: "content",
+        position: "center",
+        group: toolGroup,
+        data: { groupId: toolGroup.id, panelId: "attribute" },
+      }),
+    ).toHaveBeenCalledOnce();
+
+    // A whole group dragged onto itself, wherever it hovers.
+    expect(
+      dock.showDockOverlay({
+        kind: "content",
+        position: "left",
+        group: toolGroup,
+        data: { groupId: toolGroup.id, panelId: null },
+      }),
+    ).toHaveBeenCalledOnce();
+
+    // A group's sole panel anywhere over its own group: splitting it off
+    // would recreate the layout it left.
+    expect(
+      dock.showDockOverlay({
+        kind: "content",
+        position: "right",
+        group: mediaGroup,
+        data: { groupId: mediaGroup.id, panelId: "media" },
+      }),
+    ).toHaveBeenCalledOnce();
+
+    // Meaningful same-group moves keep their preview: splitting one panel
+    // out of a multi-panel group, and reordering on the own tab strip.
+    expect(
+      dock.showDockOverlay({
+        kind: "content",
+        position: "right",
+        group: toolGroup,
+        data: { groupId: toolGroup.id, panelId: "effect" },
+      }),
+    ).not.toHaveBeenCalled();
+    expect(
+      dock.showDockOverlay({
+        kind: "tab",
+        position: "center",
+        group: toolGroup,
+        data: { groupId: toolGroup.id, panelId: "effect" },
+      }),
+    ).not.toHaveBeenCalled();
+
+    // Cross-group merges stay live even for a sole panel, and a foreign
+    // Dockview instance's payload is never judged by our group ids.
+    expect(
+      dock.showDockOverlay({
+        kind: "content",
+        position: "center",
+        group: toolGroup,
+        data: { groupId: mediaGroup.id, panelId: "media" },
+      }),
+    ).not.toHaveBeenCalled();
+    expect(
+      dock.showDockOverlay({
+        kind: "content",
+        position: "center",
+        group: toolGroup,
+        data: {
+          groupId: toolGroup.id,
+          panelId: "attribute",
+          viewId: "another-dockview",
+        },
+      }),
+    ).not.toHaveBeenCalled();
   });
 });
 
