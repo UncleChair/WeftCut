@@ -71,7 +71,7 @@ function fakeDockview(
     | ((event: {
         kind?: string;
         position?: string;
-        group?: FakeGroup;
+        group?: FakeGroup | undefined;
         nativeEvent: {
           dataTransfer?: Pick<DataTransfer, "types">;
           target?: EventTarget | null;
