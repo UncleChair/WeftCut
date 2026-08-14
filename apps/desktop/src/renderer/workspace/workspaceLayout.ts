@@ -8,6 +8,7 @@ import {
   DOCK_COMPONENT_ID,
   DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
+  STRIP_THICKNESS,
   isPanelKind,
   panelTitle,
   type PanelKind,
@@ -234,7 +235,7 @@ export function createEditingLayout(
   };
   // The Quick Actions strip is a full-height edge bar, so it claims a fixed
   // slice of the remaining editor width rather than a proportion.
-  const stripWidth = 44;
+  const stripWidth = STRIP_THICKNESS;
   const bodyWidth = Math.max(1, width - stripWidth);
   const layout = normalizeLayout({
     version: WEFTCUT_LAYOUT_VERSION,

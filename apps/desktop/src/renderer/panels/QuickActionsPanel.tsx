@@ -29,8 +29,8 @@ export interface StripGeometry {
   ): { dispose(): void };
 }
 
-/** Below this |width − height| the axis is left alone. Dragging a splitter
- *  through square would otherwise flip the strip back and forth every frame. */
+/** Below this |width − height| the axis is left alone. Resizing through square
+ *  would otherwise flip the strip back and forth every frame. */
 const ORIENTATION_DEADBAND = 24;
 
 function decideOrientation(
@@ -45,14 +45,26 @@ function decideOrientation(
 }
 
 /**
- * Track the strip's axis from its own Dockview panel geometry.
+ * The strip's axis: whichever way it is docked, or — for a strip with no dock
+ * position to read (`docked` null: floating, popped out) — whichever way its own
+ * box is longer.
  *
- * Deliberately NOT hoisted into `DockPanelRuntimeContract`: that context is
- * shared by every Panel, so live dimensions in it would re-render all of them
- * on every splitter drag. Both the strip body and its grip tab call this
- * against the same `api`, so they observe one event stream and stay in step.
+ * `docked` leads because the way the bar runs and the edge it can be pinned
+ * along have to be the same axis, and only the dock position carries that. A
+ * bar beside the Timeline gets a wide, short cell whose one free edge is
+ * vertical: read it as a row and the buttons run across an axis that cannot be
+ * pinned.
+ *
+ * The geometry subscription is deliberately NOT hoisted into
+ * `DockPanelRuntimeContract`: that context is shared by every Panel, so live
+ * dimensions in it would re-render all of them on every splitter drag. Both the
+ * strip body and its grip tab call this against the same `api`, so they observe
+ * one event stream and stay in step.
  */
-export function useStripOrientation(geometry: StripGeometry): StripOrientation {
+export function useStripOrientation(
+  geometry: StripGeometry,
+  docked: StripOrientation | null,
+): StripOrientation {
   const [orientation, setOrientation] = useState<StripOrientation>(() =>
     decideOrientation(geometry.width, geometry.height, null),
   );
@@ -67,7 +79,7 @@ export function useStripOrientation(geometry: StripGeometry): StripOrientation {
     });
     return () => disposable.dispose();
   }, [geometry]);
-  return orientation;
+  return docked ?? orientation;
 }
 
 /** Chromium maps the wheel to horizontal scrolling only under `Shift`, which
@@ -200,7 +212,16 @@ function QuickActionButton({
  * Layout invariant: NEVER wraps. Whatever doesn't fit scrolls, with the ends
  * fading to advertise that there is more.
  */
-export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
+export function QuickActionsPanel({
+  geometry,
+  docked = null,
+}: {
+  geometry: StripGeometry;
+  /** The axis the Dock Tree dictates. Omitted or null for a strip with no dock
+   *  position to read, which falls back to its own shape — see
+   *  `useStripOrientation`. */
+  docked?: StripOrientation | null;
+}) {
   const { t } = useTranslation();
   const tool = useActiveTool();
   const displayMode = useDisplayMode();
@@ -211,7 +232,7 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
   // only when the range appears or disappears, not on every position change.
   const hasRange = useHasMarkedRange();
   const markersVisible = useMarkersVisible();
-  const orientation = useStripOrientation(geometry);
+  const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
   const { focusIndex, setFocusIndex, onKeyDown } = useRovingFocus(

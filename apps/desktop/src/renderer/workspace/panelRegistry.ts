@@ -33,12 +33,23 @@ export interface PanelDefinition {
 
 const TOOL_MINIMUM = { minimumWidth: 240, minimumHeight: 160 } as const;
 
-/** Quick Actions is a single-row/single-column button strip, so it must be
- *  draggable down to a bare edge bar — `TOOL_MINIMUM`'s 240 px would pin it
- *  ~5.5× too wide. One button plus the drag grip is the real floor; anything
- *  narrower and the strip can't render its own content. Overflow scrolls, so a
- *  small minimum never hides a command permanently. */
-const STRIP_MINIMUM = { minimumWidth: 44, minimumHeight: 44 } as const;
+/**
+ * The Quick Actions bar's thickness across its short axis, and equally the
+ * floor on both axes: one button plus the drag grip is all the strip ever needs
+ * in either direction, and `TOOL_MINIMUM`'s 240 px would pin the bar ~5.5× too
+ * wide. Overflow scrolls, so this never hides a command permanently.
+ *
+ * Floor and thickness are ONE number on purpose: the strip's short axis is
+ * pinned by holding its Group to `minimum === maximum` (see
+ * `useFixedStripThickness` in DockWorkspace.tsx), which is only legal while the
+ * thickness is not below the floor.
+ */
+export const STRIP_THICKNESS = 44;
+
+const STRIP_MINIMUM = {
+  minimumWidth: STRIP_THICKNESS,
+  minimumHeight: STRIP_THICKNESS,
+} as const;
 
 /**
  * The complete Panel catalogue. Panel identity is the semantic kind: no

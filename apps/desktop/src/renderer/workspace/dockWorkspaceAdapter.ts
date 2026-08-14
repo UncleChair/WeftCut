@@ -10,6 +10,7 @@ import {
   DOCK_COMPONENT_ID,
   DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
+  STRIP_THICKNESS,
   panelTitle,
   type PanelKind,
 } from "./panelRegistry";
@@ -178,7 +179,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // The Quick Actions strip claims a fixed slice of width; everything else
     // divides the remainder. Mirrors `createEditingLayout`'s `bodyWidth`, so
     // the imperative first-boot tree and the declarative reset baseline agree.
-    const stripWidth = PANEL_REGISTRY["quick-actions"].minimumWidth;
+    const stripWidth = STRIP_THICKNESS;
     const bodyWidth = Math.max(1, width - stripWidth);
 
     const media = this.addPanel("media", {
@@ -599,7 +600,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       this.addPanel(kind, reference
         ? {
             position: { referencePanel: reference, direction: "left" },
-            initialWidth: PANEL_REGISTRY[kind].minimumWidth,
+            initialWidth: STRIP_THICKNESS,
           }
         : {});
       return;

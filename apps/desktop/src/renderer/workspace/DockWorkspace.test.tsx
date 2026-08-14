@@ -217,6 +217,10 @@ function strictModeApi() {
     return { dispose };
   });
   const event = vi.fn(() => ({ dispose: vi.fn() }));
+  const onDidLayoutChange = drivableEvent();
+  const onWillDragGroup = drivableEvent();
+  const onWillDragPanel = drivableEvent();
+  const onWillDrop = drivableEvent();
   const clear = vi.fn(() => {
     panels.clear();
     groups.splice(0);
@@ -286,8 +290,10 @@ function strictModeApi() {
     getPanel: (id: string) => panels.get(id),
     addPanel,
     onWillShowOverlay,
-    onWillDrop: event,
-    onDidLayoutChange: event,
+    onWillDrop,
+    onDidLayoutChange,
+    onWillDragGroup,
+    onWillDragPanel,
     onDidActivePanelChange: event,
     onDidMaximizedGroupChange: event,
     hasMaximizedGroup: vi.fn(() => false),
@@ -303,7 +309,39 @@ function strictModeApi() {
     fromJSON,
     onWillShowOverlay,
     overlayDisposers,
+    onDidLayoutChange,
+    onWillDragGroup,
+    onWillDragPanel,
+    onWillDrop,
   };
+}
+
+/** A Group element parented exactly as Dockview parents it: inside the
+ *  Splitview whose class names carry the axis it is sized along. Unparented for
+ *  a Group outside the grid, which is what floating and popped-out look like. */
+function groupElement(axis?: "width" | "height"): HTMLElement {
+  const element = document.createElement("div");
+  if (axis) {
+    const splitview = document.createElement("div");
+    splitview.className = `dv-split-view-container ${
+      axis === "width" ? "dv-horizontal" : "dv-vertical"
+    }`;
+    splitview.appendChild(element);
+  }
+  return element;
+}
+
+/** A Dockview `Event` the test can fire, for the hooks that only ever act from
+ *  inside a subscription (the strip's thickness pin re-runs on layout change). */
+function drivableEvent() {
+  const listeners = new Set<(value: unknown) => void>();
+  return Object.assign(
+    vi.fn((listener: (value: unknown) => void) => {
+      listeners.add(listener);
+      return { dispose: vi.fn(() => listeners.delete(listener)) };
+    }),
+    { emit: (value: unknown = {}) => listeners.forEach((listener) => listener(value)) },
+  );
 }
 
 const contracts: DockPanelContracts = {
@@ -530,7 +568,7 @@ describe("DockWorkspace React integration", () => {
     dockHarness.headerApi = {
       id: "quick-actions",
       title: "Quick Actions",
-      group: { panels: [{ id: "quick-actions" }] },
+      group: { panels: [{ id: "quick-actions" }], element: groupElement("width") },
       width: 44,
       height: 400,
       onDidDimensionsChange: () => ({ dispose: () => {} }),
@@ -554,7 +592,10 @@ describe("DockWorkspace React integration", () => {
     dockHarness.headerApi = {
       id: "quick-actions",
       title: "Quick Actions",
-      group: { panels: [{ id: "attribute" }, { id: "quick-actions" }] },
+      group: {
+        panels: [{ id: "attribute" }, { id: "quick-actions" }],
+        element: groupElement("width"),
+      },
       width: 240,
       height: 400,
       onDidDimensionsChange: () => ({ dispose: () => {} }),
@@ -574,7 +615,7 @@ describe("DockWorkspace React integration", () => {
     dockHarness.headerApi = {
       id: "quick-actions",
       title: "Quick Actions",
-      group: { panels: [{ id: "quick-actions" }] },
+      group: { panels: [{ id: "quick-actions" }], element: groupElement("width") },
       width: 44,
       height: 400,
       onDidDimensionsChange: () => ({ dispose: () => {} }),
@@ -592,7 +633,7 @@ describe("DockWorkspace React integration", () => {
     dockHarness.headerApi = {
       id: "quick-actions",
       title: "Quick Actions",
-      group: { panels: [{ id: "quick-actions" }] },
+      group: { panels: [{ id: "quick-actions" }], element: groupElement("width") },
       width: 44,
       height: 400,
       onDidDimensionsChange: () => ({ dispose: () => {} }),
@@ -607,69 +648,271 @@ describe("DockWorkspace React integration", () => {
     expect(strip?.api.close).toHaveBeenCalledOnce();
   });
 
-  // Why the header moves at all: see QuickActionsDockPanel in DockWorkspace.tsx.
-  describe("Quick Actions header position", () => {
-    function renderStrip(options: {
-      width: number;
-      height: number;
-      groupPanels: { id: string }[];
-    }) {
-      const dock = strictModeApi();
-      dockHarness.api = dock.api;
-      const group = {
-        panels: options.groupPanels,
-        model: { header: { hidden: false }, headerPosition: "top" },
-      };
-      dockHarness.contentApi = {
-        id: "quick-actions",
+  /** Mount the strip as the sole Panel content with a given Group geometry.
+   *  The Group's size doubles as the Panel's: the header takes its slice out of
+   *  the strip's LONG axis, so the short axis the pin cares about is the same
+   *  number on both. */
+  function renderStrip(options: {
+    width: number;
+    height: number;
+    groupPanels: { id: string }[];
+    /** The axis the Dock Tree reports for the strip's Group. Omitted for a
+     *  Group outside the grid, where the strip falls back to its own shape. */
+    axis?: "width" | "height";
+  }) {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    const group = {
+      element: groupElement(options.axis),
+      panels: options.groupPanels,
+      model: { header: { hidden: false }, headerPosition: "top" },
+      api: {
         width: options.width,
         height: options.height,
-        group,
-        isVisible: true,
-        onDidVisibilityChange: () => ({ dispose: () => {} }),
-        onDidDimensionsChange: () => ({ dispose: () => {} }),
-      };
-      dockHarness.contentKind = "quick-actions";
-      render(<DockWorkspace contracts={contracts} />);
-      return group;
-    }
+        setConstraints: vi.fn(),
+        setSize: vi.fn(),
+      },
+    };
+    dockHarness.contentApi = {
+      id: "quick-actions",
+      width: options.width,
+      height: options.height,
+      group,
+      isVisible: true,
+      onDidVisibilityChange: () => ({ dispose: () => {} }),
+      onDidDimensionsChange: () => ({ dispose: () => {} }),
+    };
+    dockHarness.contentKind = "quick-actions";
+    render(<DockWorkspace contracts={contracts} />);
+    return { group, dock };
+  }
 
+  // Why the header moves at all: see QuickActionsDockPanel in DockWorkspace.tsx.
+  describe("Quick Actions header position", () => {
     it("moves the header beside a row of buttons", () => {
-      const group = renderStrip({
+      const { group } = renderStrip({
         width: 400,
         height: 44,
+        axis: "height",
         groupPanels: [{ id: "quick-actions" }],
       });
       expect(group.model.headerPosition).toBe("left");
     });
 
     it("keeps the header above a column of buttons", () => {
-      const group = renderStrip({
+      const { group } = renderStrip({
         width: 44,
         height: 400,
+        axis: "width",
         groupPanels: [{ id: "quick-actions" }],
       });
       expect(group.model.headerPosition).toBe("top");
     });
 
     it("leaves a shared group's header alone", () => {
-      const group = renderStrip({
+      const { group } = renderStrip({
         width: 400,
         height: 44,
+        axis: "height",
         groupPanels: [{ id: "attribute" }, { id: "quick-actions" }],
       });
       expect(group.model.headerPosition).toBe("top");
     });
 
     it("restores the header when the strip unmounts", () => {
-      const group = renderStrip({
+      const { group } = renderStrip({
         width: 400,
         height: 44,
+        axis: "height",
         groupPanels: [{ id: "quick-actions" }],
       });
       expect(group.model.headerPosition).toBe("left");
       cleanup();
       expect(group.model.headerPosition).toBe("top");
+    });
+  });
+
+  // Which axis may be capped, and when it must not be, is the whole story:
+  // see useFixedStripThickness in DockWorkspace.tsx.
+  describe("Quick Actions fixed thickness", () => {
+    const UNBOUNDED = Number.MAX_SAFE_INTEGER;
+
+    function constraints(group: ReturnType<typeof renderStrip>["group"]) {
+      const calls = group.api.setConstraints.mock.calls;
+      return calls[calls.length - 1]?.[0] as Record<string, number> | undefined;
+    }
+
+    it("pins a column of buttons to a fixed width", () => {
+      const { group } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(constraints(group)).toEqual({
+        minimumWidth: 44,
+        maximumWidth: 44,
+        maximumHeight: UNBOUNDED,
+      });
+      expect(group.api.setSize).toHaveBeenCalledWith({ width: 44 });
+    });
+
+    it("pins a row of buttons to a fixed height", () => {
+      const { group } = renderStrip({
+        width: 400,
+        height: 200,
+        axis: "height",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(constraints(group)).toEqual({
+        minimumHeight: 44,
+        maximumHeight: 44,
+        maximumWidth: UNBOUNDED,
+      });
+      expect(group.api.setSize).toHaveBeenCalledWith({ height: 44 });
+    });
+
+    it("leaves a bar that already fits its thickness alone", () => {
+      const { group } = renderStrip({
+        width: 44,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(group.api.setSize).not.toHaveBeenCalled();
+    });
+
+    it("keeps a shared group free to size for its other Panels", () => {
+      const { group } = renderStrip({
+        width: 400,
+        height: 200,
+        axis: "height",
+        groupPanels: [{ id: "attribute" }, { id: "quick-actions" }],
+      });
+      expect(constraints(group)).toEqual({
+        maximumWidth: UNBOUNDED,
+        maximumHeight: UNBOUNDED,
+      });
+      expect(group.api.setSize).not.toHaveBeenCalled();
+    });
+
+    // The cap must be gone before the drop re-splits the grid, or the clamp
+    // lands on the new split's long axis and shrink-wraps whatever it contains.
+    it("lifts the cap for the length of a Dock drag", () => {
+      const { group, dock } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+
+      act(() => dock.onWillDragGroup.emit());
+      expect(constraints(group)).toEqual({
+        maximumWidth: UNBOUNDED,
+        maximumHeight: UNBOUNDED,
+      });
+
+      act(() => {
+        document.dispatchEvent(new Event("dragend"));
+      });
+      expect(constraints(group)).toEqual({
+        minimumWidth: 44,
+        maximumWidth: 44,
+        maximumHeight: UNBOUNDED,
+      });
+    });
+
+    // A Panel dragged out of a shared group takes its tab — the drag source —
+    // with it, so `dragend` fires on a detached node that no listener can see.
+    // Waiting for it left the cap released for the rest of the session.
+    it("re-pins from the drop itself, with no dragend to be had", async () => {
+      const { group, dock } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+
+      act(() => dock.onWillDragPanel.emit());
+      expect(constraints(group)).toEqual({
+        maximumWidth: UNBOUNDED,
+        maximumHeight: UNBOUNDED,
+      });
+
+      await act(async () => {
+        dock.onWillDrop.emit();
+      });
+      expect(constraints(group)).toEqual({
+        minimumWidth: 44,
+        maximumWidth: 44,
+        maximumHeight: UNBOUNDED,
+      });
+    });
+
+    // A Group whose container cannot spare the thickness reports back a size we
+    // never asked for; re-requesting it on every layout pass would never end.
+    it("stops resizing a group that refuses the thickness", () => {
+      const { group, dock } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(group.api.setSize).toHaveBeenCalledTimes(1);
+
+      act(() => dock.onDidLayoutChange.emit());
+      act(() => dock.onDidLayoutChange.emit());
+      expect(group.api.setSize).toHaveBeenCalledTimes(1);
+    });
+
+    // The bug this rule exists for: a bar docked beside the Timeline gets a
+    // cell far wider than it is tall, and reading that as a row lays the
+    // buttons out across the one axis that cannot be pinned — leaving a
+    // horizontal strip adrift in a tall empty block.
+    it("takes its axis from the Dock Tree over the Group's shape", () => {
+      const { group } = renderStrip({
+        width: 718,
+        height: 210,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(
+        document.querySelector('[role="toolbar"]')?.getAttribute("aria-orientation"),
+      ).toBe("vertical");
+      expect(constraints(group)).toEqual({
+        minimumWidth: 44,
+        maximumWidth: 44,
+        maximumHeight: UNBOUNDED,
+      });
+    });
+
+    // Floating and popped-out Groups have no branch to read, and no splitter to
+    // pin against either.
+    it("caps nothing for a Group that is not in the grid", () => {
+      const { group } = renderStrip({
+        width: 200,
+        height: 400,
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(constraints(group)).toEqual({
+        maximumWidth: UNBOUNDED,
+        maximumHeight: UNBOUNDED,
+      });
+      expect(group.api.setSize).not.toHaveBeenCalled();
+    });
+
+    it("releases the cap when the strip unmounts", () => {
+      const { group } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      cleanup();
+      expect(constraints(group)).toEqual({
+        maximumWidth: UNBOUNDED,
+        maximumHeight: UNBOUNDED,
+      });
     });
   });
 

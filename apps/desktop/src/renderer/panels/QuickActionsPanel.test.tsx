@@ -220,8 +220,19 @@ describe("QuickActionsPanel", () => {
       expect(screen.getByRole("toolbar").dataset.orientation).toBe("vertical");
     });
 
-    // Without a deadband, dragging a splitter through square would flip the
-    // axis on every frame.
+    // Docked, the shape is not the authority: a bar beside the Timeline gets a
+    // wide, short cell and still has to run as a column, because width is the
+    // only axis its splitter moves.
+    it("runs the way it is docked, however its own box is shaped", () => {
+      const geo = geometry(718, 210);
+      render(<QuickActionsPanel geometry={geo} docked="vertical" />);
+      expect(screen.getByRole("toolbar").dataset.orientation).toBe("vertical");
+      geo.resize(1_000, 44);
+      expect(screen.getByRole("toolbar").dataset.orientation).toBe("vertical");
+    });
+
+    // Without a deadband, resizing through square would flip the axis on every
+    // frame. Only reachable with no dock position to read.
     it("holds its axis inside the near-square deadband", () => {
       const geo = geometry(400, 44);
       render(<QuickActionsPanel geometry={geo} />);

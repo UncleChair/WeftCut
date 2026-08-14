@@ -41,6 +41,7 @@ import { NearbyPanel } from "../panels/NearbyPanel";
 import {
   QuickActionsPanel,
   useStripOrientation,
+  type StripOrientation,
 } from "../panels/QuickActionsPanel";
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
 import { AgentPanel } from "../agent/AgentPanel";
@@ -67,6 +68,7 @@ import {
   DOCK_TAB_COMPONENT_ID,
   PANEL_KINDS,
   PANEL_REGISTRY,
+  STRIP_THICKNESS,
   isPanelKind,
   type PanelKind,
 } from "./panelRegistry";
@@ -242,8 +244,10 @@ function TimelineDockPanel() {
 
 function QuickActionsDockPanel() {
   const runtime = useDockPanelRuntime();
-  const orientation = useStripOrientation(runtime.api);
+  const axis = useStripAxis(runtime.api, runtime.containerApi);
+  const orientation = useStripOrientation(runtime.api, dockedOrientation(axis));
   const sole = useIsSoleGroupPanel(runtime.api, runtime.containerApi);
+  useFixedStripThickness(runtime.api, runtime.containerApi, axis, sole);
 
   /* Put the drag grip inline with the buttons by moving the whole group header
    * to the strip's leading edge: a row of buttons wants the grip beside it
@@ -269,7 +273,9 @@ function QuickActionsDockPanel() {
   // No `weft-dock-panel-scroll` wrapper: the strip owns its own single-axis
   // scroller (with end fades and wheel forwarding), which a generic
   // both-axes scroll container would fight.
-  return <QuickActionsPanel geometry={runtime.api} />;
+  return (
+    <QuickActionsPanel geometry={runtime.api} docked={dockedOrientation(axis)} />
+  );
 }
 
 function AttributeDockPanel() {
@@ -594,6 +600,59 @@ function useTabsOverflowA11y(
   }, [containerRef]);
 }
 
+/** The axis a Dock Group's own splitter runs along: `width` where its branch
+ *  lays children side by side, `height` where it stacks them. */
+type DockGroupAxis = "width" | "height";
+
+/**
+ * The axis this Group is sized along, read off the Splitview that holds it, or
+ * null for a Group outside the grid (floating, popped out) that has no splitter
+ * at all.
+ *
+ * Read from the DOM on purpose. The serialized tree (`containerApi.toJSON()`)
+ * carries the same fact, but serializing a grid that has a maximized Group makes
+ * Dockview leave and re-enter that maximized state — a side effect no render can
+ * afford to pay. Dockview's own stylesheet keys off these class names, so a
+ * rename would show up as broken chrome long before it silently changed an axis.
+ */
+function groupSplitAxis(element: HTMLElement): DockGroupAxis | null {
+  const splitview = element.closest(".dv-split-view-container");
+  if (!splitview) return null;
+  return splitview.classList.contains("dv-horizontal") ? "width" : "height";
+}
+
+function dockedOrientation(axis: DockGroupAxis | null): StripOrientation | null {
+  if (axis === null) return null;
+  return axis === "width" ? "vertical" : "horizontal";
+}
+
+/**
+ * Which way the strip's Group can be resized, and with it the way the bar runs:
+ * a Group that resizes in WIDTH is a column, so the buttons stack; one that
+ * resizes in HEIGHT is a row.
+ *
+ * Where it sits, not what shape it is, decides this. A bar docked beside the
+ * Timeline gets a cell far wider than it is tall, yet its only free edge is the
+ * vertical one — read that cell as a row and the bar lays its buttons out across
+ * an axis it cannot pin, leaving a horizontal strip adrift in a tall empty block.
+ */
+function useStripAxis(
+  api: IDockviewPanelProps<DockPanelParams>["api"],
+  containerApi: IDockviewPanelProps<DockPanelParams>["containerApi"],
+): DockGroupAxis | null {
+  return useSyncExternalStore(
+    useCallback(
+      (onStoreChange) => {
+        const disposable = containerApi.onDidLayoutChange(onStoreChange);
+        return () => disposable.dispose();
+      },
+      [containerApi],
+    ),
+    () => groupSplitAxis(api.group.element),
+    () => null,
+  );
+}
+
 /** True while this Panel is the only one in its Dock Group. Recomputed on any
  *  layout change — the same coarse signal the adapter listens to, since tab
  *  renderers are not re-run for group membership changes on their own. */
@@ -615,6 +674,133 @@ function useIsSoleGroupPanel(
 }
 
 /**
+ * True from the moment a Dock drag starts until the tree it produced exists.
+ * Dockview announces the start and the incoming drop; the DOM covers the drag
+ * abandoned over nothing, which produces no Dockview event at all.
+ *
+ * A drop MUST end the window through Dockview, not through `dragend`: a Panel
+ * leaving a shared Group takes its tab — the drag source — with it, so the
+ * browser fires `dragend` at a node already detached from the document, where
+ * no listener here can ever see it. Wait for it and the window never closes.
+ */
+function useDockDragInFlight(
+  containerApi: IDockviewPanelProps<DockPanelParams>["containerApi"],
+): boolean {
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    const start = () => setDragging(true);
+    const end = () => setDragging(false);
+    const disposables = [
+      containerApi.onWillDragGroup(start),
+      containerApi.onWillDragPanel(start),
+      // Dockview processes the move synchronously right after this event, so a
+      // microtask lands on the finished tree and still beats the next paint.
+      containerApi.onWillDrop(() => queueMicrotask(end)),
+    ];
+    document.addEventListener("dragend", end);
+    return () => {
+      disposables.forEach((disposable) => disposable.dispose());
+      document.removeEventListener("dragend", end);
+    };
+  }, [containerApi]);
+  return dragging;
+}
+
+/** Dockview's own "no maximum". A cap can only be released by overwriting it
+ *  with this: `setConstraints` ignores `undefined` rather than clearing. */
+const UNCAPPED = Number.MAX_SAFE_INTEGER;
+
+const UNCAPPED_GROUP = {
+  maximumWidth: UNCAPPED,
+  maximumHeight: UNCAPPED,
+} as const;
+
+/**
+ * Hold the strip's Group to `STRIP_THICKNESS` across the axis its own splitter
+ * moves, so the bar reads as chrome instead of a Panel: docked as a column it is
+ * pinned that wide, as a row that tall, and — since Dockview disables a sash
+ * whose neighbour cannot change size — the splitter against it goes inert. The
+ * other axis is left alone, so the bar still spans whatever edge it landed on.
+ *
+ * Two limits on when the cap is applied are load-bearing:
+ *
+ *   - Only ever the Group's OWN axis, which is why this takes `axis` from the
+ *     Dock Tree rather than reading the bar's shape. A Gridview branch adopts
+ *     the smallest maximum its children declare along the branch's own axis, so
+ *     capping the other one shrink-wraps the whole branch instead of the bar: a
+ *     bar beside the Timeline that capped its height would squeeze the entire
+ *     Timeline row — bar and Timeline together — to 44 px tall.
+ *   - Never mid-drag. A re-dock re-splits the grid and clamps the result before
+ *     this effect can re-aim the cap, and the axis of the OLD position is the
+ *     wrong one for a perpendicular new one — dropping a column bar above Media
+ *     would leave Media's column shrink-wrapped to a sliver.
+ *
+ * Tabbed in with other Panels the Group must size for them, so the cap lifts
+ * there too — as it does on unmount, since the Group can outlive the strip.
+ *
+ * The cap goes on the GROUP by way of two Dockview limits: `setConstraints` on
+ * a Panel api fires into nothing (only Groups sit in the grid), and a
+ * function-valued constraint — which would re-aim itself and need none of the
+ * bookkeeping here — is evaluated once and frozen at the value it returned.
+ */
+function useFixedStripThickness(
+  api: IDockviewPanelProps<DockPanelParams>["api"],
+  containerApi: IDockviewPanelProps<DockPanelParams>["containerApi"],
+  axis: DockGroupAxis | null,
+  sole: boolean,
+): void {
+  const dragging = useDockDragInFlight(containerApi);
+  // The size Dockview last settled on against our wishes, so a Group that
+  // cannot reach the thickness (a container too small to give it) stops trading
+  // resizes with the layout pass.
+  const refused = useRef<number | null>(null);
+
+  useEffect(() => {
+    const group = api.group;
+    if (!sole || dragging || axis === null) {
+      group.api.setConstraints(UNCAPPED_GROUP);
+      return;
+    }
+    refused.current = null;
+    const pin = () => {
+      group.api.setConstraints(
+        axis === "width"
+          ? {
+              minimumWidth: STRIP_THICKNESS,
+              maximumWidth: STRIP_THICKNESS,
+              maximumHeight: UNCAPPED,
+            }
+          : {
+              minimumHeight: STRIP_THICKNESS,
+              maximumHeight: STRIP_THICKNESS,
+              maximumWidth: UNCAPPED,
+            },
+      );
+      // A constraint only bites on the next layout pass, which may never come:
+      // the resize is what snaps a restored or freshly dropped bar to thickness
+      // now. Read the Group's own size, not the Panel's — the Group is what the
+      // constraint sizes, and the header takes its slice out of the Panel.
+      const current = group.api[axis];
+      if (Math.round(current) === STRIP_THICKNESS) {
+        refused.current = null;
+        return;
+      }
+      if (refused.current === current) return;
+      refused.current = current;
+      group.api.setSize({ [axis]: STRIP_THICKNESS });
+    };
+    pin();
+    // Re-pin after any layout change: a drop that leaves the axis unchanged
+    // moves the bar without re-running this effect.
+    const disposable = containerApi.onDidLayoutChange(pin);
+    return () => {
+      disposable.dispose();
+      group.api.setConstraints(UNCAPPED_GROUP);
+    };
+  }, [api, axis, containerApi, dragging, sole]);
+}
+
+/**
  * The Quick Actions strip's tab, rendered as the in-row six-dot drag grip.
  *
  * This IS Dockview's native drag source — `workspace.css` collapses the group
@@ -631,16 +817,21 @@ function useIsSoleGroupPanel(
 function DockGripTab({
   kind,
   api,
+  containerApi,
 }: {
   kind: PanelKind;
   api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
+  containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"];
 }) {
   const { t } = useTranslation();
   const chrome = useWorkspaceChrome();
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
-  // Same `api` the strip body reads, so grip and body observe one event stream
-  // and can never disagree about the axis.
-  const orientation = useStripOrientation(api);
+  // Same inputs the strip body reads, so grip and body can never disagree about
+  // the axis.
+  const orientation = useStripOrientation(
+    api,
+    dockedOrientation(useStripAxis(api, containerApi)),
+  );
   const label = t("dock_workspace.move_panel", {
     title: t(PANEL_REGISTRY[kind].titleKey),
   });
@@ -794,7 +985,7 @@ function QuickActionsDockTab({
 }) {
   const sole = useIsSoleGroupPanel(api, containerApi);
   return sole ? (
-    <DockGripTab kind={kind} api={api} />
+    <DockGripTab kind={kind} api={api} containerApi={containerApi} />
   ) : (
     <DockPanelTab kind={kind} title={title} />
   );

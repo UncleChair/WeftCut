@@ -174,7 +174,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
  * which `renderer: "always"` paints in a layer above the entire grid). Hence a
  * real pointer gesture here.
  */
-test("the Quick Actions grip drags the strip, which flips axis to match its new shape", async () => {
+test("the Quick Actions grip drags the strip, which takes its axis from where it lands", async () => {
   const { app, page } = await launchApp();
   try {
     const parent = tmpDir("weftcut-quick-actions-");
@@ -215,11 +215,140 @@ test("the Quick Actions grip drags the strip, which flips axis to match its new 
         return box ? box.width > box.height : false;
       })
       .toBe(true);
-    // Axis follows shape with no user input — and the grip survives the move,
-    // which is what proves the repositioned tab really was the drag source.
+    // Axis follows the drop with no user input — and the grip survives the
+    // move, which is what proves the repositioned tab really was the drag
+    // source. Grip and body read the same axis, so both are asserted.
     await expect(toolbar).toHaveAttribute("aria-orientation", "horizontal");
     await expect(grip).toBeVisible();
     await expect(grip).toHaveAttribute("data-orientation", "horizontal");
+    // The flip re-aims the thickness cap onto the new axis: a row of buttons
+    // keeps one button's HEIGHT, however tall the split it landed in. Polled,
+    // not read once: the snap to thickness is a resize of its own, one pass
+    // behind the drop — and the next gesture must aim at the settled layout.
+    await expect
+      .poll(async () => (await strip.boundingBox())?.height ?? Infinity)
+      .toBeLessThan(80);
+
+    // Beside the Timeline instead of under it. The cell a side-by-side drop
+    // yields is far wider than it is tall, and reading THAT as a row is the
+    // trap: width is the only axis its splitter moves, so the bar has to come
+    // back as a column — of one button's width, spanning the Timeline row.
+    await dragDockTab(page, gripTab, dockPanel(page, "timeline"), "left");
+
+    await expect(toolbar).toHaveAttribute("aria-orientation", "vertical");
+    await expect(grip).toHaveAttribute("data-orientation", "vertical");
+    await expect
+      .poll(async () => (await strip.boundingBox())?.width ?? Infinity)
+      .toBeLessThan(80);
+    const beside = await strip.boundingBox();
+    const timeline = await dockPanel(page, "timeline").boundingBox();
+    if (!beside || !timeline) throw new Error("dock has no layout boxes");
+    expect(beside.width).toBeLessThan(80);
+    expect(beside.x).toBeLessThan(timeline.x);
+    // The Timeline keeps its row: a cap aimed at the bar's long axis would have
+    // shrink-wrapped the whole row to the bar's thickness instead.
+    expect(timeline.height).toBeGreaterThan(80);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The bar's thickness is not the user's to drag: the strip's Group is held to
+ * `STRIP_THICKNESS` across its short axis, which leaves the splitter beside it
+ * with nothing to give and so inert.
+ *
+ * Only a real grid can show this. The cap is a Dockview constraint, and whether
+ * a constraint reaches the sash — whether it survives the theme gap, the
+ * overlay-rendered Panel content, and Dockview's own relayout — is exactly what
+ * a jsdom test cannot answer. Both halves are asserted because they fail
+ * separately: `dv-disabled` is Dockview's own verdict that the view cannot
+ * resize, and the gesture proves nothing else quietly resizes it anyway.
+ */
+test("the Quick Actions bar's thickness resists the splitter beside it", async () => {
+  const { app, page } = await launchApp();
+  try {
+    const parent = tmpDir("weftcut-quick-actions-pin-");
+    await newProject(page, {
+      parentFolder: parent,
+      name: "quick-actions-pin",
+      canvas: CANVAS,
+    });
+    // REQUIRED before any pointer gesture: the splash overlay outlives the
+    // first dock render and swallows mousedown while the target is visible.
+    await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
+
+    const strip = dockPanel(page, "quick-actions");
+    const media = dockPanel(page, "media");
+    /** The vertical sash nearest the bar's trailing edge — the one a user
+     *  reaching for "make this wider" would grab. */
+    const sashBesideStrip = () =>
+      page.evaluate(() => {
+        const bar = document
+          .querySelector('.weft-dock-panel[data-panel-kind="quick-actions"]')
+          ?.getBoundingClientRect();
+        if (!bar) throw new Error("missing Quick Actions strip");
+        const nearest = [...document.querySelectorAll<HTMLElement>(".dv-sash")]
+          .map((element) => ({
+            box: element.getBoundingClientRect(),
+            disabled: element.classList.contains("dv-disabled"),
+          }))
+          .filter((sash) => sash.box.height > sash.box.width)
+          .sort(
+            (a, b) =>
+              Math.abs(a.box.x - bar.right) - Math.abs(b.box.x - bar.right),
+          )[0];
+        if (!nearest) throw new Error("no vertical sash in the grid");
+        return {
+          x: nearest.box.x + nearest.box.width / 2,
+          y: nearest.box.y + nearest.box.height / 2,
+          disabled: nearest.disabled,
+        };
+      });
+
+    // Settled baseline: a full-height bar of one button's width, and Dockview
+    // reporting the splitter against it as unable to move.
+    await expect
+      .poll(async () => (await sashBesideStrip()).disabled)
+      .toBe(true);
+    const before = await strip.boundingBox();
+    const mediaBefore = await media.boundingBox();
+    if (!before || !mediaBefore) throw new Error("dock has no layout boxes");
+    expect(before.width).toBeLessThan(80);
+
+    // Haul the splitter a third of the window to the right.
+    const sash = await sashBesideStrip();
+    await page.mouse.move(sash.x, sash.y);
+    await page.mouse.down();
+    await page.mouse.move(sash.x + 400, sash.y, { steps: 12 });
+    await page.mouse.up();
+
+    // Nothing moved: not the bar, and not the column it would have stolen from.
+    const after = await strip.boundingBox();
+    const mediaAfter = await media.boundingBox();
+    if (!after || !mediaAfter) throw new Error("dock has no layout boxes");
+    expect(after.width).toBe(before.width);
+    expect(after.x).toBe(before.x);
+    expect(mediaAfter.x).toBe(mediaBefore.x);
+    expect(mediaAfter.width).toBe(mediaBefore.width);
+
+    // Same haul again, but after pulling a Panel OUT of a shared group — the
+    // one drag whose source tab is destroyed by its own drop. The browser then
+    // fires `dragend` at a detached node, so a cap that waits for it stays
+    // released and the bar is loose for the rest of the session.
+    await dragDockTab(page, dockTab(page, "attribute"), media, "left");
+    await expect.poll(async () => (await sashBesideStrip()).disabled).toBe(true);
+
+    const reseated = await sashBesideStrip();
+    await page.mouse.move(reseated.x, reseated.y);
+    await page.mouse.down();
+    await page.mouse.move(reseated.x + 400, reseated.y, { steps: 12 });
+    await page.mouse.up();
+
+    const afterTabMove = await strip.boundingBox();
+    if (!afterTabMove) throw new Error("strip has no layout box");
+    expect(afterTabMove.width).toBe(before.width);
+    expect(afterTabMove.x).toBe(before.x);
   } finally {
     await app.close();
   }
