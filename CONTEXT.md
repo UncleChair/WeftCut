@@ -185,8 +185,8 @@ _Avoid_: add track and move, promote, bring to front, reorder tracks, restack
 Anchored z-reorder of one visual layer — `restack_layer(layer, above|below
 anchor)`, the verb behind the Nearby panel's stack ordering and the MCP command
 of the same name. Operates on the layer and degrades smartly: a sole occupant
-carries its whole track (id, name, lock, height); a layer sharing its track
-splits onto a fresh lane at the target position; a role-stamped source never
+carries its whole track (id, label, lock, height); a layer sharing its track
+splits onto a fresh track at the target position; a role-stamped source never
 moves. Anchors are layers, never indices, and may sit on a reserved track;
 audio neither moves nor anchors. One history entry, and an already-in-place
 call is a no-op that records nothing.

@@ -1178,7 +1178,7 @@ export async function moveLayersToNewTrack(
 
 /// Restack a visual layer directly above/below an anchor layer in the z-stack
 /// (ADR 0044) — Nearby's drop gesture. One undoable step: the actor owns the
-/// smart degradation (move the owned lane vs split onto a fresh one) and skips
+/// smart degradation (move the owned track vs split onto a fresh one) and skips
 /// the commit when the layer already sits there.
 export async function restackLayer(
   layerId: string,

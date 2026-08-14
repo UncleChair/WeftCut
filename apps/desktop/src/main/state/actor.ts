@@ -645,11 +645,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
             { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers)) }
         }
         // restack_layer — anchored z-reorder (ADR 0044): ONE commit; the mutation
-        // owns the smart degradation (sole-occupant lane splice vs split onto a
-        // fresh lane + prune) and returns the destination lane id, or null for
+        // owns the smart degradation (sole-occupant track splice vs split onto a
+        // fresh track + prune) and returns the destination track id, or null for
         // the already-in-place call — commit's no-op guard then records nothing
         // and burns no op_id, the same contract as move_track. `affected` takes
-        // the function form because the split path mints its lane inside the
+        // the function form because the split path mints its track inside the
         // recipe; the null arm is unreachable (commit returns before calling it
         // on a no-op) but keeps the annotation honest.
         case 'restack_layer': {

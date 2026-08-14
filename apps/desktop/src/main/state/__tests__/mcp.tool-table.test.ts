@@ -29,7 +29,7 @@ const ALL_54_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 54 tool names (auto_split_by_shot hybrid def added by scene-analysis ticket 04)', () => {
+  it('MCP_TOOLS contains exactly the 54 tool names', () => {
     expect(MCP_TOOLS).toEqual(ALL_54_NAMES)
   })
 
