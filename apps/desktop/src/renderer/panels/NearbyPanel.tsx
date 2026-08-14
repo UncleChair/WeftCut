@@ -1,8 +1,8 @@
 // A/B-roll context panel. Owns mode gating, row presentation, and the two
 // navigation gestures (pick vs Go To — see the props below); double-click
-// renames via the recorded Layer label command. Windowing, filtering and
-// grouping live in `peek.ts`. Outside A/B Roll (or with an empty window) the
-// panel renders an explainer instead of rows.
+// renames via the recorded Layer label command. Windowing, filtering and the
+// At-playhead / Nearby split live in `peek.ts` (ADR 0044). Outside A/B Roll
+// (or with an empty window) the panel renders an explainer instead of rows.
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,9 +16,9 @@ import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { MediaThumbnail } from "./MediaThumbnail";
 import {
   buildPeekItems,
-  groupPeekItems,
   peekCategory,
   PEEK_CATEGORY_ORDER,
+  splitPeekSections,
   type PeekCategory,
   type PeekItem,
 } from "./peek";
@@ -63,7 +63,30 @@ export function NearbyPanel({
     return buildPeekItems(tracks, currentTimeUs, deltaWindowUs, t);
   }, [tracks, currentTimeUs, deltaWindowUs, displayMode, t]);
 
-  const sections = useMemo(() => groupPeekItems(items, filter), [items, filter]);
+  const { atPlayhead, nearby } = useMemo(
+    () => splitPeekSections(items, filter),
+    [items, filter],
+  );
+
+  // Rows render identically in both sections — a row's information set
+  // (thumbnail / icon, name, track name, offset / LIVE badge, duration) does
+  // not depend on which side of the playhead boundary it landed on.
+  const renderRow = (item: PeekItem) => (
+    <PeekRow
+      key={item.layer.id}
+      item={item}
+      isSelected={item.layer.id === selectedLayerId}
+      fpsNum={fpsNum}
+      fpsDen={fpsDen}
+      onReveal={() => onPick(item.layer.id, item.trackId)}
+      onGoTo={
+        onGoTo
+          ? () => onGoTo(item.layer.id, item.trackId, item.layer.t_start_us)
+          : undefined
+      }
+      onRename={onRename ? (next) => onRename(item.layer.id, next) : undefined}
+    />
+  );
 
   // Never an unexplained blank Panel: Show All mode has no hidden tracks to
   // surface, and an empty ±Δ window means nothing intersects right now — both
@@ -115,45 +138,40 @@ export function NearbyPanel({
         ))}
       </div>
       <div className="right-panel-peek-results">
-        {sections.length === 0 ? (
+        {atPlayhead.length === 0 && nearby.length === 0 ? (
           <p className="peek-filter-empty">{t("peek.filter_empty")}</p>
         ) : (
-          sections.map((section) => (
-            <div key={section.category}>
+          <>
+            {/* The stack being composited right now, top-of-stack first.
+                Always present: an empty stack is a fact worth stating, not
+                a section to hide. */}
+            <section
+              className="peek-section"
+              aria-label={t("peek.section_at_playhead")}
+            >
               <div className="peek-section-header">
-                {t(`peek.cat_${section.category}`, {
-                  defaultValue: section.category,
-                })}
+                {t("peek.section_at_playhead")}
               </div>
-              <ul className="right-panel-peek-list">
-                {section.items.map((item) => (
-                  <PeekRow
-                    key={item.layer.id}
-                    item={item}
-                    isSelected={item.layer.id === selectedLayerId}
-                    fpsNum={fpsNum}
-                    fpsDen={fpsDen}
-                    onReveal={() => onPick(item.layer.id, item.trackId)}
-                    onGoTo={
-                      onGoTo
-                        ? () =>
-                            onGoTo(
-                              item.layer.id,
-                              item.trackId,
-                              item.layer.t_start_us,
-                            )
-                        : undefined
-                    }
-                    onRename={
-                      onRename
-                        ? (next) => onRename(item.layer.id, next)
-                        : undefined
-                    }
-                  />
-                ))}
-              </ul>
-            </div>
-          ))
+              {atPlayhead.length === 0 ? (
+                <p className="peek-stack-empty">{t("peek.at_playhead_empty")}</p>
+              ) : (
+                <ul className="right-panel-peek-list">
+                  {atPlayhead.map(renderRow)}
+                </ul>
+              )}
+            </section>
+            {nearby.length > 0 && (
+              <section
+                className="peek-section"
+                aria-label={t("peek.section_nearby")}
+              >
+                <div className="peek-section-header">
+                  {t("peek.section_nearby")}
+                </div>
+                <ul className="right-panel-peek-list">{nearby.map(renderRow)}</ul>
+              </section>
+            )}
+          </>
         )}
       </div>
     </section>

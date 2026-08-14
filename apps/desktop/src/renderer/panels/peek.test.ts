@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPeekItems,
-  groupPeekItems,
   peekCategory,
+  splitPeekSections,
   type PeekItem,
 } from "./peek";
 import type { LayerSummary, TrackSummary } from "../ipc";
 
-function item(id: string, kind: string): PeekItem {
+function item(
+  id: string,
+  kind: string,
+  opts: { trackIndex?: number; spansPlayhead?: boolean } = {},
+): PeekItem {
+  const spans = opts.spansPlayhead ?? true;
   return {
     layer: {
       id,
@@ -24,8 +29,9 @@ function item(id: string, kind: string): PeekItem {
     trackId: `track-${id}`,
     trackLabel: id,
     trackKind: kind,
-    offsetUs: 0,
-    spansPlayhead: true,
+    trackIndex: opts.trackIndex ?? 0,
+    offsetUs: spans ? 0 : 100_000,
+    spansPlayhead: spans,
   };
 }
 
@@ -41,30 +47,88 @@ describe("peekCategory", () => {
   });
 });
 
-describe("groupPeekItems", () => {
-  const items = [item("v", "VideoClip"), item("a", "Audio"), item("s", "Text")];
-
-  it("filter=all returns sections in video/audio/text order", () => {
-    const sections = groupPeekItems(items, "all");
-    expect(sections.map((s) => s.category)).toEqual(["video", "audio", "text"]);
-    expect(sections.map((s) => s.items.length)).toEqual([1, 1, 1]);
+describe("splitPeekSections", () => {
+  it("splits on the playhead: spanning items go At-playhead, the rest Nearby", () => {
+    const sections = splitPeekSections(
+      [
+        item("live", "VideoClip", { spansPlayhead: true }),
+        item("soon", "VideoClip", { spansPlayhead: false }),
+      ],
+      "all",
+    );
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["live"]);
+    expect(sections.nearby.map((i) => i.layer.id)).toEqual(["soon"]);
   });
 
-  it("a specific filter returns only that section", () => {
-    const sections = groupPeekItems(items, "audio");
-    expect(sections).toHaveLength(1);
-    expect(sections[0]!.category).toBe("audio");
-    expect(sections[0]!.items[0]!.layer.id).toBe("a");
+  it("orders At-playhead visuals top-of-stack first, merging every visual kind", () => {
+    // `Project.tracks` is ordered bottom-of-z-stack first, so the highest
+    // track index composites on top and must render first. Visual kinds
+    // (video / image / color / motif / text) interleave in one list.
+    const sections = splitPeekSections(
+      [
+        item("bottom-video", "VideoClip", { trackIndex: 1 }),
+        item("top-text", "Text", { trackIndex: 5 }),
+        item("mid-motif", "Motif", { trackIndex: 3 }),
+      ],
+      "all",
+    );
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([
+      "top-text",
+      "mid-motif",
+      "bottom-video",
+    ]);
   });
 
-  it("filter with no matching items returns no sections", () => {
-    expect(groupPeekItems([item("a", "Audio")], "video")).toEqual([]);
+  it("sinks spanning audio rows to the section tail in their input order", () => {
+    // Audio never sorts by z (it mixes by role, ADR 0023): even from the
+    // topmost track it trails every visual, in the order it arrived.
+    const sections = splitPeekSections(
+      [
+        item("a1", "Audio", { trackIndex: 9 }),
+        item("v", "VideoClip", { trackIndex: 1 }),
+        item("a2", "Audio", { trackIndex: 4 }),
+      ],
+      "all",
+    );
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([
+      "v",
+      "a1",
+      "a2",
+    ]);
   });
 
-  it("preserves input order within a section", () => {
-    const two = [item("a1", "Audio"), item("a2", "Audio")];
-    const [section] = groupPeekItems(two, "audio");
-    expect(section!.items.map((i) => i.layer.id)).toEqual(["a1", "a2"]);
+  it("keeps the Nearby section in the existing proximity order", () => {
+    // Nearby's sort is buildPeekItems' business; the split must not
+    // rearrange it, whatever the track indices say.
+    const sections = splitPeekSections(
+      [
+        item("n1", "VideoClip", { spansPlayhead: false, trackIndex: 7 }),
+        item("n2", "Text", { spansPlayhead: false, trackIndex: 2 }),
+        item("n3", "Audio", { spansPlayhead: false, trackIndex: 5 }),
+      ],
+      "all",
+    );
+    expect(sections.nearby.map((i) => i.layer.id)).toEqual(["n1", "n2", "n3"]);
+  });
+
+  it("applies a category filter to both sections", () => {
+    const sections = splitPeekSections(
+      [
+        item("live-v", "VideoClip"),
+        item("live-a", "Audio"),
+        item("near-v", "VideoClip", { spansPlayhead: false }),
+        item("near-a", "Audio", { spansPlayhead: false }),
+      ],
+      "audio",
+    );
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["live-a"]);
+    expect(sections.nearby.map((i) => i.layer.id)).toEqual(["near-a"]);
+  });
+
+  it("a filter matching nothing leaves both sections empty", () => {
+    const sections = splitPeekSections([item("v", "VideoClip")], "text");
+    expect(sections.atPlayhead).toEqual([]);
+    expect(sections.nearby).toEqual([]);
   });
 });
 
@@ -173,6 +237,26 @@ describe("buildPeekItems windowing", () => {
     expect(byId.get("future")!.offsetUs).toBe(200_000);
   });
 
+  // z is exactly the track's position in the project array, so the item must
+  // carry the index of its track in the *full* array — role tracks included —
+  // for the At-playhead stack to order against.
+  it("indexes each item's track by its position in the full track array", () => {
+    const items = buildPeekItems(
+      [
+        track("t-role", "a-roll", [layer("skip", 800_000, 1_200_000)]),
+        track("t-b", null, [layer("b", 800_000, 1_200_000)]),
+        track("t-c", null, [layer("c", 700_000, 900_000)]),
+      ],
+      NOW,
+      500_000,
+      T,
+    );
+
+    const byId = new Map(items.map((i) => [i.layer.id, i]));
+    expect(byId.get("b")!.trackIndex).toBe(1);
+    expect(byId.get("c")!.trackIndex).toBe(2);
+  });
+
   // The row's sublabel is the header's name, so an unnamed lane reads as its
   // position rather than as its dominant layer class.
   it("names each row's track the way the track header does", () => {
@@ -182,5 +266,34 @@ describe("buildPeekItems windowing", () => {
     const byId = new Map(items.map((i) => [i.layer.id, i]));
     expect(byId.get("a")!.trackLabel).toBe("t-named");
     expect(byId.get("b")!.trackLabel).toBe("tracks.positional#2");
+  });
+});
+
+describe("section membership at the window edges", () => {
+  it("layers touching the playhead are At-playhead; the rest of the window is Nearby", () => {
+    const items = buildPeekItems(
+      [
+        // Ends exactly at the playhead (t_end == now) → still spanning.
+        track("t-ends-now", null, [layer("ends-now", 600_000, NOW)]),
+        // Starts exactly at the playhead (t_start == now) → spanning.
+        track("t-starts-now", null, [layer("starts-now", NOW, 1_400_000)]),
+        // Inside the window but strictly past → Nearby.
+        track("t-past", null, [layer("past", 501_000, 999_999)]),
+        // Inside the window but strictly future → Nearby.
+        track("t-future", null, [layer("future", 1_000_001, 1_499_000)]),
+      ],
+      NOW,
+      500_000,
+      T,
+    );
+
+    const sections = splitPeekSections(items, "all");
+    // Both spanning rows are visual, so they z-order top-of-stack first:
+    // t-starts-now sits above t-ends-now in the track array.
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([
+      "starts-now",
+      "ends-now",
+    ]);
+    expect(sections.nearby.map((i) => i.layer.id)).toEqual(["past", "future"]);
   });
 });

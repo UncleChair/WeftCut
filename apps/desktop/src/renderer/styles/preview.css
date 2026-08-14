@@ -383,7 +383,8 @@
   color: var(--muted-foreground);
 }
 
-.peek-filter-empty {
+.peek-filter-empty,
+.peek-stack-empty {
   margin: 0;
   padding: 10px 12px;
   font-size: var(--font-size-caption);
