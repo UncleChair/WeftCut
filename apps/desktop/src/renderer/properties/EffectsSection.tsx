@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -26,6 +25,7 @@ import {
   type LayerSummary,
 } from "../ipc";
 import { refusalText } from "../errors/tryMutate";
+import { usePointerReorder } from "../hooks/usePointerReorder";
 import { listEffects, getDescriptor } from "../render/effects/effectRegistry";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { hexToRgb01 } from "../colorpick/pixel";
@@ -43,43 +43,6 @@ interface Props {
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
-}
-
-/// An in-progress card reorder gesture. `gap` is the insertion slot in
-/// [0..count]: the dragged card would land before row `gap`. Pure pointer
-/// events — never HTML5 drag-and-drop — so a card gesture can never become a
-/// Dockview Panel dock drag. Exactly one moveEffect command fires, at drop.
-interface ChainDrag {
-  layerId: string;
-  effectId: string;
-  fromIndex: number;
-  gap: number;
-}
-
-/// Dropping on the card's own origin gap (or its own following gap, the same
-/// position) leaves the chain untouched — no indicator, no command.
-function isNoopGap(gap: number, fromIndex: number): boolean {
-  return gap === fromIndex || gap === fromIndex + 1;
-}
-
-// Auto-scroll band and speed for a drag that reaches the panel's edge. The
-// Effect panel lives in a scrolling dock host, so a long chain would otherwise
-// be unreorderable past the visible rows.
-const EDGE_BAND_PX = 28;
-const EDGE_SPEED_PX = 12;
-
-/// Nearest scrollable ancestor, or null when the chain fits without scrolling.
-function scrollHostOf(el: HTMLElement | null): HTMLElement | null {
-  for (let n = el?.parentElement ?? null; n; n = n.parentElement) {
-    const overflowY = getComputedStyle(n).overflowY;
-    if (
-      (overflowY === "auto" || overflowY === "scroll") &&
-      n.scrollHeight > n.clientHeight
-    ) {
-      return n;
-    }
-  }
-  return null;
 }
 
 /// Per-layer effect chain editor. Data-driven off the effect catalog
@@ -103,112 +66,20 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
     liveRef.current = { layer, tInLayerUs };
   }, [layer, tInLayerUs]);
 
-  // Card reorder gesture state. The ref mirrors the state so the window-level
-  // listeners registered once per gesture always read the freshest gap.
-  const [drag, setDrag] = useState<ChainDrag | null>(null);
-  const dragRef = useRef<ChainDrag | null>(null);
-  const setChainDrag = (next: ChainDrag | null) => {
-    dragRef.current = next;
-    setDrag(next);
-  };
-  const rowsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const sectionRef = useRef<HTMLElement | null>(null);
+  // Card reorder gesture — the shared pointer-reorder primitive owns the drag
+  // state, gap hit-testing, edge auto-scroll and disarm paths. Pure pointer
+  // events, never HTML5 drag-and-drop, so a card gesture can never become a
+  // Dockview Panel dock drag. Exactly one moveEffect command fires, at drop.
   const count = layer.effects.length;
-
-  useEffect(() => {
-    if (!drag) return;
-    // The gap is derived from live rects, so it stays correct while the host
-    // auto-scrolls under a stationary pointer.
-    const gapAt = (clientY: number) => {
-      let gap = 0;
-      rowsRef.current.forEach((row, i) => {
-        if (!row) return;
-        const rect = row.getBoundingClientRect();
-        if (clientY > rect.top + rect.height / 2) gap = i + 1;
-      });
-      return gap;
-    };
-    const applyGap = (clientY: number) => {
-      const current = dragRef.current;
-      if (!current) return;
-      const gap = gapAt(clientY);
-      if (gap !== current.gap) setChainDrag({ ...current, gap });
-    };
-
-    // Edge auto-scroll: a rAF pump so holding the pointer at the panel edge
-    // keeps scrolling, instead of advancing one step per pointermove event.
-    const host = scrollHostOf(sectionRef.current);
-    let speed = 0;
-    let lastY = 0;
-    let raf = 0;
-    const pump = () => {
-      raf = 0;
-      if (!host || speed === 0 || !dragRef.current) return;
-      const before = host.scrollTop;
-      host.scrollTop += speed;
-      if (host.scrollTop !== before) applyGap(lastY);
-      raf = requestAnimationFrame(pump);
-    };
-    const updateAutoScroll = (clientY: number) => {
-      lastY = clientY;
-      if (!host) return;
-      const rect = host.getBoundingClientRect();
-      if (clientY < rect.top + EDGE_BAND_PX) speed = -EDGE_SPEED_PX;
-      else if (clientY > rect.bottom - EDGE_BAND_PX) speed = EDGE_SPEED_PX;
-      else speed = 0;
-      if (speed !== 0 && raf === 0) raf = requestAnimationFrame(pump);
-    };
-
-    const onMove = (e: PointerEvent) => {
-      applyGap(e.clientY);
-      updateAutoScroll(e.clientY);
-    };
-    const onUp = () => {
-      const current = dragRef.current;
-      setChainDrag(null);
-      if (!current) return;
-      const { layerId, effectId, fromIndex, gap } = current;
-      if (isNoopGap(gap, fromIndex)) return;
-      const newIndex = gap > fromIndex ? gap - 1 : gap;
-      setErr(null);
-      moveEffect(layerId, effectId, newIndex).then(onMutated).catch((e) => setErr(refusalText(e)));
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setChainDrag(null);
-    };
-    // A browser-aborted gesture (pointercancel) must not stay armed: the next
-    // unrelated pointerup would otherwise commit an unintended move.
-    const onCancel = () => setChainDrag(null);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      speed = 0;
-      if (raf !== 0) cancelAnimationFrame(raf);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("keydown", onKey);
-    };
-    // onMutated is re-read per gesture; the listeners live exactly one gesture.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag !== null]);
-
-  const startChainDrag = (index: number, effectId: string, e: ReactPointerEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault(); // no text selection or native drag out of the grip
-    // Pointer capture keeps the gesture's release delivered even off-window;
-    // jsdom lacks the API, so it is best-effort only (tests drive window).
-    try {
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-    } catch {
-      // Not every embedder supports capture; window listeners still own the gesture.
-    }
-    setChainDrag({ layerId: layer.id, effectId, fromIndex: index, gap: index });
-  };
-
-  const indicatorGap = drag && !isNoopGap(drag.gap, drag.fromIndex) ? drag.gap : null;
+  const { drag, indicatorGap, containerRef, setRowEl, startDrag } =
+    usePointerReorder({
+      rowIds: layer.effects.map((eff) => eff.id),
+      onDrop: ({ id, fromIndex, gap }) => {
+        const newIndex = gap > fromIndex ? gap - 1 : gap;
+        setErr(null);
+        moveEffect(layer.id, id, newIndex).then(onMutated).catch((e) => setErr(refusalText(e)));
+      },
+    });
 
   const add = (kind: string) => {
     setErr(null);
@@ -217,7 +88,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
 
   return (
     <section
-      ref={sectionRef}
+      ref={containerRef}
       className={drag ? "prop-section prop-effects prop-effects--reordering" : "prop-section prop-effects"}
     >
       {/* No visible heading: the section is the Effect Panel's whole body, so
@@ -240,16 +111,14 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
               liveRef={liveRef}
               rowClassName={[
                 "prop-effect-row",
-                drag?.effectId === eff.id ? "prop-effect-row--dragging" : "",
+                drag?.id === eff.id ? "prop-effect-row--dragging" : "",
                 indicatorGap === i ? "prop-effect-row--drop-before" : "",
                 indicatorGap === count && i === count - 1 ? "prop-effect-row--drop-after" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
-              rowRef={(el) => {
-                rowsRef.current[i] = el;
-              }}
-              onGripPointerDown={startChainDrag}
+              rowRef={(el) => setRowEl(i, el)}
+              onGripPointerDown={startDrag}
             />
           ))}
           {/* The chain's direction is not inferable from a vertical list —
@@ -289,10 +158,10 @@ function EffectRow({
   /// commit time instead of this render's closure, which predates the pick
   /// session and can't observe concurrent edits (or this row's own removal).
   liveRef: { current: { layer: LayerSummary; tInLayerUs: number } };
-  /// Reorder-gesture presentation owned by the section (see ChainDrag).
+  /// Reorder-gesture presentation owned by the section (see usePointerReorder).
   rowClassName: string;
   rowRef: (el: HTMLDivElement | null) => void;
-  onGripPointerDown: (index: number, effectId: string, e: ReactPointerEvent) => void;
+  onGripPointerDown: (index: number, e: ReactPointerEvent) => void;
 }) {
   const { t } = useTranslation();
   const [err, setErr] = useState<string | null>(null);
@@ -375,7 +244,7 @@ function EffectRow({
           data-testid={`effect-drag-${index}`}
           aria-hidden="true"
           title={t("effects.drag_hint")}
-          onPointerDown={(e) => onGripPointerDown(index, effect.id, e)}
+          onPointerDown={(e) => onGripPointerDown(index, e)}
         >
           <GripVertical size={13} />
         </span>
