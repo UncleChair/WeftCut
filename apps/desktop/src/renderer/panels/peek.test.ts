@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPeekItems,
   peekCategory,
+  restackMenuTargets,
   restackTargetForGap,
   splitPeekSections,
   type PeekItem,
@@ -197,6 +198,86 @@ describe("restackTargetForGap", () => {
     expect(restackTargetForGap([], 0, 0)).toBeNull();
     expect(restackTargetForGap(rows(), 0, 4)).toBeNull();
     expect(restackTargetForGap(rows(), 0, -1)).toBeNull();
+  });
+});
+
+describe("restackMenuTargets", () => {
+  // Visible rows top-of-stack first, the At-playhead render order — the same
+  // stack the context menu is looking at (ADR 0044 decision 4: front/back are
+  // derived by the caller from the visible non-reserved stack; the op surface
+  // stays above/below).
+  const rows = () => [
+    item("top", "ImageOverlay", { trackIndex: 5 }),
+    item("mid", "Text", { trackIndex: 3 }),
+    item("bottom", "VideoClip", { trackIndex: 1 }),
+  ];
+
+  it("top row: forward and front are no-ops; backward and back anchor below", () => {
+    expect(restackMenuTargets(rows(), 0)).toEqual({
+      bringForward: null,
+      bringToFront: null,
+      sendBackward: { anchorId: "mid", position: "below" },
+      sendToBack: { anchorId: "bottom", position: "below" },
+    });
+  });
+
+  it("middle row: all four available, front/back anchored at the stack ends", () => {
+    expect(restackMenuTargets(rows(), 1)).toEqual({
+      bringForward: { anchorId: "top", position: "above" },
+      sendBackward: { anchorId: "bottom", position: "below" },
+      bringToFront: { anchorId: "top", position: "above" },
+      sendToBack: { anchorId: "bottom", position: "below" },
+    });
+  });
+
+  it("bottom row: backward and back are no-ops; forward and front anchor above (distinct anchors)", () => {
+    // bringForward hops one visible step; bringToFront jumps the whole stack —
+    // on the bottom row of three the two anchors differ.
+    expect(restackMenuTargets(rows(), 2)).toEqual({
+      bringForward: { anchorId: "mid", position: "above" },
+      bringToFront: { anchorId: "top", position: "above" },
+      sendBackward: null,
+      sendToBack: null,
+    });
+  });
+
+  it("a single-row stack has all four as no-ops", () => {
+    const solo = [item("only", "VideoClip", { trackIndex: 2 })];
+    expect(restackMenuTargets(solo, 0)).toEqual({
+      bringForward: null,
+      sendBackward: null,
+      bringToFront: null,
+      sendToBack: null,
+    });
+  });
+
+  it("an empty list or an out-of-range index has all four as no-ops", () => {
+    const none = {
+      bringForward: null,
+      sendBackward: null,
+      bringToFront: null,
+      sendToBack: null,
+    };
+    expect(restackMenuTargets([], 0)).toEqual(none);
+    expect(restackMenuTargets(rows(), 3)).toEqual(none);
+    expect(restackMenuTargets(rows(), -1)).toEqual(none);
+  });
+
+  it("derives anchors from the visible rows only (filtered-out neighbours never anchor)", () => {
+    // A category chip hid "mid": the menu sees exactly what the user sees
+    // (ADR 0044 decision 5), so the remaining pair anchor on each other.
+    const visible = [
+      item("top", "ImageOverlay", { trackIndex: 5 }),
+      item("bottom", "VideoClip", { trackIndex: 1 }),
+    ];
+    expect(restackMenuTargets(visible, 0).sendBackward).toEqual({
+      anchorId: "bottom",
+      position: "below",
+    });
+    expect(restackMenuTargets(visible, 1).bringToFront).toEqual({
+      anchorId: "top",
+      position: "above",
+    });
   });
 });
 

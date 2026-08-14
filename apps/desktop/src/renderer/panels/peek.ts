@@ -174,3 +174,59 @@ export function restackTargetForGap(
   const last = visibleRows[visibleRows.length - 1]!;
   return { anchorId: last.layer.id, position: "below" };
 }
+
+/// The row context menu's four ordering actions, each resolved to its
+/// anchored restack or null for "disabled" — the menu never offers a no-op.
+export interface RestackMenuTargets {
+  bringForward: RestackTarget | null;
+  sendBackward: RestackTarget | null;
+  bringToFront: RestackTarget | null;
+  sendToBack: RestackTarget | null;
+}
+
+/// Map a row of the visible At-playhead visual stack to its four
+/// context-menu actions (ADR 0044 decision 4). Front/back are not op
+/// variants: they derive as above-the-top / below-the-bottom of the visible
+/// non-reserved stack, so the op surface stays above/below and the menu can
+/// never compose a move under the reserved skeleton.
+///
+/// `visibleRows` is exactly what the user sees — the filtered visual rows,
+/// top-of-stack first (the same contract as `restackTargetForGap`, so a
+/// neighbour hidden by a category chip can never become an anchor);
+/// `index` is the row's position in it. The top row's forward/front and the
+/// bottom row's backward/back are the extremes' no-ops; a single-row stack
+/// disables all four.
+export function restackMenuTargets(
+  visibleRows: readonly PeekItem[],
+  index: number,
+): RestackMenuTargets {
+  const row = visibleRows[index];
+  if (row === undefined) {
+    return {
+      bringForward: null,
+      sendBackward: null,
+      bringToFront: null,
+      sendToBack: null,
+    };
+  }
+  const above = visibleRows[index - 1];
+  const below = visibleRows[index + 1];
+  const top = visibleRows[0]!;
+  const bottom = visibleRows[visibleRows.length - 1]!;
+  return {
+    bringForward:
+      above === undefined
+        ? null
+        : { anchorId: above.layer.id, position: "above" },
+    sendBackward:
+      below === undefined
+        ? null
+        : { anchorId: below.layer.id, position: "below" },
+    bringToFront:
+      above === undefined ? null : { anchorId: top.layer.id, position: "above" },
+    sendToBack:
+      below === undefined
+        ? null
+        : { anchorId: bottom.layer.id, position: "below" },
+  };
+}

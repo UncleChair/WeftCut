@@ -474,6 +474,11 @@ const enUS = {
     goto: "Go to {{label}}",
     rename_label: "Rename {{label}}",
     restack_grip: "Drag to restack {{label}}",
+    row_menu: "Restack {{label}}",
+    restack_forward: "Bring forward",
+    restack_backward: "Send backward",
+    restack_front: "Bring to front",
+    restack_back: "Send to back",
     show_all_title: "All tracks visible",
     show_all_msg:
       "Nearby surfaces hidden A/B-roll layers. In Show All mode every track is already visible, so there is nothing to reveal here.",

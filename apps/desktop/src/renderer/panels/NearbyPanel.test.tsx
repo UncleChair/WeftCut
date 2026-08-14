@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "../i18n";
 import type { LayerSummary, TrackSummary } from "../ipc";
 
@@ -528,5 +536,268 @@ describe("NearbyPanel drag restack", () => {
 
     expect(onRestack).toHaveBeenCalledTimes(1);
     expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+  });
+});
+
+describe("NearbyPanel row context menu", () => {
+  // Bottom→top of the z-stack: Wash (video), Song (audio, sinks to the
+  // tail), Caption (text — visual, interleaves), Logo on top; Later is
+  // strictly in the future so it lands in the Nearby section. The visible
+  // At-playhead visual stack top-first is [Logo, Caption, Wash].
+  function threeStackTracks(): TrackSummary[] {
+    return [
+      makeTrack("t-wash", "Wash lane", "Video", [
+        makeLayer("l-wash", "Wash", "Color", 0, 2_000_000),
+      ]),
+      makeTrack("t-song", "Song lane", "Audio", [
+        makeLayer("l-song", "Song", "Audio", 0, 2_000_000),
+      ]),
+      makeTrack("t-cap", "Caption lane", "Video", [
+        makeLayer("l-cap", "Caption", "Text", 0, 2_000_000),
+      ]),
+      makeTrack("t-logo", "Logo lane", "Video", [
+        makeLayer("l-logo", "Logo", "ImageOverlay", 500_000, 1_500_000),
+      ]),
+      makeTrack("t-later", "Later lane", "Video", [
+        makeLayer("l-later", "Later", "Text", 2_000_000, 3_000_000),
+      ]),
+    ];
+  }
+
+  const ORDER_ITEMS = [
+    "Bring forward",
+    "Send backward",
+    "Bring to front",
+    "Send to back",
+  ];
+
+  /// Right-click the row named `title` (the row button carries the layer's
+  /// display name as its title) and return the opened menu popup.
+  function openRowMenu(title: string): HTMLElement {
+    fireEvent.contextMenu(screen.getByTitle(title), {
+      clientX: 40,
+      clientY: 40,
+    });
+    return screen.getByRole("menu");
+  }
+
+  function menuItem(name: string): HTMLElement {
+    return screen.getByRole("menuitem", { name });
+  }
+
+  /// Enablement matrix assertion: `expected` maps item label → enabled.
+  function expectEnablement(expected: Record<string, boolean>) {
+    for (const [name, enabled] of Object.entries(expected)) {
+      const disabled = menuItem(name).getAttribute("aria-disabled") === "true";
+      expect({ name, enabled: !disabled }).toEqual({ name, enabled });
+    }
+  }
+
+  it("right-click on an At-playhead visual row offers exactly the four ordering items", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+
+    const menu = openRowMenu("Caption");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((el) => el.textContent),
+    ).toEqual(ORDER_ITEMS);
+  });
+
+  it("top row: bring forward / bring to front disabled, the rest enabled", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    openRowMenu("Logo");
+    expectEnablement({
+      "Bring forward": false,
+      "Bring to front": false,
+      "Send backward": true,
+      "Send to back": true,
+    });
+  });
+
+  it("bottom row: send backward / send to back disabled, the rest enabled", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    openRowMenu("Wash");
+    expectEnablement({
+      "Bring forward": true,
+      "Bring to front": true,
+      "Send backward": false,
+      "Send to back": false,
+    });
+  });
+
+  it("middle row: all four enabled", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    openRowMenu("Caption");
+    expectEnablement({
+      "Bring forward": true,
+      "Bring to front": true,
+      "Send backward": true,
+      "Send to back": true,
+    });
+  });
+
+  it("single-row stack: all four disabled — the menu never offers a no-op", () => {
+    renderPanel(
+      [
+        makeTrack("t-wash", "Wash lane", "Video", [
+          makeLayer("l-wash", "Wash", "Color", 0, 2_000_000),
+        ]),
+      ],
+      { onRestack: vi.fn() },
+    );
+    openRowMenu("Wash");
+    expectEnablement({
+      "Bring forward": false,
+      "Bring to front": false,
+      "Send backward": false,
+      "Send to back": false,
+    });
+  });
+
+  it("bring forward restacks above the visible upper neighbour and closes the menu", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    openRowMenu("Caption");
+    await user.click(menuItem("Bring forward"));
+
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-cap", "l-logo", "above");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("send backward restacks below the visible lower neighbour", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    openRowMenu("Caption");
+    await user.click(menuItem("Send backward"));
+
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-cap", "l-wash", "below");
+  });
+
+  it("bring to front anchors above the top of the visible stack, not the adjacent row", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    // From the bottom row, forward's anchor would be Caption; front must
+    // jump the whole stack and anchor above Logo.
+    openRowMenu("Wash");
+    await user.click(menuItem("Bring to front"));
+
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-wash", "l-logo", "above");
+  });
+
+  it("send to back anchors below the bottom of the visible stack, not the adjacent row", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    openRowMenu("Logo");
+    await user.click(menuItem("Send to back"));
+
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+  });
+
+  it("clicking a disabled item emits nothing", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    openRowMenu("Logo");
+    await user.click(menuItem("Bring forward"));
+
+    expect(onRestack).not.toHaveBeenCalled();
+  });
+
+  it("audio rows offer no context menu", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    fireEvent.contextMenu(screen.getByTitle("Song"), {
+      clientX: 40,
+      clientY: 40,
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("Nearby rows offer no context menu", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    fireEvent.contextMenu(screen.getByTitle("Later"), {
+      clientX: 40,
+      clientY: 40,
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("offers no menu when the host wires no restack handler", () => {
+    renderPanel(threeStackTracks());
+    fireEvent.contextMenu(screen.getByTitle("Logo"), {
+      clientX: 40,
+      clientY: 40,
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("under a category filter the actions anchor on visible rows — never the hidden neighbour", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    // The Video chip hides Caption (text): the visible stack is [Logo, Wash].
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    openRowMenu("Logo");
+    await user.click(menuItem("Send backward"));
+
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+  });
+
+  it("Shift+F10 opens the row menu from the keyboard; arrow + Enter fires the action", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    const row = screen.getByTitle("Caption");
+    row.focus();
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    const menu = screen.getByRole("menu");
+
+    // Base UI moves focus into the popup asynchronously; arrow navigation
+    // only listens once it has.
+    await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-cap", "l-logo", "above");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("Escape closes the menu without emitting", async () => {
+    const user = userEvent.setup();
+    const onRestack = vi.fn();
+    renderPanel(threeStackTracks(), { onRestack });
+
+    openRowMenu("Caption");
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onRestack).not.toHaveBeenCalled();
+  });
+
+  it("opening the menu leaves click-to-select and the grip drag untouched", () => {
+    const onRestack = vi.fn();
+    const { onPick } = renderPanel(threeStackTracks(), { onRestack });
+
+    openRowMenu("Caption");
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    fireEvent.click(screen.getByTitle("Caption"));
+    expect(onPick).toHaveBeenCalledWith("l-cap", "t-cap");
+    expect(screen.getByLabelText("Drag to restack Caption")).toBeTruthy();
   });
 });

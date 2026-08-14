@@ -1,15 +1,19 @@
 // A/B-roll context panel. Owns mode gating, row presentation, the two
-// navigation gestures (pick vs Go To — see the props below), and the
-// At-playhead restack drag (grip per visual stack row); double-click renames
-// via the recorded Layer label command. Windowing, filtering, the
-// At-playhead / Nearby split and the drop's gap→anchor mapping live in
-// `peek.ts` (ADR 0044). Outside A/B Roll (or with an empty window) the panel
-// renders an explainer instead of rows.
+// navigation gestures (pick vs Go To — see the props below), the
+// At-playhead restack drag (grip per visual stack row) and the row context
+// menu (the drag's non-drag equivalent); double-click renames via the
+// recorded Layer label command. Windowing, filtering, the At-playhead /
+// Nearby split and the drop's / menu's anchor mappings live in `peek.ts`
+// (ADR 0044). Outside A/B Roll (or with an empty window) the panel renders
+// an explainer instead of rows.
 
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -29,15 +33,18 @@ import { layerDisplayName } from "../lib/layerName";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { MediaThumbnail } from "./MediaThumbnail";
+import { NearbyRowContextMenu } from "./NearbyRowContextMenu";
 import {
   buildPeekItems,
   peekCategory,
   PEEK_CATEGORY_ORDER,
+  restackMenuTargets,
   restackTargetForGap,
   splitPeekSections,
   type PeekCategory,
   type PeekItem,
   type PeekSections,
+  type RestackMenuTargets,
 } from "./peek";
 
 const PEEK_FILTERS: ("all" | PeekCategory)[] = ["all", ...PEEK_CATEGORY_ORDER];
@@ -138,6 +145,44 @@ export function NearbyPanel({
     reorder.startDrag(index, e);
   };
 
+  // ── Row context menu (ADR 0044 decision 4) ─────────────────────────────
+  // The grip drag's non-drag equivalent: four ordering items, offered only
+  // where there is something to order — At-playhead visual rows (audio and
+  // Nearby rows get no menu at all rather than an empty one). Anchors and
+  // enablement resolve against the visible stack at open time, so the
+  // playhead ticking under an open menu can't retarget a chosen item; the
+  // anchored op stays valid because it re-resolves against the anchor's
+  // track at apply time. One item click = one restack = one history entry.
+  const [rowMenu, setRowMenu] = useState<{
+    x: number;
+    y: number;
+    layerId: string;
+    label: string;
+    targets: RestackMenuTargets;
+  } | null>(null);
+
+  // Coordinates are viewport-fixed. Close when any ancestor scrolls so the
+  // menu never floats detached from the row it belongs to (the media pool's
+  // convention).
+  useEffect(() => {
+    if (!rowMenu) return;
+    const close = () => setRowMenu(null);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [rowMenu]);
+
+  const openRowMenu = (index: number, x: number, y: number) => {
+    const row = visualRows[index];
+    if (!row) return;
+    setRowMenu({
+      x,
+      y,
+      layerId: row.layer.id,
+      label: layerDisplayName(row.layer, t),
+      targets: restackMenuTargets(visualRows, index),
+    });
+  };
+
   // Rows render identically in both sections — a row's information set
   // (thumbnail / icon, name, track name, offset / LIVE badge, duration) does
   // not depend on which side of the playhead boundary it landed on. An
@@ -182,6 +227,11 @@ export function NearbyPanel({
         onGripPointerDown={
           draggable && onRestack
             ? (e) => startRestackDrag(stackIndex, e)
+            : undefined
+        }
+        onMenuOpen={
+          draggable && onRestack
+            ? (x, y) => openRowMenu(stackIndex, x, y)
             : undefined
         }
       />
@@ -282,6 +332,20 @@ export function NearbyPanel({
           </>
         )}
       </div>
+      {rowMenu && onRestack && (
+        <NearbyRowContextMenu
+          key={`${rowMenu.layerId}:${rowMenu.x}:${rowMenu.y}`}
+          x={rowMenu.x}
+          y={rowMenu.y}
+          label={rowMenu.label}
+          targets={rowMenu.targets}
+          onClose={() => setRowMenu(null)}
+          onAction={(target) => {
+            setRowMenu(null);
+            onRestack(rowMenu.layerId, target.anchorId, target.position);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -321,6 +385,7 @@ function PeekRow({
   rowClassName,
   rowRef,
   onGripPointerDown,
+  onMenuOpen,
 }: {
   item: PeekItem;
   isSelected: boolean;
@@ -337,6 +402,10 @@ function PeekRow({
   rowRef?: ((el: HTMLLIElement | null) => void) | undefined;
   /// When present the row shows a grip and is draggable to restack.
   onGripPointerDown?: ((e: ReactPointerEvent) => void) | undefined;
+  /// When present the row opens the ordering context menu at (x, y):
+  /// right-click, or ContextMenu / Shift+F10 from the keyboard (the media
+  /// pool's vocabulary). Present only on At-playhead visual rows.
+  onMenuOpen?: ((x: number, y: number) => void) | undefined;
 }) {
   const { t } = useTranslation();
   const durationUs = item.layer.t_end_us - item.layer.t_start_us;
@@ -382,6 +451,31 @@ function PeekRow({
     setEditing(false);
   };
 
+  // Right-click anywhere on the row opens the ordering menu at the cursor;
+  // the keyboard opener anchors it inside the row's own rect instead.
+  // Both funnel through `onMenuOpen` so the panel owns what the menu shows.
+  const openMenuFromPointer = onMenuOpen
+    ? (e: ReactMouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenuOpen(e.clientX, e.clientY);
+      }
+    : undefined;
+  const openMenuFromKeyboard = onMenuOpen
+    ? (e: ReactKeyboardEvent) => {
+        if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        onMenuOpen(
+          rect.left + Math.min(32, rect.width / 2),
+          rect.top + Math.min(32, rect.height / 2),
+        );
+      }
+    : undefined;
+
   if (editing) {
     return (
       // Keeps the row ref through a rename so a concurrent gesture on a
@@ -409,7 +503,12 @@ function PeekRow({
   }
 
   return (
-    <li className={rowClassName} ref={rowRef}>
+    <li
+      className={rowClassName}
+      ref={rowRef}
+      onContextMenu={openMenuFromPointer}
+      onKeyDown={openMenuFromKeyboard}
+    >
       <div className="peek-item-row">
         {/* Pointer-only restack affordance (ADR 0044 decision 6): the row
             body already spends click on select and double-click on rename,
@@ -433,6 +532,10 @@ function PeekRow({
           onClick={onReveal}
           onDoubleClick={onRename ? startEdit : undefined}
           title={primaryLabel}
+          // Announced on the focusable element, like the media pool's cards:
+          // the ordering menu is a keyboard path, not a pointer-only one.
+          aria-haspopup={onMenuOpen ? "menu" : undefined}
+          aria-keyshortcuts={onMenuOpen ? "Shift+F10" : undefined}
         >
           <span className="peek-thumb">
             {thumbMediaId ? (

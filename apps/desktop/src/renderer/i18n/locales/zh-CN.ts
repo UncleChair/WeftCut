@@ -454,6 +454,11 @@ const zhCN: Resources = {
     goto: "跳转到 {{label}}",
     rename_label: "重命名 {{label}}",
     restack_grip: "拖动以调整 {{label}} 的层叠顺序",
+    row_menu: "调整 {{label}} 的层叠顺序",
+    restack_forward: "上移一层",
+    restack_backward: "下移一层",
+    restack_front: "置于顶层",
+    restack_back: "置于底层",
     show_all_title: "所有轨道均可见",
     show_all_msg:
       "Nearby 用于呈现被隐藏的 A/B Roll 图层。在「显示全部」模式下每条轨道都已可见，这里没有需要揭示的内容。",
