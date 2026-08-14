@@ -11,8 +11,12 @@ vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => settings.displayMode,
 }));
 
+// Mutable so the drag-restack tests can tick the playhead mid-gesture (the
+// panel re-reads it per render; a rerender stands in for the store's throttle).
+const playhead = vi.hoisted(() => ({ timeUs: 1_000_000 }));
+
 vi.mock("../state/playheadStore", () => ({
-  usePlayheadTimeUsThrottled: () => 1_000_000,
+  usePlayheadTimeUsThrottled: () => playhead.timeUs,
 }));
 
 vi.mock("./MediaThumbnail", () => ({
@@ -21,8 +25,13 @@ vi.mock("./MediaThumbnail", () => ({
 
 import { NearbyPanel } from "./NearbyPanel";
 
+// jsdom has no PointerEvent constructor; MouseEvent carries the same client
+// coordinates the pointer sequence needs (EffectsSection.test.tsx prior art).
+(window as unknown as { PointerEvent: unknown }).PointerEvent = window.MouseEvent;
+
 beforeEach(() => {
   settings.displayMode = "AbRoll";
+  playhead.timeUs = 1_000_000;
 });
 
 afterEach(() => cleanup());
@@ -109,10 +118,15 @@ function renderPanel(
     onPick?: (layerId: string, trackId: string) => void;
     onGoTo?: (layerId: string, trackId: string, startUs: number) => void;
     onRename?: (layerId: string, nextLabel: string) => void;
+    onRestack?: (
+      layerId: string,
+      anchorLayerId: string,
+      position: "above" | "below",
+    ) => void;
   } = {},
 ) {
   const onPick = handlers.onPick ?? vi.fn();
-  const { container } = render(
+  const { container, rerender } = render(
     <NearbyPanel
       tracks={tracks}
       selectedLayerId={null}
@@ -121,9 +135,23 @@ function renderPanel(
       onPick={onPick}
       onGoTo={handlers.onGoTo}
       onRename={handlers.onRename}
+      onRestack={handlers.onRestack}
     />,
   );
-  return { onPick, container };
+  const rerenderPanel = () =>
+    rerender(
+      <NearbyPanel
+        tracks={tracks}
+        selectedLayerId={null}
+        fpsNum={30}
+        fpsDen={1}
+        onPick={onPick}
+        onGoTo={handlers.onGoTo}
+        onRename={handlers.onRename}
+        onRestack={handlers.onRestack}
+      />,
+    );
+  return { onPick, container, rerenderPanel };
 }
 
 /// Row titles inside `root`, in DOM order — the row button carries the
@@ -304,5 +332,201 @@ describe("NearbyPanel two sections", () => {
     // Later starts one second ahead of the playhead.
     expect(within(later).getByText("+00:00:01:00")).toBeTruthy();
     expect(within(later).getByText("00:00:01:00")).toBeTruthy();
+  });
+});
+
+describe("NearbyPanel drag restack", () => {
+  /// The At-playhead section's <li> rows in DOM order (visual stack first,
+  /// audio tail after) — the elements the gesture hit-tests against.
+  function stackRows(): HTMLElement[] {
+    const stack = screen.getByRole("region", { name: "At playhead" });
+    return Array.from(stack.querySelectorAll("li"));
+  }
+
+  // jsdom rects are all zero; give each row a real vertical slot so the
+  // gesture math has something to hit (EffectsSection.test.tsx prior art).
+  function mockRowRects(rows: HTMLElement[], tops: number[], height = 40) {
+    rows.forEach((row, i) => {
+      const top = tops[i];
+      if (top === undefined) return;
+      row.getBoundingClientRect = () =>
+        ({
+          top,
+          bottom: top + height,
+          height,
+          left: 0,
+          right: 120,
+          width: 120,
+          x: 0,
+          y: top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    });
+  }
+
+  /// stackedTracks rendered with a restack handler and the two visual rows
+  /// (Logo on top, Wash below, Song as the grip-less audio tail) given rects.
+  function renderStack(tracks = stackedTracks()) {
+    const onRestack = vi.fn();
+    const rendered = renderPanel(tracks, { onRestack });
+    mockRowRects(stackRows(), [0, 40]);
+    return { onRestack, ...rendered };
+  }
+
+  it("grips only the At-playhead visual rows; audio and Nearby rows carry none", () => {
+    renderStack();
+
+    expect(screen.getByLabelText("Drag to restack Logo")).toBeTruthy();
+    expect(screen.getByLabelText("Drag to restack Wash")).toBeTruthy();
+    // Audio mixes by role, never stacks; Nearby rows are not at the playhead.
+    expect(screen.queryByLabelText("Drag to restack Song")).toBeNull();
+    expect(screen.queryByLabelText("Drag to restack Later")).toBeNull();
+  });
+
+  it("renders no grips when the host wires no restack handler", () => {
+    renderPanel(stackedTracks());
+    expect(screen.queryByLabelText(/Drag to restack/)).toBeNull();
+  });
+
+  it("emits exactly one restack at drop, none mid-gesture, and never starts an HTML5 drag", () => {
+    const { onRestack } = renderStack();
+    const dragstart = vi.fn();
+    document.addEventListener("dragstart", dragstart);
+    try {
+      const grip = screen.getByLabelText("Drag to restack Logo");
+      expect(grip.getAttribute("draggable")).toBeNull();
+      fireEvent.pointerDown(grip, { button: 0, clientX: 8, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+
+      // Live insertion indicator mid-gesture, but no command before release.
+      const rows = stackRows();
+      expect(rows[0]!.className).toContain("peek-row--dragging");
+      expect(rows[1]!.className).toContain("peek-row--drop-after");
+      expect(onRestack).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+      expect(onRestack).toHaveBeenCalledTimes(1);
+      expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+      expect(dragstart).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("dragstart", dragstart);
+    }
+  });
+
+  it("dragging the bottom visual row above the top targets 'above' the top row", () => {
+    const { onRestack } = renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Wash"), {
+      button: 0,
+      clientX: 8,
+      clientY: 50,
+    });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 5 });
+    expect(stackRows()[0]!.className).toContain("peek-row--drop-before");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 5 });
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-wash", "l-logo", "above");
+  });
+
+  it("dropping at a no-op gap shows no indicator and emits nothing", () => {
+    const { onRestack, container } = renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
+      button: 0,
+      clientX: 8,
+      clientY: 10,
+    });
+    // y=30 is past Logo's midline: the gap right below the dragged row.
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 30 });
+    expect(container.querySelector(".peek-row--drop-before")).toBeNull();
+    expect(container.querySelector(".peek-row--drop-after")).toBeNull();
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 30 });
+    expect(onRestack).not.toHaveBeenCalled();
+  });
+
+  it("Escape aborts the gesture; a later pointerup commits nothing", () => {
+    const { onRestack } = renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
+      button: 0,
+      clientX: 8,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+    expect(stackRows()[1]!.className).toContain("peek-row--drop-after");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(stackRows()[1]!.className).not.toContain("peek-row--drop-after");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+    expect(onRestack).not.toHaveBeenCalled();
+  });
+
+  it("pointercancel disarms the gesture; a later pointerup commits nothing", () => {
+    const { onRestack } = renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
+      button: 0,
+      clientX: 8,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+
+    fireEvent.pointerCancel(window);
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+    expect(onRestack).not.toHaveBeenCalled();
+  });
+
+  it("freezes the row snapshot while the playhead ticks; drop resolves against the snapshot", () => {
+    const { onRestack, rerenderPanel } = renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
+      button: 0,
+      clientX: 8,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+
+    // The playhead store ticks to 2.6s mid-gesture: live data would move
+    // Logo and Wash out of At-playhead and pull Later in. Frozen rows don't.
+    playhead.timeUs = 2_600_000;
+    rerenderPanel();
+    expect(
+      rowTitles(screen.getByRole("region", { name: "At playhead" })),
+    ).toEqual(["Logo", "Wash", "Song"]);
+
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
+
+    // The gesture is over: the list snaps back to live data.
+    expect(
+      rowTitles(screen.getByRole("region", { name: "At playhead" })),
+    ).toEqual(["Later"]);
+  });
+
+  it("under a category filter, a drop anchors on the visible row — never the hidden neighbour", () => {
+    // Bottom→top: Wash (video), Caption (text, hidden by the Video chip),
+    // Logo (video). The visible stack is [Logo, Wash].
+    const tracks = [
+      makeTrack("t-wash", "Wash lane", "Video", [
+        makeLayer("l-wash", "Wash", "Color", 0, 2_000_000),
+      ]),
+      makeTrack("t-cap", "Caption lane", "Video", [
+        makeLayer("l-cap", "Caption", "Text", 0, 2_000_000),
+      ]),
+      makeTrack("t-logo", "Logo lane", "Video", [
+        makeLayer("l-logo", "Logo", "ImageOverlay", 500_000, 1_500_000),
+      ]),
+    ];
+    const onRestack = vi.fn();
+    renderPanel(tracks, { onRestack });
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    mockRowRects(stackRows(), [0, 40]);
+
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
+      button: 0,
+      clientX: 8,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+
+    expect(onRestack).toHaveBeenCalledTimes(1);
+    expect(onRestack).toHaveBeenCalledWith("l-logo", "l-wash", "below");
   });
 });

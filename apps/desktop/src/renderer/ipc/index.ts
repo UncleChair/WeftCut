@@ -1176,6 +1176,18 @@ export async function moveLayersToNewTrack(
   return invoke<string>("move_layers_to_new_track", { layerIds });
 }
 
+/// Restack a visual layer directly above/below an anchor layer in the z-stack
+/// (ADR 0044) — Nearby's drop gesture. One undoable step: the actor owns the
+/// smart degradation (move the owned lane vs split onto a fresh one) and skips
+/// the commit when the layer already sits there.
+export async function restackLayer(
+  layerId: string,
+  anchorLayerId: string,
+  position: "above" | "below",
+): Promise<void> {
+  return invoke<void>("restack_layer", { layerId, anchorLayerId, position });
+}
+
 /** `docs/features.md#groups` — group-aware trim. `edge` is `"in"` or `"out"`. */
 export async function trimLayer(
   layerId: string,

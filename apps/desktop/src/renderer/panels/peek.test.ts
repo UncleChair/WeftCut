@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPeekItems,
   peekCategory,
+  restackTargetForGap,
   splitPeekSections,
   type PeekItem,
 } from "./peek";
@@ -129,6 +130,73 @@ describe("splitPeekSections", () => {
     const sections = splitPeekSections([item("v", "VideoClip")], "text");
     expect(sections.atPlayhead).toEqual([]);
     expect(sections.nearby).toEqual([]);
+  });
+});
+
+describe("restackTargetForGap", () => {
+  // Visible rows top-of-stack first, the At-playhead render order. The
+  // dragged row is rows[fromIndex]; a gap g sits directly above rows[g].
+  const rows = () => [
+    item("top", "ImageOverlay", { trackIndex: 5 }),
+    item("mid", "Text", { trackIndex: 3 }),
+    item("bottom", "VideoClip", { trackIndex: 1 }),
+  ];
+
+  it("maps an interior gap to 'directly above the visible row below it'", () => {
+    // Dragging the top row to the gap between mid and bottom.
+    expect(restackTargetForGap(rows(), 0, 2)).toEqual({
+      anchorId: "bottom",
+      position: "above",
+    });
+  });
+
+  it("maps the top gap to above the first visible row", () => {
+    expect(restackTargetForGap(rows(), 2, 0)).toEqual({
+      anchorId: "top",
+      position: "above",
+    });
+  });
+
+  it("maps the section-bottom gap to below the last visible row", () => {
+    expect(restackTargetForGap(rows(), 0, 3)).toEqual({
+      anchorId: "bottom",
+      position: "below",
+    });
+  });
+
+  it("reports the row's own gap and its following gap as no-ops", () => {
+    expect(restackTargetForGap(rows(), 1, 1)).toBeNull();
+    expect(restackTargetForGap(rows(), 1, 2)).toBeNull();
+  });
+
+  it("a single-row list has only no-op gaps", () => {
+    const solo = [item("only", "VideoClip", { trackIndex: 2 })];
+    expect(restackTargetForGap(solo, 0, 0)).toBeNull();
+    expect(restackTargetForGap(solo, 0, 1)).toBeNull();
+  });
+
+  it("derives anchors from the visible rows only (filtered-out neighbours never anchor)", () => {
+    // A category chip hid "mid": the function sees exactly what the user
+    // sees, so the drop below the remaining top row anchors on "bottom" —
+    // never on the hidden layer between them (ADR 0044 decision 5).
+    const visible = [
+      item("top", "ImageOverlay", { trackIndex: 5 }),
+      item("bottom", "VideoClip", { trackIndex: 1 }),
+    ];
+    expect(restackTargetForGap(visible, 1, 0)).toEqual({
+      anchorId: "top",
+      position: "above",
+    });
+    expect(restackTargetForGap(visible, 0, 2)).toEqual({
+      anchorId: "bottom",
+      position: "below",
+    });
+  });
+
+  it("an empty list or an out-of-range gap resolves to no-op", () => {
+    expect(restackTargetForGap([], 0, 0)).toBeNull();
+    expect(restackTargetForGap(rows(), 0, 4)).toBeNull();
+    expect(restackTargetForGap(rows(), 0, -1)).toBeNull();
   });
 });
 

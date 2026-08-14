@@ -290,6 +290,47 @@
   color: var(--foreground);
 }
 
+/* At-playhead restack gesture (ADR 0044). Same insertion-line vocabulary as
+   the effect chain (.prop-effect-row--drop-*): a 2px --selection line at the
+   drop gap, the dragged row at half opacity. */
+.peek-grip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0 0 6px;
+  color: var(--color-slate-600);
+  cursor: grab;
+  touch-action: none;
+}
+
+.peek-item-row:hover .peek-grip {
+  color: var(--muted-foreground);
+}
+
+.peek-stack--reordering .peek-grip {
+  cursor: grabbing;
+}
+
+.peek-stack--reordering,
+.peek-stack--reordering * {
+  user-select: none;
+}
+
+.peek-row--dragging {
+  opacity: 0.5;
+}
+
+/* Insertion line. Drawn in --selection (the one true accent), NOT --accent —
+   which in this theme is a near-background SURFACE grey (see the effect
+   chain's identical note). */
+.peek-row--drop-before {
+  box-shadow: 0 -2px 0 0 var(--selection);
+}
+
+.peek-row--drop-after {
+  box-shadow: 0 2px 0 0 var(--selection);
+}
+
 .peek-rename-input {
   box-sizing: border-box;
   width: 100%;

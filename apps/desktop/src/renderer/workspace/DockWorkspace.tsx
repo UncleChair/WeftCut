@@ -48,6 +48,7 @@ import { AgentPanel } from "../agent/AgentPanel";
 import { HistoryPanel } from "../history/HistoryPanel";
 import {
   importCancel,
+  restackLayer,
   updateLayer,
   type KeybindingsMap,
   type ProjectSummary,
@@ -372,6 +373,18 @@ function NearbyDockPanel() {
             await tryMutate(
               () => updateLayer(layerId, { label: nextLabel }),
               "Rename layer",
+            )
+          ) {
+            await contracts.onMutated();
+          }
+        }}
+        onRestack={async (layerId, anchorLayerId, position) => {
+          // One completed drag = one anchored restack op (ADR 0044); the
+          // actor owns the sole-occupant/split degradation and the undo entry.
+          if (
+            await tryMutate(
+              () => restackLayer(layerId, anchorLayerId, position),
+              "Restack layer",
             )
           ) {
             await contracts.onMutated();

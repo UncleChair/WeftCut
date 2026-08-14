@@ -122,6 +122,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_group: a.escapeGroup ?? false } }),
   move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds } }),
+  // Anchored z-reorder (ADR 0044) — Nearby's drop gesture. Pure renaming;
+  // position/anchor validation lives with the mutation.
+  restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_group: a.escapeGroup ?? false } }),
   delete_layer: (a) => ({ op: 'delete_layer', args: { layer: a.layerId } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
@@ -177,7 +180,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'trim_layer', 'delete_layer', 'remove_media', 'duplicate_layer', 'split_layer_grouped',
+  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'remove_media', 'duplicate_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',

@@ -473,6 +473,7 @@ const enUS = {
     at_playhead_empty: "Nothing spans the playhead right now",
     goto: "Go to {{label}}",
     rename_label: "Rename {{label}}",
+    restack_grip: "Drag to restack {{label}}",
     show_all_title: "All tracks visible",
     show_all_msg:
       "Nearby surfaces hidden A/B-roll layers. In Show All mode every track is already visible, so there is nothing to reveal here.",

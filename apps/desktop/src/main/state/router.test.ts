@@ -16,7 +16,7 @@ const ALL_CHANNELS: readonly string[] = [
   'add_track', 'separate_audio_to_new_track', 'add_demo_color_layer', 'add_color_layer',
   'add_media_layer', 'add_text_layer', 'add_demo_text_layer', 'update_layer', 'update_layer_params',
   'update_layer_param_track', 'update_layer_param_tracks', 'add_effect', 'update_effect',
-  'move_effect', 'remove_effect', 'move_layer', 'trim_layer', 'split_layer_grouped',
+  'move_effect', 'remove_effect', 'move_layer', 'restack_layer', 'trim_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve', 'duplicate_layer', 'paste_layer', 'delete_layer', 'remove_media', 'set_composition',
   'fit_composition_to_layers', 'update_track_flags', 'rename_track', 'set_role_gain', 'update_role_flags',
   'add_transition', 'update_transition', 'remove_transition',

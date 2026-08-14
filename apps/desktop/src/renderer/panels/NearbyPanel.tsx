@@ -1,14 +1,29 @@
-// A/B-roll context panel. Owns mode gating, row presentation, and the two
-// navigation gestures (pick vs Go To — see the props below); double-click
-// renames via the recorded Layer label command. Windowing, filtering and the
-// At-playhead / Nearby split live in `peek.ts` (ADR 0044). Outside A/B Roll
-// (or with an empty window) the panel renders an explainer instead of rows.
+// A/B-roll context panel. Owns mode gating, row presentation, the two
+// navigation gestures (pick vs Go To — see the props below), and the
+// At-playhead restack drag (grip per visual stack row); double-click renames
+// via the recorded Layer label command. Windowing, filtering, the
+// At-playhead / Nearby split and the drop's gap→anchor mapping live in
+// `peek.ts` (ADR 0044). Outside A/B Roll (or with an empty window) the panel
+// renders an explainer instead of rows.
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { CrosshairIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
+import {
+  CrosshairIcon,
+  FilmIcon,
+  GripVerticalIcon,
+  MusicIcon,
+  TypeIcon,
+} from "lucide-react";
 
 import { formatTimecode } from "../frames";
+import { usePointerReorder } from "../hooks/usePointerReorder";
 import { type TrackSummary } from "../ipc";
 import { layerDisplayName } from "../lib/layerName";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
@@ -18,9 +33,11 @@ import {
   buildPeekItems,
   peekCategory,
   PEEK_CATEGORY_ORDER,
+  restackTargetForGap,
   splitPeekSections,
   type PeekCategory,
   type PeekItem,
+  type PeekSections,
 } from "./peek";
 
 const PEEK_FILTERS: ("all" | PeekCategory)[] = ["all", ...PEEK_CATEGORY_ORDER];
@@ -40,6 +57,17 @@ export interface NearbyPanelProps {
   /// Commit a lightweight inline rename through the recorded Layer label
   /// command. The host wires this to `updateLayer` + summary refresh.
   onRename?: ((layerId: string, nextLabel: string) => void) | undefined;
+  /// Restack `layerId` directly above/below `anchorLayerId` in the z-stack —
+  /// ONE anchored op per completed drag (ADR 0044). The host wires this to
+  /// the `restack_layer` command + summary refresh. When omitted, the
+  /// At-playhead rows render without grips.
+  onRestack?:
+    | ((
+        layerId: string,
+        anchorLayerId: string,
+        position: "above" | "below",
+      ) => void)
+    | undefined;
 }
 
 export function NearbyPanel({
@@ -51,6 +79,7 @@ export function NearbyPanel({
   onPick,
   onGoTo,
   onRename,
+  onRestack,
 }: NearbyPanelProps) {
   const { t } = useTranslation();
   const displayMode = useDisplayMode();
@@ -63,30 +92,101 @@ export function NearbyPanel({
     return buildPeekItems(tracks, currentTimeUs, deltaWindowUs, t);
   }, [tracks, currentTimeUs, deltaWindowUs, displayMode, t]);
 
-  const { atPlayhead, nearby } = useMemo(
+  const live = useMemo(
     () => splitPeekSections(items, filter),
     [items, filter],
   );
 
+  // ── At-playhead restack gesture (ADR 0044 decision 6) ──────────────────
+  // The effect chain's pointer-reorder skeleton, inherited: drag state, gap
+  // hit-testing by row midlines, edge auto-scroll and the Escape /
+  // pointercancel disarm all live in the hook. Pure pointer events — never
+  // HTML5 drag-and-drop — so a row drag can never become a Dockview panel
+  // drag. Zero commands mid-gesture; exactly one restack at a non-noop drop.
+  //
+  // The row snapshot freezes for the duration of a gesture: the playhead
+  // ticks on a throttle and must never reshuffle rows under the pointer.
+  // Both are written at grip pointerdown and only read while the hook
+  // reports an active drag; they go stale (not cleared) after the gesture
+  // and the next pointerdown overwrites them.
+  const [frozen, setFrozen] = useState<PeekSections | null>(null);
+  const gestureRowsRef = useRef<PeekItem[]>([]);
+
+  const reorder = usePointerReorder({
+    // Read per render. A pointerdown can only start on the displayed rows,
+    // which are the live ones whenever no gesture is armed.
+    rowIds: visualStackOf(live).map((row) => row.layer.id),
+    onDrop: ({ fromIndex, gap }) => {
+      // Resolve against the pointerdown snapshot — the same rows the user
+      // grabbed and has been looking at all gesture long.
+      const rows = gestureRowsRef.current;
+      const target = restackTargetForGap(rows, fromIndex, gap);
+      const mover = rows[fromIndex];
+      if (!target || !mover) return;
+      onRestack?.(mover.layer.id, target.anchorId, target.position);
+    },
+  });
+
+  const sections = reorder.drag && frozen ? frozen : live;
+  const { atPlayhead, nearby } = sections;
+  const visualRows = visualStackOf(sections);
+
+  const startRestackDrag = (index: number, e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    gestureRowsRef.current = visualRows;
+    setFrozen(sections);
+    reorder.startDrag(index, e);
+  };
+
   // Rows render identically in both sections — a row's information set
   // (thumbnail / icon, name, track name, offset / LIVE badge, duration) does
-  // not depend on which side of the playhead boundary it landed on.
-  const renderRow = (item: PeekItem) => (
-    <PeekRow
-      key={item.layer.id}
-      item={item}
-      isSelected={item.layer.id === selectedLayerId}
-      fpsNum={fpsNum}
-      fpsDen={fpsDen}
-      onReveal={() => onPick(item.layer.id, item.trackId)}
-      onGoTo={
-        onGoTo
-          ? () => onGoTo(item.layer.id, item.trackId, item.layer.t_start_us)
-          : undefined
-      }
-      onRename={onRename ? (next) => onRename(item.layer.id, next) : undefined}
-    />
-  );
+  // not depend on which side of the playhead boundary it landed on. An
+  // At-playhead index adds the reorder chrome (grip, rect registration,
+  // drag / insertion-indicator classes) to the section's visual prefix; the
+  // audio tail and the Nearby section stay grip-less.
+  const renderRow = (item: PeekItem, stackIndex?: number) => {
+    const draggable =
+      stackIndex !== undefined && stackIndex < visualRows.length;
+    const rowClassName = draggable
+      ? [
+          reorder.drag?.id === item.layer.id ? "peek-row--dragging" : "",
+          reorder.indicatorGap === stackIndex ? "peek-row--drop-before" : "",
+          reorder.indicatorGap === visualRows.length &&
+          stackIndex === visualRows.length - 1
+            ? "peek-row--drop-after"
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : "";
+    return (
+      <PeekRow
+        key={item.layer.id}
+        item={item}
+        isSelected={item.layer.id === selectedLayerId}
+        fpsNum={fpsNum}
+        fpsDen={fpsDen}
+        onReveal={() => onPick(item.layer.id, item.trackId)}
+        onGoTo={
+          onGoTo
+            ? () => onGoTo(item.layer.id, item.trackId, item.layer.t_start_us)
+            : undefined
+        }
+        onRename={
+          onRename ? (next) => onRename(item.layer.id, next) : undefined
+        }
+        rowClassName={rowClassName === "" ? undefined : rowClassName}
+        rowRef={
+          draggable ? (el) => reorder.setRowEl(stackIndex, el) : undefined
+        }
+        onGripPointerDown={
+          draggable && onRestack
+            ? (e) => startRestackDrag(stackIndex, e)
+            : undefined
+        }
+      />
+    );
+  };
 
   // Never an unexplained blank Panel: Show All mode has no hidden tracks to
   // surface, and an empty ±Δ window means nothing intersects right now — both
@@ -144,9 +244,15 @@ export function NearbyPanel({
           <>
             {/* The stack being composited right now, top-of-stack first.
                 Always present: an empty stack is a fact worth stating, not
-                a section to hide. */}
+                a section to hide. The container ref anchors the reorder
+                gesture's edge auto-scroll. */}
             <section
-              className="peek-section"
+              ref={reorder.containerRef}
+              className={
+                reorder.drag
+                  ? "peek-section peek-stack--reordering"
+                  : "peek-section"
+              }
               aria-label={t("peek.section_at_playhead")}
             >
               <div className="peek-section-header">
@@ -156,7 +262,7 @@ export function NearbyPanel({
                 <p className="peek-stack-empty">{t("peek.at_playhead_empty")}</p>
               ) : (
                 <ul className="right-panel-peek-list">
-                  {atPlayhead.map(renderRow)}
+                  {atPlayhead.map((item, i) => renderRow(item, i))}
                 </ul>
               )}
             </section>
@@ -168,7 +274,9 @@ export function NearbyPanel({
                 <div className="peek-section-header">
                   {t("peek.section_nearby")}
                 </div>
-                <ul className="right-panel-peek-list">{nearby.map(renderRow)}</ul>
+                <ul className="right-panel-peek-list">
+                  {nearby.map((item) => renderRow(item))}
+                </ul>
               </section>
             )}
           </>
@@ -193,6 +301,15 @@ function Explainer({ title, message }: { title: string; message: string }) {
   );
 }
 
+/// The draggable prefix of the At-playhead section: splitPeekSections puts
+/// the z-ordered visual rows first, the grip-less audio tail after, so the
+/// reorderable list is exactly this filter's result in this order.
+function visualStackOf(sections: PeekSections): PeekItem[] {
+  return sections.atPlayhead.filter(
+    (item) => peekCategory(item.layer.params.kind) !== "audio",
+  );
+}
+
 function PeekRow({
   item,
   isSelected,
@@ -201,6 +318,9 @@ function PeekRow({
   onReveal,
   onGoTo,
   onRename,
+  rowClassName,
+  rowRef,
+  onGripPointerDown,
 }: {
   item: PeekItem;
   isSelected: boolean;
@@ -209,6 +329,14 @@ function PeekRow({
   onReveal: () => void;
   onGoTo?: (() => void) | undefined;
   onRename?: ((nextLabel: string) => void) | undefined;
+  /// Reorder-gesture presentation owned by the panel (see usePointerReorder):
+  /// drag / insertion-indicator classes for the row's <li>.
+  rowClassName?: string | undefined;
+  /// Registers the <li> as the live rect source for gap hit-testing. Present
+  /// only on At-playhead visual rows.
+  rowRef?: ((el: HTMLLIElement | null) => void) | undefined;
+  /// When present the row shows a grip and is draggable to restack.
+  onGripPointerDown?: ((e: ReactPointerEvent) => void) | undefined;
 }) {
   const { t } = useTranslation();
   const durationUs = item.layer.t_end_us - item.layer.t_start_us;
@@ -256,7 +384,9 @@ function PeekRow({
 
   if (editing) {
     return (
-      <li>
+      // Keeps the row ref through a rename so a concurrent gesture on a
+      // sibling row still hit-tests against every visual row's rect.
+      <li className={rowClassName} ref={rowRef}>
         <input
           className="peek-rename-input"
           aria-label={t("peek.rename_label", { label: primaryLabel })}
@@ -279,8 +409,22 @@ function PeekRow({
   }
 
   return (
-    <li>
+    <li className={rowClassName} ref={rowRef}>
       <div className="peek-item-row">
+        {/* Pointer-only restack affordance (ADR 0044 decision 6): the row
+            body already spends click on select and double-click on rename,
+            so the drag needs its own handle. Pure pointer events — never
+            HTML5 draggable — so the gesture can't become a Dockview drag. */}
+        {onGripPointerDown && (
+          <span
+            className="peek-grip"
+            title={t("peek.restack_grip", { label: primaryLabel })}
+            aria-label={t("peek.restack_grip", { label: primaryLabel })}
+            onPointerDown={onGripPointerDown}
+          >
+            <GripVerticalIcon size={13} />
+          </span>
+        )}
         <button
           type="button"
           className={`peek-item kind-${item.trackKind.toLowerCase()} ${

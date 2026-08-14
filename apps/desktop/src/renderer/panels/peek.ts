@@ -133,3 +133,44 @@ export function splitPeekSections(
   visual.sort((a, b) => b.trackIndex - a.trackIndex);
   return { atPlayhead: [...visual, ...audio], nearby };
 }
+
+/// The anchored restack a drop means: the op's own addressing (ADR 0044
+/// decision 3) — a layer, not an index, because an index drifts between the
+/// gesture's read and the op's apply.
+export interface RestackTarget {
+  anchorId: string;
+  position: "above" | "below";
+}
+
+/// Map a drop gap in the At-playhead visual stack to its anchored restack
+/// (ADR 0044 decision 5), or report a no-op as null.
+///
+/// `visibleRows` is exactly what the user sees: the filtered visual rows,
+/// top-of-stack first — so a neighbour hidden by a category chip can never
+/// become an anchor, and layers the filter hides keep their relative order.
+/// `gap` is the insertion slot in [0..rows.length] (the row would land before
+/// `visibleRows[gap]`); `fromIndex` is the dragged row's index at gesture
+/// start. Rules:
+///  - a gap above a visible row inserts DIRECTLY ABOVE that row
+///    (anchor = the row below the gap, position = 'above');
+///  - the section-bottom gap inserts DIRECTLY BELOW the last visible row;
+///  - the dragged row's own gap and its following gap are no-ops (the same
+///    pair usePointerReorder's isNoopGap suppresses — restated here so the
+///    mapping is total on its own).
+export function restackTargetForGap(
+  visibleRows: readonly PeekItem[],
+  fromIndex: number,
+  gap: number,
+): RestackTarget | null {
+  if (visibleRows.length === 0 || gap < 0 || gap > visibleRows.length) {
+    return null;
+  }
+  if (gap === fromIndex || gap === fromIndex + 1) return null;
+  const below = visibleRows[gap];
+  if (below !== undefined) {
+    return { anchorId: below.layer.id, position: "above" };
+  }
+  // gap === visibleRows.length: the section's bottom.
+  const last = visibleRows[visibleRows.length - 1]!;
+  return { anchorId: last.layer.id, position: "below" };
+}
