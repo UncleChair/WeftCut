@@ -1,9 +1,34 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n"; // real en-US bundle, so a tooltip is the shipped string
 import type { MarkerSummary, ProjectSummary } from "../ipc";
+
+const ipcMocks = vi.hoisted(() => ({
+  removeMarker: vi.fn(),
+  logEmit: vi.fn(),
+}));
+
+vi.mock("../ipc", async (importActual) => {
+  const actual = await importActual<typeof import("../ipc")>();
+  return {
+    ...actual,
+    removeMarker: ipcMocks.removeMarker,
+    logEmit: ipcMocks.logEmit,
+  };
+});
+
 import { useProjectStore } from "../state/projectStore";
+import {
+  closeMarkerRenamePrompt,
+  useMarkerRenamePromptStore,
+} from "./markerRenamePrompt";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import {
   setTimelineScrollLeftPx,
@@ -465,6 +490,67 @@ describe("markers", () => {
       expect(
         container.querySelector('[data-testid="timeline-range-cap-in"]'),
       ).not.toBeNull();
+    });
+  });
+
+  // Authoring separates by input channel: the RIGHT button opens the marker's
+  // menu, and the right button never contested the scrub. The popup portals to
+  // the body, so an open menu leaves the strip's child budget — what the
+  // node-count gate and the tick enumeration measure — untouched.
+  describe("context menu", () => {
+    beforeEach(() => {
+      ipcMocks.removeMarker.mockReset().mockResolvedValue(undefined);
+      closeMarkerRenamePrompt();
+    });
+
+    const openMenu = async (
+      container: HTMLElement,
+      id: string,
+    ): Promise<HTMLElement[]> => {
+      fireEvent.contextMenu(markById(container, id), {
+        clientX: 80,
+        clientY: 12,
+      });
+      return await waitFor(() => {
+        const items = Array.from(
+          document.querySelectorAll<HTMLElement>(".app-menu-item"),
+        );
+        expect(items.length).toBeGreaterThan(0);
+        return items;
+      });
+    };
+
+    it("right-click on a glyph offers Rename and Delete, adding no strip children", async () => {
+      seed([point()]);
+      const { container } = renderRuler();
+      const childrenBefore = ticks(container).length;
+      const items = await openMenu(container, "point-1");
+      expect(items.map((i) => i.textContent)).toEqual([
+        "Rename",
+        "Delete marker",
+      ]);
+      expect(ticks(container)).toHaveLength(childrenBefore);
+    });
+
+    it("Rename routes the marker id to the prompt store — regions included", async () => {
+      seed([region()]);
+      const { container } = renderRuler();
+      const items = await openMenu(container, "region-1");
+      fireEvent.click(items[0]!);
+      expect(useMarkerRenamePromptStore.getState().markerId).toBe("region-1");
+    });
+
+    it("Delete goes straight through the channel, with nothing asked first", async () => {
+      seed([point()]);
+      const { container } = renderRuler();
+      const items = await openMenu(container, "point-1");
+      fireEvent.click(items[1]!);
+      await waitFor(() =>
+        expect(ipcMocks.removeMarker).toHaveBeenCalledExactlyOnceWith(
+          "point-1",
+        ),
+      );
+      expect(useMarkerRenamePromptStore.getState().markerId).toBeNull();
     });
   });
 });

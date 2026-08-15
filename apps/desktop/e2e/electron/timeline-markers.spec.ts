@@ -13,11 +13,13 @@ import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
  * own store selector, and one app-level setting reaching the strip button, the
  * View menu checkbox and the marker layer at once.
  *
- * Markers are seeded over MCP because that is the only way they can be created:
- * there is no human authoring path and no renderer channel for `add_marker`
- * either, so this is the read path's real upstream, not a test-only shortcut.
- * The connection details come from the same `get_mcp_info` IPC the Settings →
- * Agent tab reads, so this can boot through `launchApp` like every other UI spec
+ * The visibility test seeds its markers over MCP — no longer the only path
+ * (the authoring slice gave `add_marker` a renderer channel and `M` a human
+ * hand on it; the second test below drives those), but still the AGENT path,
+ * which is the upstream that test is about: two hundred shot markers arriving
+ * from outside are exactly what the toggle exists to silence. The connection
+ * details come from the same `get_mcp_info` IPC the Settings → Agent tab
+ * reads, so this can boot through `launchApp` like every other UI spec
  * instead of parsing the connect log.
  *
  * Cross-restart persistence is deliberately NOT here — it is asserted in the
@@ -142,6 +144,59 @@ test('the ruler paints markers, and one toggle silences them from either surface
     await viewMenu.click()
     await showMarkersItem.click()
     await expect(marks).toHaveCount(2)
+    await expect(stripButton).toHaveAttribute('aria-pressed', 'true')
+  } finally {
+    await app.close()
+  }
+})
+
+test('markers are authorable from the keyboard and the ruler — no MCP client anywhere', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  try {
+    const parent = tmpDir('weftcut-marker-authoring-')
+    await newProject(page, { parentFolder: parent, name: 'marker-authoring', canvas: CANVAS })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+
+    const marks = page.locator('[data-testid="timeline-marker"]')
+    const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
+    const renameInput = page.getByLabel('Marker label')
+
+    // Park the playhead away from the row head first: a frame-0 diamond is
+    // centred on the strip's left edge, so half of it sits under the overflow
+    // clip — a poor right-click target for the step below.
+    await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
+
+    // ── M drops an unlabelled point marker at the playhead's frame ─────────
+    await page.keyboard.press('M')
+    await expect(marks).toHaveCount(1)
+    // Unlabelled by design: the tooltip's translated fallback is the name.
+    await expect(marks).toHaveAttribute('title', /^Marker · /)
+    const summary = await invokeCmd<{ markers: Array<{ label: string }> }>(page, 'project_summary', {})
+    expect(summary.markers).toHaveLength(1)
+    expect(summary.markers[0].label).toBe('')
+
+    // ── M again on the same frame means rename, not a stacked duplicate ────
+    await page.keyboard.press('M')
+    await expect(renameInput).toBeVisible()
+    await renameInput.fill('cut here')
+    await page.keyboard.press('Enter')
+    await expect(renameInput).toHaveCount(0)
+    await expect(marks).toHaveCount(1)
+    await expect(marks).toHaveAttribute('title', /^cut here · /)
+
+    // ── Right-click, Delete: two inputs, nothing asked first ───────────────
+    await marks.click({ button: 'right' })
+    await page.locator('.app-menu-item', { hasText: 'Delete marker' }).click()
+    await expect(marks).toHaveCount(0)
+    const afterDelete = await invokeCmd<{ markers: unknown[] }>(page, 'project_summary', {})
+    expect(afterDelete.markers).toHaveLength(0)
+
+    // ── M under a hidden layer turns the layer back on with the new mark ───
+    await stripButton.click()
+    await expect(stripButton).toHaveAttribute('aria-pressed', 'false')
+    await page.keyboard.press('M')
+    await expect(marks).toHaveCount(1)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'true')
   } finally {
     await app.close()

@@ -402,6 +402,7 @@ const zhCN: Resources = {
     toggle_keyframe_lanes: "展开关键帧轨",
     prebake_now: "立即预烘焙",
     rename: "重命名",
+    delete_marker: "删除标记",
     rename_track_label: "重命名 {{label}}",
     enable_layer: "启用图层",
     disable_layer: "禁用图层",

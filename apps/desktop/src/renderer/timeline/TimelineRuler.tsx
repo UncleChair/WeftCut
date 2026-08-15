@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
+import { removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
 import { useProjectMarkers } from "../state/projectStore";
+import { MarkerContextMenu } from "./MarkerContextMenu";
+import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import {
   timelineScrollLeftPx,
@@ -173,11 +177,24 @@ function markerTitle(
 /// outside it separates a dark one, so no authored colour can vanish into the
 /// background.
 ///
-/// Takes pointer events so the native tooltip fires, but installs no handler and
-/// stops no propagation: every event continues to the ruler, which stays the sole
-/// scrub surface. A press that lands on a marker still starts a scrub, and a drag
-/// still crosses it without interruption.
-function MarkerGlyph({ view, title }: { view: RulerMarker; title: string }) {
+/// Takes pointer events so the native tooltip fires, but installs no POINTER
+/// handler and stops no pointer propagation: every press continues to the
+/// ruler, which stays the sole scrub surface. A press that lands on a marker
+/// still starts a scrub, and a drag still crosses it without interruption.
+///
+/// The one handler here is `contextmenu` — the right button has never scrubbed,
+/// so no gesture is contested (authoring separates by input channel, not screen
+/// region). preventDefault beats the prod-mode global context-menu suppressor
+/// (main.tsx); stopPropagation keeps any future strip-level menu from stacking.
+function MarkerGlyph({
+  view,
+  title,
+  onOpenMenu,
+}: {
+  view: RulerMarker;
+  title: string;
+  onOpenMenu: (xPx: number, yPx: number, markerId: string) => void;
+}) {
   const isRegion = view.shape === "region";
   return (
     <div
@@ -185,6 +202,11 @@ function MarkerGlyph({ view, title }: { view: RulerMarker; title: string }) {
       data-marker-id={view.id}
       data-shape={view.shape}
       title={title}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenMenu(e.clientX, e.clientY, view.id);
+      }}
       className={`pointer-events-auto absolute ${MARKER_OUTLINE} ${
         isRegion ? "rounded-[1px]" : "rotate-45"
       }`}
@@ -226,6 +248,25 @@ export function TimelineRuler({
   onScrub: (clientX: number) => void;
 }) {
   const scrollLeftPx = useRulerScrollBlockPx();
+  // The marker context menu, owned HERE like everything else the ruler paints
+  // (the timeline's prop surface does not change). The popup itself portals to
+  // the body, so an open menu adds zero direct children to the strip — the RTL
+  // tick enumeration and the local node-count gate keep measuring ticks.
+  const [markerMenu, setMarkerMenu] = useState<{
+    x: number;
+    y: number;
+    markerId: string;
+  } | null>(null);
+  // Close the menu when anything scrolls under it — the popup is anchored to
+  // fixed cursor coordinates, so it would float detached over moving content.
+  // Outside-click and Escape closing belong to Base UI. Same effect every
+  // context-menu call site carries (Timeline, TrackHeader).
+  useEffect(() => {
+    if (!markerMenu) return;
+    const onScroll = () => setMarkerMenu(null);
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [markerMenu]);
   // Plain subscriptions, not the playhead's transient-DOM-mutation pattern:
   // in/out change when the user marks them, not once per composition frame, so
   // a React commit per change costs nothing worth optimising away. Atomic
@@ -286,7 +327,8 @@ export function TimelineRuler({
   );
 
   return (
-    /* Sizing notes:
+    <>
+    {/* Sizing notes:
        - `h-5` (20 px) accommodates a 10 px label in the upper half and
          4–8 px tick marks at the bottom; the playhead's `top: 2px` knob
          (Timeline.tsx renders it `top-0.5`) still lands inside this
@@ -298,7 +340,7 @@ export function TimelineRuler({
          horizontal scroll at fit-zoom that the user can't get rid of by
          zooming further. Same for the trailing tick the model
          deliberately emits past `totalSec` (rulerModel.ts) — this
-         overflow clip is what actually clips it. */
+         overflow clip is what actually clips it. */}
     <div
       data-testid="timeline-ruler"
       className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
@@ -345,7 +387,12 @@ export function TimelineRuler({
           className="pointer-events-none absolute inset-0"
         >
           {markerViews.map(({ view, title }) => (
-            <MarkerGlyph key={view.id} view={view} title={title} />
+            <MarkerGlyph
+              key={view.id}
+              view={view}
+              title={title}
+              onOpenMenu={(x, y, markerId) => setMarkerMenu({ x, y, markerId })}
+            />
           ))}
         </div>
       )}
@@ -361,5 +408,28 @@ export function TimelineRuler({
         <RangeCap xPx={(rangeOutUs / 1_000_000) * pxPerSec} side="out" />
       )}
     </div>
+    {/* Outside the strip div (the Timeline.tsx placement), not inside it:
+        whatever Base UI renders inline must never count as a strip child — see
+        the wrapper landmine above. The popup itself portals to the body. */}
+    {markerMenu !== null && (
+      <MarkerContextMenu
+        x={markerMenu.x}
+        y={markerMenu.y}
+        onClose={() => setMarkerMenu(null)}
+        onRename={() => {
+          setMarkerMenu(null);
+          openMarkerRenamePrompt(markerMenu.markerId);
+        }}
+        onDelete={() => {
+          setMarkerMenu(null);
+          // No confirm dialog: deletion is RECORDED, so it is one undo away.
+          void tryMutate(
+            () => removeMarker(markerMenu.markerId),
+            "remove_marker",
+          );
+        }}
+      />
+    )}
+    </>
   );
 }

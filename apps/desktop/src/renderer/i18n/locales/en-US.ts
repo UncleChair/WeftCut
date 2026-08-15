@@ -413,6 +413,9 @@ const enUS = {
     separate_audio: "Separate audio to new track",
     prebake_now: "Pre-bake now",
     rename: "Rename",
+    // The marker menu names its subject: its target is a ~5 px glyph, so a
+    // bare "Delete" would leave "of what?" to a tooltip the menu just covered.
+    delete_marker: "Delete marker",
     // Accessible name for the lane header's inline rename field — the visible
     // label it replaces is the lane's own name.
     rename_track_label: "Rename {{label}}",
