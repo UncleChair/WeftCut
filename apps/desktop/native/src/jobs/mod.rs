@@ -41,6 +41,7 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cache::CacheLayout;
+use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
 use crate::state::{
     CommandError, DecodeRoute, FullProxyLanded, MediaDerivativesPatch, MediaId, MediaItem,
     MediaKind,
@@ -249,12 +250,84 @@ struct JobError {
     error: String,
 }
 
+/// Human name for a job kind in console messages.
+fn job_kind_label(kind: JobKind) -> &'static str {
+    match kind {
+        JobKind::Thumbnails => "Thumbnail",
+        JobKind::Proxy => "Proxy",
+        JobKind::QuickProxy => "Quick-proxy",
+        JobKind::ProxyBypass => "Proxy-bypass",
+        JobKind::Waveform => "Waveform",
+        JobKind::Conform => "Audio-conform",
+    }
+}
+
+/// What the console line calls this media: the explicit label when set,
+/// else the file name — never a raw uuid.
+fn media_display_name(media: &MediaItem) -> String {
+    if let Some(label) = &media.label {
+        if !label.is_empty() {
+            return label.clone();
+        }
+    }
+    media
+        .path_abs
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| media.id.to_string())
+}
+
+/// Report a failed derivative job: the `media:job_error` renderer event
+/// (status-bar pill decrement + readiness flip) plus one Err row on the
+/// log bus so the failure leaves a durable, user-readable trace. Err only
+/// by design — liveness while jobs grind is owned by the status-bar pill,
+/// and per-job Started/Ok rows would flood the console on bulk imports
+/// (docs/status-log.md).
+fn emit_job_error(
+    events: &Arc<dyn EventSink>,
+    log_slot: &LogBusSlot,
+    media: &MediaItem,
+    kind: JobKind,
+    error: String,
+) {
+    emit(
+        events,
+        EVENT_ERROR,
+        &JobError {
+            media_id: media.id.to_string(),
+            kind,
+            error: error.clone(),
+        },
+    );
+    log_slot.emit(LogEntryInput {
+        level: LogLevel::Error,
+        category: LogCategory::Job,
+        source: LogSource::System,
+        message: format!(
+            "{} job failed for {}: {}",
+            job_kind_label(kind),
+            media_display_name(media),
+            error
+        ),
+        details: Some(serde_json::json!({
+            "media_id": media.id.to_string(),
+            "kind": kind,
+        })),
+        ..Default::default()
+    });
+}
+
 /// Enqueue ONLY the full export proxy for a media item (no quick proxy, no
 /// decision). Used by the export decode-failure recovery (`ensure_full_proxy`
 /// command) when a DirectExport original turns out to be undecodable on this
 /// machine. Returns immediately; the job runs on tokio::spawn.
-pub fn enqueue_full_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
-    spawn_proxy(events, cache, media);
+pub fn enqueue_full_proxy(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
+    spawn_proxy(events, log_slot, cache, media);
 }
 
 /// On-demand quick-proxy build (per-clip "Generate proxy" / global Prefer
@@ -264,30 +337,41 @@ pub fn enqueue_full_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media:
 #[cfg(feature = "jobs")]
 pub fn enqueue_quick_proxy(
     events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
     cache: CacheLayout,
     media: MediaItem,
     source_gop_secs: Option<f64>,
 ) {
-    spawn_quick_proxy(events, cache, media, false, source_gop_secs);
+    spawn_quick_proxy(events, log_slot, cache, media, false, source_gop_secs);
 }
 
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
 /// background jobs. Returns immediately; jobs run on tokio::spawn.
-pub fn enqueue_for_media(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+pub fn enqueue_for_media(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     match media.kind {
         MediaKind::Video => {
             // Already-decided sources whose proxy (if any) is on disk only need
             // their decorations re-fanned; everything else (re-)runs the routing
             // decision — see `proxy_decision::route_needs_decision`.
             if proxy_decision::route_needs_decision(&media.decode_route) {
-                spawn_proxy_decision(events, cache, media);
+                spawn_proxy_decision(events, log_slot, cache, media);
             } else {
-                spawn_decorations(events, cache, media);
+                spawn_decorations(events, log_slot, cache, media);
             }
         }
         MediaKind::Audio => {
-            spawn_waveform(events.clone(), cache.clone(), media.clone());
-            spawn_conform(events, cache, media);
+            spawn_waveform(
+                events.clone(),
+                log_slot.clone(),
+                cache.clone(),
+                media.clone(),
+            );
+            spawn_conform(events, log_slot, cache, media);
         }
         MediaKind::Image | MediaKind::Subtitle => {
             // No derivatives needed.
@@ -295,24 +379,49 @@ pub fn enqueue_for_media(events: Arc<dyn EventSink>, cache: CacheLayout, media: 
     }
 }
 
-fn spawn_decorations(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+fn spawn_decorations(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     if matches!(media.kind, MediaKind::Video) {
-        spawn_thumbnails(events.clone(), cache.clone(), media.clone());
+        spawn_thumbnails(
+            events.clone(),
+            log_slot.clone(),
+            cache.clone(),
+            media.clone(),
+        );
     }
     if media.metadata.audio.is_some() {
-        spawn_waveform(events.clone(), cache.clone(), media.clone());
-        spawn_conform(events, cache, media);
+        spawn_waveform(
+            events.clone(),
+            log_slot.clone(),
+            cache.clone(),
+            media.clone(),
+        );
+        spawn_conform(events, log_slot, cache, media);
     }
 }
 
 /// Enqueue ONLY the conform job (export readiness gate / backfill for media
 /// imported without a conform, via the `ensure_conform` command). Returns
 /// immediately.
-pub fn enqueue_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
-    spawn_conform(events, cache, media);
+pub fn enqueue_conform(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
+    spawn_conform(events, log_slot, cache, media);
 }
 
-fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+fn spawn_conform(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     if !try_begin_conform(media.id) {
         // Already conforming — that job's complete/error event serves this
         // caller's wait too.
@@ -347,14 +456,12 @@ fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaIte
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("conform commit failed for {media_id}: {e}");
-                    emit(
+                    emit_job_error(
                         &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::Conform,
-                            error: format!("commit: {e}"),
-                        },
+                        &log_slot,
+                        &media,
+                        JobKind::Conform,
+                        format!("commit: {e}"),
                     );
                     return;
                 }
@@ -371,21 +478,18 @@ fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaIte
             }
             Err(e) => {
                 warn!("conform job failed for {media_id}: {e:#}");
-                emit(
-                    &events,
-                    EVENT_ERROR,
-                    &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Conform,
-                        error: format!("{e:#}"),
-                    },
-                );
+                emit_job_error(&events, &log_slot, &media, JobKind::Conform, format!("{e:#}"));
             }
         }
     });
 }
 
-fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+fn spawn_proxy_decision(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     tokio::spawn(async move {
         let media_id = media.id;
         // Reopen self-heal: the content-addressed full master is already on
@@ -434,12 +538,17 @@ fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: M
                 );
                 let mut thumbnail_media = media.clone();
                 thumbnail_media.path_abs = master;
-                spawn_decorations(events.clone(), cache.clone(), thumbnail_media);
+                spawn_decorations(
+                    events.clone(),
+                    log_slot.clone(),
+                    cache.clone(),
+                    thumbnail_media,
+                );
                 // The quick proxy is session-scoped (cleared on open) —
                 // rebuild the preview accelerator without re-chaining the
                 // full build. `None` GOP forces the safe transcode path,
                 // matching the on-demand build.
-                spawn_quick_proxy(events, cache, media, false, None);
+                spawn_quick_proxy(events, log_slot, cache, media, false, None);
                 return;
             }
         }
@@ -486,7 +595,7 @@ fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: M
                         path: Some(media.path_abs.display().to_string()),
                     },
                 );
-                spawn_decorations(events, cache, media);
+                spawn_decorations(events, log_slot, cache, media);
             }
             proxy_decision::ProxyJob::QuickOnly => {
                 emit(
@@ -509,17 +618,27 @@ fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: M
                 );
                 // Thumbnails + waveform off the original; preview proxy in the
                 // background WITHOUT chaining a full proxy.
-                spawn_decorations(events.clone(), cache.clone(), media.clone());
-                spawn_quick_proxy(events, cache, media, false, source_gop_secs);
+                spawn_decorations(
+                    events.clone(),
+                    log_slot.clone(),
+                    cache.clone(),
+                    media.clone(),
+                );
+                spawn_quick_proxy(events, log_slot, cache, media, false, source_gop_secs);
             }
             proxy_decision::ProxyJob::QuickThenFull => {
-                spawn_quick_proxy(events, cache, media, true, source_gop_secs);
+                spawn_quick_proxy(events, log_slot, cache, media, true, source_gop_secs);
             }
         }
     });
 }
 
-fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+fn spawn_thumbnails(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
@@ -548,14 +667,12 @@ fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, media: Media
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("thumbnail commit failed for {media_id}: {e}");
-                    emit(
+                    emit_job_error(
                         &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::Thumbnails,
-                            error: format!("commit: {e}"),
-                        },
+                        &log_slot,
+                        &media,
+                        JobKind::Thumbnails,
+                        format!("commit: {e}"),
                     );
                     return;
                 }
@@ -572,14 +689,12 @@ fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, media: Media
             }
             Err(e) => {
                 warn!("thumbnail job failed for {media_id}: {e:#}");
-                emit(
+                emit_job_error(
                     &events,
-                    EVENT_ERROR,
-                    &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Thumbnails,
-                        error: format!("{e:#}"),
-                    },
+                    &log_slot,
+                    &media,
+                    JobKind::Thumbnails,
+                    format!("{e:#}"),
                 );
             }
         }
@@ -588,6 +703,7 @@ fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, media: Media
 
 fn spawn_quick_proxy(
     events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
     cache: CacheLayout,
     media: MediaItem,
     then_full: bool,
@@ -630,14 +746,12 @@ fn spawn_quick_proxy(
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("quick proxy commit failed for {media_id}: {e}");
-                    emit(
+                    emit_job_error(
                         &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::QuickProxy,
-                            error: format!("commit: {e}"),
-                        },
+                        &log_slot,
+                        &media,
+                        JobKind::QuickProxy,
+                        format!("commit: {e}"),
                     );
                 } else {
                     info!("quick proxy ready for {media_id}");
@@ -654,14 +768,12 @@ fn spawn_quick_proxy(
             }
             Err(e) => {
                 warn!("quick proxy job failed for {media_id}: {e:#}");
-                emit(
+                emit_job_error(
                     &events,
-                    EVENT_ERROR,
-                    &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::QuickProxy,
-                        error: format!("{e:#}"),
-                    },
+                    &log_slot,
+                    &media,
+                    JobKind::QuickProxy,
+                    format!("{e:#}"),
                 );
             }
         }
@@ -669,12 +781,17 @@ fn spawn_quick_proxy(
         if then_full {
             // Full proxy chains after the quick proxy. The media's hash is real
             // (baked at enqueue — hash-first import), so no re-read is needed.
-            spawn_proxy(events, cache, media);
+            spawn_proxy(events, log_slot, cache, media);
         }
     });
 }
 
-fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+fn spawn_proxy(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     let Some(guard) = try_begin_full_proxy(media.id) else {
         // Already building — see `full_proxy_in_flight`.
         info!(
@@ -723,14 +840,12 @@ fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem)
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("proxy commit failed for {media_id}: {e}");
-                    emit(
+                    emit_job_error(
                         &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::Proxy,
-                            error: format!("commit: {e}"),
-                        },
+                        &log_slot,
+                        &media,
+                        JobKind::Proxy,
+                        format!("commit: {e}"),
                     );
                     return;
                 }
@@ -744,25 +859,22 @@ fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem)
                         path: Some(path_str),
                     },
                 );
-                spawn_decorations(events, cache, thumbnail_media);
+                spawn_decorations(events, log_slot, cache, thumbnail_media);
             }
             Err(e) => {
                 warn!("proxy job failed for {media_id}: {e:#}");
-                emit(
-                    &events,
-                    EVENT_ERROR,
-                    &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Proxy,
-                        error: format!("{e:#}"),
-                    },
-                );
+                emit_job_error(&events, &log_slot, &media, JobKind::Proxy, format!("{e:#}"));
             }
         }
     });
 }
 
-fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+fn spawn_waveform(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    media: MediaItem,
+) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
@@ -791,14 +903,12 @@ fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaIt
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("waveform commit failed for {media_id}: {e}");
-                    emit(
+                    emit_job_error(
                         &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::Waveform,
-                            error: format!("commit: {e}"),
-                        },
+                        &log_slot,
+                        &media,
+                        JobKind::Waveform,
+                        format!("commit: {e}"),
                     );
                     return;
                 }
@@ -815,14 +925,12 @@ fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaIt
             }
             Err(e) => {
                 warn!("waveform job failed for {media_id}: {e:#}");
-                emit(
+                emit_job_error(
                     &events,
-                    EVENT_ERROR,
-                    &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Waveform,
-                        error: format!("{e:#}"),
-                    },
+                    &log_slot,
+                    &media,
+                    JobKind::Waveform,
+                    format!("{e:#}"),
                 );
             }
         }
@@ -981,7 +1089,7 @@ mod tests {
 
         let sink = Arc::new(VecEventSink::new());
         let events: Arc<dyn EventSink> = sink.clone();
-        spawn_proxy_decision(events, cache.clone(), media);
+        spawn_proxy_decision(events, crate::logs::LogBusSlot::new(), cache.clone(), media);
 
         // The adopt commit is the first thing the spawned task does; poll for it.
         let mut adopted = None;
@@ -1071,5 +1179,65 @@ mod tests {
             patch_v.get("conform_path").unwrap(),
             &serde_json::json!("c.bin")
         );
+    }
+
+    fn media_named(label: Option<&str>, path: &str) -> MediaItem {
+        serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::now_v7(),
+            "label": label,
+            "path_abs": path,
+            "path_rel": null,
+            "kind": "Video",
+            "metadata": crate::state::MediaMetadata::default(),
+            "decode_route": { "route": "bypass" },
+            "waveform_path": null,
+            "conform_path": null,
+            "thumbnails_dir": null,
+            "file_hash_blake3": "h",
+            "file_size": 0,
+            "file_mtime": 0,
+            "imported_at": chrono::Utc::now(),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn media_display_name_prefers_label_then_file_name() {
+        assert_eq!(
+            media_display_name(&media_named(Some("Intro cut"), "/media/a.mp4")),
+            "Intro cut"
+        );
+        assert_eq!(
+            media_display_name(&media_named(None, "/media/a.mp4")),
+            "a.mp4"
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_job_error_pairs_the_event_with_one_err_log_row() {
+        use crate::events::VecEventSink;
+        use crate::logs::{LogBus, LogBusSlot, LogCategory, LogLevel, OpState};
+
+        let sink = VecEventSink::new();
+        let events: Arc<dyn EventSink> = Arc::new(sink.clone());
+        let slot = LogBusSlot::new();
+        let dir = tempfile::tempdir().unwrap();
+        slot.install(LogBus::spawn(&dir.path().to_path_buf(), events.clone()));
+
+        let media = media_named(None, "/media/intro.mp4");
+        emit_job_error(&events, &slot, &media, JobKind::Waveform, "boom".into());
+
+        // Renderer event still fires (pill decrement + readiness flip).
+        assert!(sink.names().contains(&EVENT_ERROR.to_string()));
+
+        // Exactly one Err row on the bus, category Job, named — no uuid.
+        let rows = slot.current().unwrap().list();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].level, LogLevel::Error);
+        assert_eq!(rows[0].category, LogCategory::Job);
+        assert_eq!(rows[0].message, "Waveform job failed for intro.mp4: boom");
+        // Err only by design: no op lifecycle — a failed background job is a
+        // single row, not a Started→Err pair.
+        assert_eq!(rows[0].op_state, None::<OpState>);
     }
 }

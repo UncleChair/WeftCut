@@ -113,6 +113,45 @@ pub(super) async fn detect_silences(
     b: &Backend,
     args: DetectSilencesArgs,
 ) -> Result<ToolResult, McpToolError> {
+    // Started/Ok/Err op wrap: the walk decodes the clip's whole waveform, so a
+    // long clip grinds for seconds with nothing else on screen — the op row is
+    // what keeps the status bar (and the agent-running pill) honest meanwhile.
+    let log_op_id = uuid::Uuid::now_v7();
+    b.log_slot.emit(crate::logs::LogEntryInput {
+        level: crate::logs::LogLevel::Info,
+        category: crate::logs::LogCategory::Mcp,
+        source: crate::logs::LogSource::Agent { client: "mcp".into() },
+        message: "MCP: detect_silences started".into(),
+        op_id: Some(log_op_id),
+        op_state: Some(crate::logs::OpState::Started),
+        details: Some(serde_json::json!({
+            "layer_id": args.layer_id,
+            "threshold_amp": args.threshold_amp,
+            "min_silence_us": args.min_silence_us,
+        })),
+        ..Default::default()
+    });
+    let result = detect_silences_inner(b, args).await;
+    b.log_slot.emit(crate::logs::LogEntryInput {
+        level: if result.is_ok() { crate::logs::LogLevel::Info } else { crate::logs::LogLevel::Error },
+        category: crate::logs::LogCategory::Mcp,
+        source: crate::logs::LogSource::Agent { client: "mcp".into() },
+        message: match &result {
+            Ok(_) => "MCP: detect_silences done".into(),
+            Err(e) => format!("MCP: detect_silences failed: {e}"),
+        },
+        op_id: Some(log_op_id),
+        op_state: Some(if result.is_ok() { crate::logs::OpState::Ok } else { crate::logs::OpState::Err }),
+        ..Default::default()
+    });
+    result
+}
+
+#[cfg(feature = "jobs")]
+async fn detect_silences_inner(
+    b: &Backend,
+    args: DetectSilencesArgs,
+) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
     let layer = args
         .layer

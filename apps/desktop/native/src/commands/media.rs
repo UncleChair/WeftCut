@@ -334,7 +334,12 @@ pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(),
     )
     .await
     .map_err(|e| format!("route-correct {id}: {e}"))?;
-    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item);
+    crate::jobs::enqueue_full_proxy(
+        backend.events.clone(),
+        backend.log_slot.clone(),
+        backend.cache.clone(),
+        item,
+    );
     Ok(())
 }
 
@@ -352,7 +357,13 @@ pub async fn generate_quick_proxy(backend: &Backend, item: MediaItem) -> Result<
     if matches!(existing, Some(ref p) if p.is_file()) {
         return Ok(());
     }
-    crate::jobs::enqueue_quick_proxy(backend.events.clone(), backend.cache.clone(), item, None);
+    crate::jobs::enqueue_quick_proxy(
+        backend.events.clone(),
+        backend.log_slot.clone(),
+        backend.cache.clone(),
+        item,
+        None,
+    );
     Ok(())
 }
 
@@ -363,7 +374,12 @@ pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), St
     if crate::cache::cached_ok(&backend.cache.audio_conform(&item.file_hash_blake3)) {
         return Ok(());
     }
-    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), item);
+    crate::jobs::enqueue_conform(
+        backend.events.clone(),
+        backend.log_slot.clone(),
+        backend.cache.clone(),
+        item,
+    );
     Ok(())
 }
 
