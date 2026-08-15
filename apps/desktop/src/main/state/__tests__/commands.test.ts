@@ -12,20 +12,22 @@ import { seededGen } from '../ids'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 45 in-scope renderer channels', () => {
+  it('contains exactly the 48 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
+      // Markers (marker-authoring ticket 01) — the renderer's first marker channels.
+      'add_marker',
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
       'delete_layer', 'duplicate_layer',
       'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
       'move_layer', 'move_layers_to_new_track', 'paste_layer',
       'project_create_checkpoint', 'project_delete_checkpoint',
       'project_jump_to', 'project_redo', 'project_restore_checkpoint', 'project_undo',
-      'remove_effect', 'remove_media', 'remove_transition', 'rename_track',
+      'remove_effect', 'remove_marker', 'remove_media', 'remove_transition', 'rename_track',
       // Nearby's anchored z-reorder drop (ADR 0044 / nearby-z-order ticket 04).
       'restack_layer', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_grouped',
-      'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track',
+      'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track', 'update_marker',
       'update_layer_param_tracks', 'update_layer_params', 'update_project_settings',
       'update_role_flags', 'update_track_flags', 'update_transition',
     ].sort()
