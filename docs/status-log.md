@@ -15,8 +15,11 @@ menu-bar error span, and is designed to scale forward into a future
   (drag-resize handle on top + slight dim of underlying content). Does
   not push the editor up.
 - Replaced `ActivityPanel` and the menu bar's inline error span. The
-  `derivatives-pill` in the project bar stays until its aggregate-row
-  replacement lands ([#18](https://github.com/UncleChair/WeftCut/issues/18)).
+  status bar's `derivatives-pill` is the permanent liveness signal for
+  background derivative jobs — the once-planned aggregate-row replacement
+  was retired at [#18](https://github.com/UncleChair/WeftCut/issues/18)'s
+  closure. Liveness stays on the pill; job *failures* land as
+  `Job`/`Error` rows (see § Producers).
 - Coexists with: `ExportPanel` (detailed progress UI), `QueuePanel`
   (editable export queue).
 
@@ -95,8 +98,8 @@ Notes:
 | Direct commits (inspector fields, drag commits, timeline context menus) | `Project` | `Error` (`Debug` for no-op refusals) | One entry per refused mutation via `renderer/errors/tryMutate.ts`; `details` carries the structured `CommandError`. Components with their own inline error slot (media-removal dialog, effects section, project settings) keep it and render the same refusal copy there instead. |
 | Import | `Import` | `Info`/`Error` | Started → Progress (byte copy) → Ok/Err. Grouped by `op_id`. |
 | Export | `Export` | `Info`/`Error` | Started → Progress(%) → Ok/Err. Existing backend events stay; `LogBus` is an additional sink. |
-| Derivative jobs (proxy, thumbnails, waveform) | `Job` | `Info`/`Error` | Started → Ok/Err. Progress omitted for thumbnails. |
-| Cloud calls (transcribe, TTS) | `Job` | `Info`/`Error` | Started → Progress (provider events) → Ok/Err. |
+| Derivative jobs (proxy, quick proxy, thumbnails, waveform, conform) | `Job` | `Error` only | One row per failed job — `<Kind> job failed for <name>: <error>`, `source = System` (`jobs::emit_job_error`). No Started/Ok rows by design: liveness is the status-bar pill, and per-job Info rows would flood the console on bulk imports. |
+| Long-running MCP compute (transcribe_clip, synthesize_speech, detect_silences, describe_clip) | `Mcp` | `Info`/`Error` | Started → Ok/Err under one `op_id` — the generic MCP-tool shape below; no separate `Job` producer. |
 | Preview rebuild | `Job` | `Debug` | Fires on every commit — hidden by default. |
 | MCP tool calls | `Mcp` | `Info`/`Error` | Two entries (Started + Ok/Err) sharing `op_id`. `details` carries args / return / error. Mutating tools' `project:changed` entry folds into the same `op_id`. |
 | MCP server lifecycle | `Mcp` | `Info` | `source = System`. Connect/disconnect/bind events. |
@@ -238,7 +241,11 @@ Deferred until agent-mode lands:
 
 ## Deferred
 
-Open deferrals — the derivatives-pill aggregate row, tool-level log wraps
-for the remaining long-running MCP tools, derivative-job producers,
-console virtualization, and the console resize handle — are tracked in
-[issue #18](https://github.com/UncleChair/WeftCut/issues/18).
+Nothing open. The list this section used to track in
+[#18](https://github.com/UncleChair/WeftCut/issues/18) resolved at its
+closure: the op wraps for `synthesize_speech` / `detect_silences`, the
+derivative-job error rows, and the console resize sash shipped; the
+derivatives-pill aggregate row (the status-bar pill already owns
+liveness) and console virtualization (the ring caps at 1000 entries —
+`LogConsole.tsx` marks the react-window spot should that ever grow)
+were retired.
