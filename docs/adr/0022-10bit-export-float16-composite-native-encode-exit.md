@@ -117,7 +117,7 @@ decision itself is unchanged:
   it is flagged, not removed.
 
 Current state lives in `docs/render.md` ("Encode exits"); the remaining
-follow-ups are tracked in the post-v1 backlog issue.
+follow-ups live in the issue tracker.
 
 ## References
 

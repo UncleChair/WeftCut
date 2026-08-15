@@ -229,7 +229,7 @@ cells `hwLane: nvdec`):
 
 **What the Intel iGPU measured** (VAAPI, `--hw-lane vaapi`, 3 runs; git
 `296840b6`, every cell `hwLane: vaapi` across H.264 / HEVC / VP9 — the
-bundled-libva copy-back fix, issue #5 Block C):
+bundled-libva copy-back fix):
 
 | fixture | throughput fps (median) | ×realtime | seek forward-far P95 | cold start first frame |
 |---|---|---|---|---|
@@ -282,7 +282,7 @@ points to *keep deferred*.
 ## macOS hardware (copy-back) strategy — VideoToolbox
 
 `--strategy native-copyback --hw-lane videotoolbox` benches the macOS
-VideoToolbox **copy-back** lane (issue #10) at the same `DecodeSession` seam.
+VideoToolbox **copy-back** lane at the same `DecodeSession` seam.
 Same shape as the Linux lanes above: VideoToolbox decodes the **original** on
 the Apple media engine, `av_hwframe_transfer_data` copies each surface back to
 CPU, and the frame rides the same ship-bytes `SwTransport` — as NV12 for 8-bit

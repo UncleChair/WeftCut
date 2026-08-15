@@ -6,8 +6,8 @@
 > this note recorded — "this host cannot create a VideoEncoder" and "the full
 > export never ran" — are resolved. (a) The blocker was the export's
 > unconditional `prefer-hardware` request for H.264: Chromium treats the hint
-> as mandatory and Linux has no WebCodecs hardware encoder at all (issue #7
-> boundary #10), platform-gated in `bfd0e0ee`. (b) On current main, Gate B's
+> as mandatory and Linux has no WebCodecs hardware encoder at all (a
+> codec-matrix boundary), platform-gated in `bfd0e0ee`. (b) On current main, Gate B's
 > output encode is native-first anyway and no longer touches VideoEncoder.
 > On the original Linux/RTX 3050 host: Gate B then passed ten sequential runs
 > 10/10 (300 frames on both legs, every sample aligned, byte-identical
@@ -17,7 +17,7 @@
 > **not reproducible on current main** (no retained artifacts, so this is
 > closure by non-reproduction; likely fixes: the `56f09adf` REORDER_MARGIN
 > lead-in plus the ExportFrameStore duration-eviction/identity rework).
-> Gate B's Linux skip was removed in `49b7f57e` and GitHub issue #9 is
+> Gate B's Linux skip was removed in `49b7f57e` and the tracker thread is
 > closed. VFR remains uncovered — the analyzer and composition grid assume
 > CFR, so VFR alignment needs its own verdict semantics first. The rest of
 > this document is kept as the historical record of the investigation.
@@ -106,7 +106,7 @@
 
 ## Linux 硬件黑帧不是尾帧 +1
 
-提交 [`3e677dd2`](https://github.com/UncleChair/WeftCut/commit/3e677dd2824ee02cba468528244c8834c981b054) 和 [WeftCut issue #7](https://github.com/UncleChair/WeftCut/issues/7) 记录了同一 Linux/NVIDIA 主机上的隔离探针：
+提交 [`3e677dd2`](https://github.com/UncleChair/WeftCut/commit/3e677dd2824ee02cba468528244c8834c981b054) 记录了同一 Linux/NVIDIA 主机上的隔离探针（结论同时归档在 codec-matrix 的 tracker 讨论里）：
 
 - **[直接证据]** software I420 在 Window/Worker 以及四条导入/回读路径都正常；
 - **[直接证据]** hardware BGRA 在四条路径都读成纯黑，包括 `VideoFrame.copyTo()`；

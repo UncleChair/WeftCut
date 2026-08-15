@@ -400,8 +400,8 @@ sampling with no mips, and a fresh colour-conformance pass.
 **Export is the one case that could reopen it**, and it is still
 unmeasured: `__weftcutExportPerf` `compositeMs` is the instrument,
 and 4K export is where the blit would matter. Do not start without
-that number. The staged plan, if it ever arrives, is recorded in the
-post-v1 backlog issue.
+that number. The staged plan, if it ever arrives, lives in the issue
+tracker, not here.
 
 The snapshot rule is one instance of the project-wide color model —
 color converges once at an explicit, gated chokepoint and the rest of

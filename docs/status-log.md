@@ -17,8 +17,7 @@ menu-bar error span, and is designed to scale forward into a future
 - Replaced `ActivityPanel` and the menu bar's inline error span. The
   status bar's `derivatives-pill` is the permanent liveness signal for
   background derivative jobs — the once-planned aggregate-row replacement
-  was retired at [#18](https://github.com/UncleChair/WeftCut/issues/18)'s
-  closure. Liveness stays on the pill; job *failures* land as
+  was retired. Liveness stays on the pill; job *failures* land as
   `Job`/`Error` rows (see § Producers).
 - Coexists with: `ExportPanel` (detailed progress UI), `QueuePanel`
   (editable export queue).
@@ -241,11 +240,8 @@ Deferred until agent-mode lands:
 
 ## Deferred
 
-Nothing open. The list this section used to track in
-[#18](https://github.com/UncleChair/WeftCut/issues/18) resolved at its
-closure: the op wraps for `synthesize_speech` / `detect_silences`, the
-derivative-job error rows, and the console resize sash shipped; the
-derivatives-pill aggregate row (the status-bar pill already owns
-liveness) and console virtualization (the ring caps at 1000 entries —
-`LogConsole.tsx` marks the react-window spot should that ever grow)
-were retired.
+Nothing open. Two once-planned items were retired rather than shipped,
+with their reasons: the derivatives-pill aggregate row (the status-bar
+pill already owns liveness, and job failures land as `Job`/`Error`
+rows) and console virtualization (the ring caps at 1000 entries —
+`LogConsole.tsx` marks the react-window spot should that ever grow).

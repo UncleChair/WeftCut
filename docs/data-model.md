@@ -1097,8 +1097,7 @@ maintaining migration code for unshipped formats is pure overhead.
 ships, the first bump makes every existing project unopenable, and a
 chain added afterwards cannot rescue files already written. Replacing
 this gate with a version-keyed upgrade chain is therefore a release
-blocker rather than a nice-to-have — see
-[issue #14](https://github.com/UncleChair/WeftCut/issues/14).
+blocker rather than a nice-to-have.
 
 Within a schema version, additive fields use `#[serde(default)]` so
 existing `project.json` files keep loading without a version bump;

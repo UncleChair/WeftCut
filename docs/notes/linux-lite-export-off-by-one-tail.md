@@ -1,9 +1,9 @@
-# Linux Lite-export off-by-one tail alignment — open issue handoff
+# Linux Lite-export off-by-one tail alignment — investigation handoff (resolved)
 
 **Status:** RESOLVED 2026-07-23 — does not reproduce on current `main`
-(GitHub issue #9 closed; Gate B's Linux skip removed in `49b7f57e`). See
-"Resolution" below. The rest of this document is kept as the historical
-record of the observation and the investigation trail.
+(Gate B's Linux skip removed in `49b7f57e`). See "Resolution" below. The
+rest of this document is kept as the historical record of the observation
+and the investigation trail.
 **Environment when last observed:** Linux x64, Electron 42.4.1 (Chromium 148),
 sidecar ffmpeg n7.1 (BtbN), Lite/webcodecs export lane.
 
@@ -27,10 +27,11 @@ sidecar ffmpeg n7.1 (BtbN), Lite/webcodecs export lane.
 - **Why the gate was un-runnable on this host before:** the export's
   unconditional `prefer-hardware` VideoEncoder hint was a guaranteed hard
   error on Linux (Chromium treats the hint as mandatory and has no Linux HW
-  encoder — issue #7 boundary #10, platform-gated in `bfd0e0ee`); and on
+  encoder — a codec-matrix boundary, platform-gated in `bfd0e0ee`); and on
   current `main` Gate B's output encode is native-first anyway, so it no
   longer touches VideoEncoder at all.
-- Full evidence tables: GitHub issue #9, the two 2026-07-23 comments.
+- Full evidence tables: the two 2026-07-23 closure comments on the tracker
+  thread this note was handed off to.
 
 **2026-07-22 implementation update:** the historical device failure is still
 unverified, but the investigation found and fixed a deterministic application

@@ -126,17 +126,16 @@ into the `Backend.speech_config` snapshot the stateless Rust resolver reads.
   approximate.
 - Adding an engine is an enum variant + availability probe + (only if a new
   output style) one parser.
-- This unblocks the scene/content-analysis word-transcript resource
-  (`.scratch/scene-content-analysis/issues/05`): word segments now come from
-  the normalized `Transcript`, not a cloud-API change.
+- This unblocks the planned scene/content-analysis word-transcript resource:
+  word segments now come from the normalized `Transcript`, not a cloud-API
+  change.
 - The rename is broad but mechanical; the MCP catalog bijection gate pins that
   def and handler stay paired.
 
 ## References
 
-- Implementation route + tickets: `.scratch/stt-pluggable-backends/`.
 - Target module: `native/src/speech/` (was `native/src/cloud/`); reused SRT
   parser: `native/src/subtitles/srt.rs`; shared audio input:
   `speech/audio_extract.rs`; spawn helper: the `NoConsoleWindow` sites.
-- Prior scope + shipped state: `memory/project_phase6_scope.md`.
-- Consumer: `.scratch/scene-content-analysis/` (word-level transcript).
+- Consumer: the planned scene/content-analysis word-level transcript
+  resource.

@@ -454,9 +454,8 @@ reads that decision, never writes it.
   `proxy_overrides` toggles — which only steer the preview axis — have no
   bearing on what export reads. For `Proxied`/`NativeSw` sources the export
   master is still what export reads today; routing those two routes to
-  decode the original instead is deliberately left to `auto`'s discretion and
-  is profiling-gated
-  ([post-v1 backlog](https://github.com/UncleChair/WeftCut/issues/21)).
+  decode the original instead is deliberately left to `auto`'s discretion,
+  profiling-gated and deferred past v1.
   `MediaDerivativesPatch.proxy_path = Some(None)` (or a
   `proxy_format_version` bump) invalidates a stale proxy and triggers a
   re-encode on next open.

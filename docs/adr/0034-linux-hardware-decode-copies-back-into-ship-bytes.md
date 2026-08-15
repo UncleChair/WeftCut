@@ -11,8 +11,8 @@ decodes with D3D11VA and shares the GPU texture zero-copy into the renderer,
 its speed resting precisely on never copying pixel bytes
 ([ADR 0029](0029-native-sw-decode-ships-bytes-not-shared-texture.md)). On Linux
 the Standard engine had only its software lane
-([ADR 0029 Addendum](0029-native-sw-decode-ships-bytes-not-shared-texture.md#addendum);
-issue #5 Blocks A/B) — every source decoded on the CPU, so multi-track
+([ADR 0029 Addendum](0029-native-sw-decode-ships-bytes-not-shared-texture.md#addendum))
+— every source decoded on the CPU, so multi-track
 timelines and effects had no hardware headroom to draw on. The engine already
 treats the hardware lane as one of three independent layers of truth
 ([ADR 0030](0030-decode-engine-overlay-and-native-component.md)), kept private
@@ -158,7 +158,6 @@ is the current NVIDIA driver's, and a missing libcuda merely makes the probe
   generalizes from one hardware lane to a probe-gated set.
 - ADR 0033 — export decode joins the engine overlay (why export stays on the
   software lane; the deferral this ADR inherits).
-- Issue #5 (`UncleChair/WeftCut`) — the grill-confirmed Blocks A/B/C spec.
 - `src/main/decode-capability.ts` (`resolveHwLane`, the `(lane, classKey, device)`
   cache), `src/main/index.ts` (`decodeCap:probeHw` dispatch, DRM-node
   enumeration), `native/decode/src/preview_sw/decoder.rs`

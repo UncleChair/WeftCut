@@ -4,8 +4,8 @@ How to run a preview-playback measurement session and trust the result.
 
 What the harness measures, and what it has already found, is
 [`playback-perf.md`](playback-perf.md); this file is the operating guide. Live
-work items are `.scratch/playback-perf/` (local — `.scratch/` is gitignored, so
-the tickets do not travel with the repo).
+work items live in the local `.scratch/` issue tracker (gitignored — tickets
+do not travel with the repo).
 
 ## Prerequisites
 
