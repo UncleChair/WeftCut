@@ -1232,6 +1232,7 @@ const enUS = {
     open_folder: "Open log folder",
     open_folder_unavailable_hint: "Open a workspace first.",
     close: "Close activity log",
+    resize: "Resize console height",
     empty: "No entries match the current filters.",
     op_counter_hint: "Expand state changes for this op",
     toggle_details: "Toggle details",

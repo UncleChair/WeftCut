@@ -62,6 +62,25 @@ type CategoryKind = (typeof CATEGORY_KINDS)[number];
 const SOURCE_KINDS = ["User", "Agent", "System"] as const;
 type SourceKind = (typeof SOURCE_KINDS)[number];
 
+/// Console height bounds. The CSS carries the same guards (min-height /
+/// max-height in log.css) so the pre-drag default — `null`, i.e. the
+/// stylesheet's 40vh — stays in range without JS.
+const CONSOLE_HEIGHT_MIN = 200;
+function clampConsoleHeight(height: number, viewportHeight: number): number {
+  const max = Math.max(CONSOLE_HEIGHT_MIN, Math.round(viewportHeight * 0.8));
+  return Math.round(Math.min(max, Math.max(CONSOLE_HEIGHT_MIN, height)));
+}
+
+// Session-scoped height memory (the PropSection precedent): a dragged
+// height survives close/reopen within the run; a fresh launch returns to
+// the CSS default. Nothing persists across app restart (no localStorage).
+let sessionHeightPx: number | null = null;
+
+/// Wipe the session memory. Exported for tests.
+export function clearLogConsoleHeightMemory(): void {
+  sessionHeightPx = null;
+}
+
 export interface LogConsoleHandle {
   focusSearch: () => void;
 }
@@ -102,6 +121,52 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const [heightPx, setHeightPx] = useState<number | null>(sessionHeightPx);
+  const applyHeight = (px: number) => {
+    const next = clampConsoleHeight(px, window.innerHeight);
+    sessionHeightPx = next;
+    setHeightPx(next);
+  };
+
+  /* Height sash on the console's top edge (the AgentMode width-sash
+     pattern). Pointer capture keeps the drag alive off-sash; the height is
+     measured from the drag start so the first move doesn't jump to the
+     cursor. */
+  const onSashPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startHeight = rootRef.current?.offsetHeight;
+    if (startHeight == null) return;
+    const sash = event.currentTarget;
+    sash.setPointerCapture?.(event.pointerId);
+    const startY = event.clientY;
+    const onMove = (move: globalThis.PointerEvent) => {
+      applyHeight(startHeight + (startY - move.clientY));
+    };
+    const onEnd = () => {
+      sash.removeEventListener("pointermove", onMove);
+      sash.removeEventListener("pointerup", onEnd);
+      sash.removeEventListener("pointercancel", onEnd);
+    };
+    sash.addEventListener("pointermove", onMove);
+    sash.addEventListener("pointerup", onEnd);
+    sash.addEventListener("pointercancel", onEnd);
+  };
+
+  const onSashKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 64 : 16;
+    const current = heightPx ?? rootRef.current?.offsetHeight;
+    if (current == null) return;
+    if (event.key === "ArrowUp") {
+      applyHeight(current + step);
+    } else if (event.key === "ArrowDown") {
+      applyHeight(current - step);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  };
 
   // Expose `focusSearch` so the toggle-with-Ctrl+Shift+` shortcut can
   // open the console and drop focus into the search box.
@@ -281,7 +346,25 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
   );
 
   return (
-    <div className="log-console" role="log" onKeyDown={onKeyDownPanel}>
+    <div
+      className="log-console"
+      role="log"
+      onKeyDown={onKeyDownPanel}
+      ref={rootRef}
+      style={heightPx != null ? { height: `${heightPx}px` } : undefined}
+    >
+      {/* The single resizable seam: console height only. */}
+      <div
+        className="log-console-sash"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={t("log.resize")}
+        aria-valuenow={heightPx ?? undefined}
+        aria-valuemin={CONSOLE_HEIGHT_MIN}
+        tabIndex={0}
+        onPointerDown={onSashPointerDown}
+        onKeyDown={onSashKeyDown}
+      />
       <div className="log-console-toolbar">
         <div className="log-chip-group" role="group" aria-label={t("log.level_filter")}>
           {(["all", "info", "warn", "errorOnly"] as LevelFilter[]).map((f) => (

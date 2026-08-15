@@ -1174,6 +1174,7 @@ const zhCN: Resources = {
     open_folder: "打开日志文件夹",
     open_folder_unavailable_hint: "请先打开一个工作区。",
     close: "关闭活动日志",
+    resize: "调整控制台高度",
     empty: "当前筛选下没有匹配的条目。",
     op_counter_hint: "展开此操作的状态变化",
     toggle_details: "切换详情",

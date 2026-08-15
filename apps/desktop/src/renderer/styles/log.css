@@ -2,8 +2,9 @@
 
 /* ===================================================================
    Log console — expanded overlay that lifts above the editor. The
-   drag-to-resize handle is rendered as a CSS-only top border; pointer
-   events are forwarded to a resize handler when needed.
+   drag-to-resize sash on the top edge drives an inline height; the
+   min/max here guard the stylesheet default (40vh) the same way the
+   component clamps a drag.
    =================================================================== */
 
 .log-console {
@@ -26,12 +27,9 @@
   font-family: var(--font-ui);
 }
 
-.log-console::before {
-  /* Visual cue for "drag to resize" — not yet wired to an actual
-     pointer drag handler; the height defaults to 40vh and the user
-     can close + reopen with a different layout if needed. Wiring a
-     proper resize handler is deferred to a polish pass. */
-  content: "";
+.log-console-sash {
+  /* The drag-to-resize seam on the console's top edge — see the
+     AgentMode width-sash for the pattern. */
   position: absolute;
   top: -3px;
   left: 0;
@@ -39,6 +37,12 @@
   height: 6px;
   cursor: ns-resize;
   background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+
+.log-console-sash:focus-visible {
+  outline: none;
 }
 
 .log-console-toolbar {
