@@ -24,6 +24,7 @@ import {
   releaseTransport,
   setTransportPlaying,
 } from "../state/playbackStore";
+import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
 import {
@@ -335,6 +336,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         initialSummary?.composition.fps_num ?? 30,
         initialSummary?.composition.fps_den ?? 1,
       );
+      // Seed the fresh engine from the live playhead store, AFTER bindFps so
+      // the position snaps on the composition's real frame grid. Application
+      // init is async, and every seek issued in that window (keyboard
+      // shortcuts, timecode commits) writes the store optimistically while
+      // `engineRef`/the transport registration are still null — this engine
+      // never heard them. Its first tick emits ITS position over the store
+      // (`lastEmittedUs` starts unset), so without the seed a playhead parked
+      // during init — or across any preview remount — teleports back to 0.
+      const restoreUs = playheadTimeUs();
+      if (restoreUs !== 0) engine.seek(restoreUs);
       if (onTimeUpdate) engine.onTimeUpdate(onTimeUpdate);
       if (onPausedChange) engine.onPlayStateChange((p) => onPausedChange(!p));
 
@@ -626,8 +637,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         });
       }
 
-      compositor.setAnchorTime(0);
-      compositor.compositeFrame(0);
+      compositor.setAnchorTime(restoreUs);
+      compositor.compositeFrame(restoreUs);
       setInitializing(false);
     },
     [onTimeUpdate, onPausedChange, previewDecodableOf],
