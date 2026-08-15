@@ -48,11 +48,13 @@ export const MENU_ONLY_COMMAND_IDS = [
   // higher-frequency operations, and z-order rearrangement is not one
   // (ADR 0042).
   "moveToNewTrack",
-  // Marker display. No binding on purpose, and the reason is a reservation
-  // rather than a budget: `M` is add-marker-at-playhead in Premiere, Resolve and
-  // FCP, so it stays reserved for marker authoring. Being a no-binding command
-  // is also what makes the Quick Actions button resolvable and puts the toggle
-  // in the search palette for free.
+  // Marker display. No binding on purpose: `M` went to `addMarkerAtPlayhead`
+  // (ACTION_DEFS) — the reservation this entry once held open, now spent — and
+  // the toggle itself is not a reflex. Being a no-binding command is also what
+  // makes the Quick Actions button resolvable and puts the toggle in the search
+  // palette for free. Marker rename/delete have no command form for the
+  // createCheckpoint reason above: they are per-row actions, and the registry
+  // has no parameterized-command shape. The marker context menu is their home.
   "toggleMarkersVisible",
 ] as const;
 

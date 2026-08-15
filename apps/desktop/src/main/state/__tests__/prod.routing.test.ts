@@ -495,6 +495,82 @@ describe('production adapter routing — project_undo / project_redo (mechanical
   })
 })
 
+// ── Mechanical channels: markers ──────────────────────────────────────────────
+
+describe('production adapter routing — add_marker (mechanical)', () => {
+  it('valid call routes, returns a marker id, and an EMPTY label is stored empty', () => {
+    const a = freshActor()
+    const r = a.command('add_marker', { tUs: 1_000_000, label: '' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const markers = a.snapshot().markers
+    expect(markers).toHaveLength(1)
+    expect(markers[0].id).toBe(r.value as string)
+    expect(markers[0].t_us).toBe(1_000_000)
+    expect(markers[0].end_t_us).toBeNull()
+    // The channel must not inherit the dispatch arm's 'm' shorthand: an unnamed
+    // human marker stays unnamed so the ruler tooltip falls back to the
+    // translated noun.
+    expect(markers[0].label).toBe('')
+  })
+
+  it('absent label reaches the actor as the empty string, not as agent shorthand', () => {
+    const a = freshActor()
+    const r = a.command('add_marker', { tUs: 0 })
+    expect(r.ok).toBe(true)
+    expect(a.snapshot().markers[0].label).toBe('')
+  })
+
+  it('tUs missing (not a number) → structured InvalidArgument error, no throw, no marker added', () => {
+    const a = freshActor()
+    const r = a.command('add_marker', { tUs: 'now' })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('InvalidArgument')
+    expect(a.snapshot().markers).toHaveLength(0)
+  })
+})
+
+describe('production adapter routing — update_marker (mechanical)', () => {
+  it('valid rename routes and the label lands in state', () => {
+    const a = freshActor()
+    const add = a.command('add_marker', { tUs: 0 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const r = a.command('update_marker', { markerId: add.value as string, patch: { label: 'cut here' } })
+    expect(r.ok).toBe(true)
+    expect(a.snapshot().markers[0].label).toBe('cut here')
+  })
+
+  it('non-existent markerId → structured MarkerNotFound error, no throw', () => {
+    const a = freshActor()
+    const r = a.command('update_marker', { markerId: '00000000-0000-0000-0000-000000000000', patch: { label: 'x' } })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('MarkerNotFound')
+  })
+})
+
+describe('production adapter routing — remove_marker (mechanical)', () => {
+  it('valid call routes and the marker is removed from state', () => {
+    const a = freshActor()
+    const add = a.command('add_marker', { tUs: 0 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const r = a.command('remove_marker', { markerId: add.value as string })
+    expect(r.ok).toBe(true)
+    expect(a.snapshot().markers).toHaveLength(0)
+  })
+
+  it('non-existent markerId → structured MarkerNotFound error, no throw', () => {
+    const a = freshActor()
+    const r = a.command('remove_marker', { markerId: '00000000-0000-0000-0000-000000000000' })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('MarkerNotFound')
+  })
+})
+
 // ── Unknown channel ───────────────────────────────────────────────────────────
 
 describe('production adapter routing — unknown channel', () => {

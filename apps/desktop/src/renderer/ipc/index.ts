@@ -1074,6 +1074,29 @@ export async function renameTrack(
   return invoke<void>("rename_track", { trackId, label });
 }
 
+/// Drop a point marker at `tUs` (frame-snapped actor-side); returns the new
+/// marker id. RECORDED. The label is deliberately empty — a human marker stays
+/// unnamed until renamed, so the ruler tooltip falls back to the translated
+/// noun. Colour is the actor default; the palette belongs to colour editing.
+export async function addMarkerAt(tUs: number): Promise<string> {
+  return invoke<string>("add_marker", { tUs, label: "" });
+}
+
+/// Rename a marker. RECORDED — but renaming to the unchanged label is an
+/// actor-level no-op: ok result, no history entry.
+export async function renameMarker(
+  markerId: string,
+  label: string,
+): Promise<void> {
+  return invoke<void>("update_marker", { markerId, patch: { label } });
+}
+
+/// Remove a marker. RECORDED; deletion is one undo away, so no confirm dialog
+/// stands in front of it.
+export async function removeMarker(markerId: string): Promise<void> {
+  return invoke<void>("remove_marker", { markerId });
+}
+
 export async function updateLayerParams(
   layerId: string,
   patch: LayerParamsPatch,

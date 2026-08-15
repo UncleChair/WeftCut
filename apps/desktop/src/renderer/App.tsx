@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   addColorLayer,
+  addMarkerAt,
   addTextLayer,
   deleteLayer,
   moveLayersToNewTrack,
@@ -80,13 +81,19 @@ import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
 import {
   displayMode,
+  markersVisible,
+  setAppSettings,
   toggleDisplayMode,
   toggleFollowPlayhead,
   toggleMarkersVisible,
 } from "./settings/appSettingsStore";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
-import { logMutationFailure } from "./errors/tryMutate";
+import { logMutationFailure, tryMutate } from "./errors/tryMutate";
+import { useProjectStore } from "./state/projectStore";
+import { markerStartingInFrame } from "./timeline/markerAtFrame";
+import { MarkerRenameDialog } from "./timeline/MarkerRenameDialog";
+import { openMarkerRenamePrompt } from "./timeline/markerRenamePrompt";
 import {
   DockWorkspace,
   type DockPanelContracts,
@@ -669,6 +676,37 @@ export function App({ onCloseProject }: AppProps) {
         inclusiveOutBoundaryUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
       );
     },
+    // The marker key. One frame, two meanings: a bare frame gets a marker, a
+    // marked frame gets its rename dialog (the FCP/Resolve double-tap, which
+    // also keeps M from stacking same-frame duplicates). Both branches turn a
+    // hidden marker layer back on first — pressing M is the strongest signal
+    // the user cares about markers right now, and an invisible add reads as a
+    // dead key (the documented Premiere confusion), an invisible rename as
+    // editing blind. The layer toggle exists to silence agent sweeps, not this.
+    addMarkerAtPlayhead: () => {
+      const comp = summary?.composition;
+      if (!comp) return;
+      const frameUs = displayedFrameStartUs(
+        playheadTimeUs(),
+        comp.fps_num,
+        comp.fps_den,
+      );
+      // Live store read, not the render-captured summary — same reason the
+      // raise-selection handler reads its stores at press time.
+      const markers = useProjectStore.getState().summary?.markers ?? [];
+      const existing = markerStartingInFrame(
+        markers,
+        frameUs,
+        comp.fps_num,
+        comp.fps_den,
+      );
+      if (!markersVisible()) void setAppSettings({ markers_visible: true });
+      if (existing) {
+        openMarkerRenamePrompt(existing.id);
+        return;
+      }
+      void tryMutate(() => addMarkerAt(frameUs), "add_marker");
+    },
     clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
       // Agent mode doesn't mount the palette — setting the flag would sit
@@ -865,6 +903,7 @@ export function App({ onCloseProject }: AppProps) {
           so the `createCheckpoint` command works with the Panel closed; it
           renders nothing until something calls `openCheckpointPrompt()`. */}
       <CheckpointPromptDialog />
+      <MarkerRenameDialog />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

@@ -50,6 +50,7 @@ export type ActionId =
   | "seekEnd"
   | "markIn"
   | "markOut"
+  | "addMarkerAtPlayhead"
   | "clearRange"
   | "openSearchPalette"
   | "openSettings";
@@ -249,6 +250,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // point — so neither is `repeatable`; holding the key marks nothing new.
   markIn:            { defaultKeys: ["I"],                 labelKey: "actions.mark_in" },
   markOut:           { defaultKeys: ["O"],                 labelKey: "actions.mark_out" },
+  // Marker at the playhead, at the key every NLE gives it. Same shape as
+  // `markIn`/`markOut` and for the same reasons: bare letter (dead in text
+  // fields), not captureGlobal, deliberately UNSCOPED — the preview is where a
+  // user watches, so a scoped M would be dead exactly where marking happens.
+  // Not `repeatable`: the second press on a marked frame OPENS RENAME rather
+  // than stacking a duplicate, so holding the key must not re-fire.
+  addMarkerAtPlayhead: { defaultKeys: ["M"],               labelKey: "actions.add_marker_at_playhead" },
   clearRange:        { defaultKeys: ["Alt+X"],             labelKey: "actions.clear_range" },
   // Global search palette. A chord, so it fires while a text input is
   // focused (default chord behavior) — expected for a Spotlight-style UI.

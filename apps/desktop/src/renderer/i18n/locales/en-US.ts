@@ -256,6 +256,13 @@ const enUS = {
     confirm: "Save",
     cancel: "Cancel",
   },
+  marker_rename: {
+    title: "Rename Marker",
+    label: "Marker label",
+    placeholder: "e.g. Trim this pause",
+    confirm: "Rename",
+    cancel: "Cancel",
+  },
   actions: {
     add_color_layer: "Color layer",
     add_text_layer: "Text",
@@ -317,6 +324,7 @@ const enUS = {
     seek_end: "Go to end",
     mark_in: "Mark in point",
     mark_out: "Mark out point",
+    add_marker_at_playhead: "Add marker at playhead",
     clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",

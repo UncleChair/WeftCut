@@ -254,6 +254,13 @@ const zhCN: Resources = {
     confirm: "保存",
     cancel: "取消",
   },
+  marker_rename: {
+    title: "重命名标记",
+    label: "标记标签",
+    placeholder: "例如：修剪这段停顿",
+    confirm: "重命名",
+    cancel: "取消",
+  },
   actions: {
     add_color_layer: "颜色层",
     add_text_layer: "文本",
@@ -310,6 +317,7 @@ const zhCN: Resources = {
     seek_end: "跳到结尾",
     mark_in: "设置入点",
     mark_out: "设置出点",
+    add_marker_at_playhead: "在播放头处添加标记",
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",

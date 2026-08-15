@@ -165,6 +165,13 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // dispatch arm's. jump_to takes an absolute stack index (cursor-only, rejects
   // under the revert lock); create/delete_checkpoint are the User-actor half of
   // the checkpoint surface the MCP tools already cover for agents.
+  // Markers — the renderer's first marker channels (marker-authoring slice).
+  // `label` defaults to the EMPTY string, not absence: the dispatch arm turns an
+  // absent label into agent shorthand ('m'), and a human marker must instead stay
+  // unnamed so the ruler tooltip falls back to the translated noun.
+  add_marker: (a) => ({ op: 'add_marker', args: { t_us: a.tUs, end_t_us: a.endTUs ?? null, label: a.label ?? '' } }),
+  update_marker: (a) => ({ op: 'update_marker', args: { marker: a.markerId, patch: a.patch } }),
+  remove_marker: (a) => ({ op: 'remove_marker', args: { marker: a.markerId } }),
   project_jump_to: (a) => ({ op: 'jump_to', args: { index: a.index } }),
   project_create_checkpoint: (a) => ({ op: 'create_checkpoint', args: { label: a.label } }),
   project_delete_checkpoint: (a) => ({ op: 'delete_checkpoint', args: { checkpoint_id: a.checkpointId } }),
@@ -187,6 +194,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'set_composition', 'fit_composition_to_layers',
   'update_track_flags', 'rename_track', 'set_role_gain', 'update_role_flags',
   'add_transition', 'update_transition', 'remove_transition',
+  'add_marker', 'update_marker', 'remove_marker',
   'separate_audio_to_new_track', 'restyle_captions',
   'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
   'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
