@@ -60,136 +60,35 @@ Everything else (capture, cache, export) is mechanism around this contract.
 
 ## Authoring contract
 
-A Motif is a directory of `manifest.json` + `index.html` (plus an optional
-`assets/` for fonts and images), embedded in the binary via `include_bytes!` and
-served to the offscreen capture host over a `motif:` URI scheme. `index.html` is a
-normal web document.
+The author-facing contract — the `motif.define` lifecycle, the one law (state
+is a function of `t`, never an accumulation), the manifest and its three
+duration shapes, the `props_schema` variants, the fonts rule, and the sandbox
+limits an author designs around — lives in
+[`motif-authoring.md`](motif-authoring.md), the single normative spec. That
+file is deliberately self-contained (it links to no other doc): the build ships
+a verbatim copy of it inside the agent skill bundle, where no other repo
+document is reachable.
 
-### The lifecycle: `motif.define`
+Facts the rest of this document leans on:
 
-The harness injects two things before any author code runs: the clock takeover
-(see [Determinism](#determinism-owning-the-clock)) and a global `motif`. The author
-declares a lifecycle with one call:
-
-```js
-motif.define({
-  // Runs once per distinct props value. Build the scene, declare animations,
-  // load and await assets.
-  async setup(props, ctx) {
-    bar.animate([{ opacity: 0 }, { opacity: 1 }],
-                { duration: 700, easing: "ease-out", fill: "both" });
-    await document.fonts.load('700 56px "Inter"');   // see Fonts, below
-  },
-  // OPTIONAL: only when content must read the clock (e.g. a countdown number).
-  frame(t, ctx) { label.textContent = Math.ceil(ctx.duration - t); },
-});
-```
-
-- **`setup(props, ctx)`** — async, runs once per distinct props value. Builds the
-  DOM, declares WAAPI/CSS/GSAP animations, loads and `await`s assets. Re-runs when
-  a prop changes, so it must be self-contained (no residual cross-instance state).
-- **`frame(t, ctx)`** — optional, called at each seeked time for imperative
-  time-reading content. Pure-declarative Motifs omit it.
-- **`ctx`** = `{ duration, width, height, fps, frame, random() }`. `t` is content
-  time in seconds; `ctx.frame` the integer frame index. Both are provided so the
-  CSS/WAAPI (time-based) and frame-based idioms each work.
-
-### The one law: state is a function of `t`, not an accumulation
-
-> Any visible state must be computable **from `t` alone** — via declared animations
-> or `frame(t)` — never via mutation that **accumulates over time**.
-
-```js
-setInterval(() => { n++; label.textContent = n; }, 1000);   // ✗ stubbed, not seekable
-frame(t) { label.textContent = Math.floor(t); }             // ✓ closed-form in t
-```
-
-Authors may use any normal animation tool (CSS animations/transitions, WAAPI,
-GSAP, Lottie, canvas/WebGL): the harness owns the clock and seeks them. The single
-learnable rule is *don't accumulate state via timers; express it as `f(t)`*.
-
-| Anti-pattern | Why | Use instead |
-|---|---|---|
-| `setInterval` / self-advancing rAF accumulating state | stubbed / not seekable | closed-form in `frame(t)` |
-| `fetch()` for data/fonts/images | sandbox-blocked, nondeterministic | bundle in `assets/` |
-| reading real `Date.now()` for motion | returns virtual time | use `t` |
-| unseeded physics/particle integration | depends on the prior frame | closed-form `f(t)` or seeded `ctx.random()` |
-| global state accreted across instances | leaks after a prop-change rebuild | keep `setup` self-contained |
-
-### The manifest
-
-```json
-{
-  "id": "lower-third",
-  "name": "Lower Third",
-  "version": 1,
-  "size": [1280, 320],
-  "default_duration_s": 5.0,
-  "content_duration_s": 0.8,
-  "settle_rafs": 1,
-  "fonts": [{ "family": "Inter", "file": "Inter.woff2", "weight": 700 }],
-  "props_schema": {
-    "title":    { "type": "string", "default": "Jane Doe", "max_length": 40 },
-    "subtitle": { "type": "string", "default": "Director of Photography" },
-    "accent":   { "type": "color",  "default": "#ff4d4d" }
-  }
-}
-```
-
-- **`size`** — the natural authoring size (CSS px, top-left origin). The author lays
-  out within it; capture resolution is the harness's job (`setDeviceMetricsOverride`),
-  so there is no resolution code in the Motif and no blur on scale-up.
-- **`default_duration_s`** — the initial placed-layer length.
-- **`props_schema`** — typed props (`string` with optional `max_length`, `color` as
-  `#rrggbb[aa]`, `number` with optional `min`/`max`, `enum` over `options`), each with
-  a `default`. Props are validated (unknown keys reject, missing keys fall back to
-  defaults) and canonicalized into a stable key order, so identical inputs produce
-  identical bytes and identical cache keys. The four variants are the *data* contract
-  — validation, defaults, persistence, undo, agent drafting — and they carry no
-  presentation fields; the controls the user sees are the subject of
-  [Parameter UI](#parameter-ui).
-- **`settle_rafs`** — how many real browser frames the harness waits after a seek
-  before capturing (clamped to `{0,1,2}`, default `2`). CSS/DOM-only Motifs can set
-  `1` to shave a frame; canvas/WebGL Motifs want `2`.
-- **`fonts`** — declares bundled faces (see [Fonts](#fonts-assets-size)).
-- The duration fields (`max_duration_s` / `max_duration_prop` / `content_duration_s`)
-  are explained next.
-
-### Content duration and the timeline window
-
-A Motif's **content** has an intrinsic length; the **layer** on the timeline is a
-*window* into that content, exactly as a video clip windows its media.
-`MotifParams.src_in_us` is the window offset; the window width is the layer width;
-the window end is derived, never stored. There are three duration shapes:
-
-| Manifest | Content duration | Layer | Use |
-|---|---|---|---|
-| **`max_duration_prop`** (names a NUMBER prop) and/or **`max_duration_s`** | the prop value (live-editable), else the static `max_duration_s` | **capped** to that length; windowable (`src_in`) | bounded clips — a countdown |
-| **`content_duration_s`** | this fixed value | **freely extendable**; frames past it clamp to the last content frame (a held, deduped tail), and it never windows | holdable overlays that animate in then hold — a lower-third |
-| none of the above | the layer width | extendable; animates over the placed duration | unbounded holdable overlays |
-
-The distinction between `max_duration_s` and `content_duration_s` is the load-bearing
-one: both fix the seekable content length, but `max_duration_s` *also caps the layer*
-while `content_duration_s` *does not*. A holdable lower-third sets `content_duration_s`
-(its ~0.8 s in-animation) so the user can drag the layer arbitrarily long: every frame
-beyond the in-animation maps to the same last content frame, which the cache collapses
-to a single capture, and because the content-frame count is fixed, trimming the layer
-never invalidates cached frames.
-
-### Fonts, assets, size
-
-- **Fonts:** declared in `manifest.fonts`, bytes in `assets/`; the page writes a
-  normal `@font-face` referencing the bundled file, served same-origin over `motif:`.
-  **Determinism caveat:** `await document.fonts.ready` alone can resolve *before* the
-  `@font-face` fetch even starts (faces load lazily on first layout use), which would
-  let the first capture paint a fallback and a later capture paint the real font. A
-  font-using Motif MUST force the load explicitly — `await document.fonts.load('700 56px "Inter"')`
-  for each weight/size it renders — before resolving `setup`.
-- **Assets (images, JS libs):** bundled in `assets/`, referenced by relative URL,
-  served from the `motif:` scheme — never the network.
-- **Size & resolution:** lay out within `manifest.size`; the harness chooses the
-  capture resolution. Layer transform and opacity are applied by the Pixi sprite at
-  composite time, never captured.
+- A built-in Motif is a directory of `manifest.json` + `index.html` (plus an
+  optional `assets/` for fonts and images), embedded in the binary via
+  `include_bytes!`; a user or agent Motif is a single self-contained HTML
+  document carrying an injected manifest island. Either way it is served to
+  the offscreen capture host over the `motif:` URI scheme.
+- Props are validated against the manifest's `props_schema` (unknown keys
+  reject, missing keys fall back to defaults) and canonicalized into a stable
+  key order, so identical inputs produce identical bytes and identical cache
+  keys.
+- Content duration takes one of three manifest shapes — `max_duration_s` /
+  `max_duration_prop` (caps the layer; windowable via `src_in_us`),
+  `content_duration_s` (fixed content length, freely extendable layer whose
+  tail holds the last content frame), or none (content = the placed layer
+  width). The held tail is what lets the cache collapse a static overlay to a
+  single capture, and a fixed content-frame count is why trimming never
+  invalidates cached frames.
+- `settle_rafs` (clamped to `{0,1,2}`, default `2`) is how many real browser
+  frames the harness waits after a seek before capturing.
 
 ## Parameter UI
 
