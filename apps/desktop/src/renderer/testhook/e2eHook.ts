@@ -556,6 +556,25 @@ function hookSlot(): Partial<E2EHook> {
   return w.__weftcutTest;
 }
 
+const EDITOR_MOUNT_TIMEOUT_MS = 15_000;
+
+/// `enterEditor()` only requests the stage flip — the editor mounts later:
+/// during boot Root defers the App mount until the splash's launch motion has
+/// finished (see Root in main.tsx). Specs call App-installed hooks right after
+/// "entering the editor", so that promise settles only once the workspace
+/// shell is actually committed to the DOM.
+async function editorCommitted(): Promise<void> {
+  const deadline = performance.now() + EDITOR_MOUNT_TIMEOUT_MS;
+  while (!document.querySelector(".app")) {
+    if (performance.now() > deadline) {
+      throw new Error(
+        `editor did not mount within ${EDITOR_MOUNT_TIMEOUT_MS}ms of enterEditor()`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /// Root-side: workspace creation + entering the editor. `enterEditor` is
 /// Root's `setStage("editor")`; `exitToStartup` is `setStage("startup")`.
 export function installBootstrapHook(
@@ -565,6 +584,7 @@ export function installBootstrapHook(
   hookSlot().newProjectAndEnter = async (args) => {
     await projectNewWorkspace(args);
     enterEditor();
+    await editorCommitted();
   };
   hookSlot().motifReopenProject = async ({ path }) => {
     await projectSave();
@@ -573,6 +593,7 @@ export function installBootstrapHook(
     await new Promise((r) => setTimeout(r, 50));
     await projectOpen(path);
     enterEditor();
+    await editorCommitted();
   };
   hookSlot().getPlayheadUs = () => playheadTimeUs();
   hookSlot().getSelectedLayerId = () =>

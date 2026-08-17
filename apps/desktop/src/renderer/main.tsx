@@ -77,6 +77,10 @@ function Root() {
     useState<StartupProgress | null>(null);
   const [splashVisible, setSplashVisible] = useState(true);
   const [devSplashHeld, setDevSplashHeld] = useState(false);
+  // Latched on the splash's first intro completion — never reset, so a dev
+  // replay of the splash cannot unmount a live editor underneath it.
+  const [splashIntroDone, setSplashIntroDone] = useState(false);
+  const [editorPainted, setEditorPainted] = useState(false);
 
   // Focus regions (ADR 0041). Mounted here rather than in `App` so it also
   // covers the startup screen and the splash: its listeners are on `window`
@@ -225,6 +229,7 @@ function Root() {
 
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);
   const onCloseProject = useCallback(() => setStage("startup"), []);
+  const onSplashIntroComplete = useCallback(() => setSplashIntroDone(true), []);
   const onSplashComplete = useCallback(() => {
     setSplashVisible(false);
     setDevSplashHeld(false);
@@ -240,23 +245,47 @@ function Root() {
   }, [splashVisible]);
   const launchReady = systemsReady && stage !== "boot";
 
+  // The editor is the one launch destination heavy enough to fight the
+  // splash for the main thread and GPU (dockview layout, Pixi init, decode
+  // spin-up), which visibly stutters the intro motion when it mounts
+  // mid-animation (reopen-on-launch). It therefore waits for the intro to
+  // finish and mounts during the splash's hold phase instead. `!splashVisible`
+  // keeps the pre-splash paths intact: entering the editor from the startup
+  // screen mounts immediately.
+  const editorMounted =
+    launchReady && stage === "editor" && (splashIntroDone || !splashVisible);
+
+  // The splash's exit fade should reveal a fully committed editor, so the
+  // editor route reports ready one painted frame after the App mount commit —
+  // the mount's long task lands behind the held (static) mark, not under the
+  // 200ms fade.
+  useEffect(() => {
+    if (!editorMounted) {
+      setEditorPainted(false);
+      return;
+    }
+    const id = requestAnimationFrame(() => setEditorPainted(true));
+    return () => cancelAnimationFrame(id);
+  }, [editorMounted]);
+  const destinationReady =
+    launchReady && (stage !== "editor" || editorPainted);
+
   // Route resolution and system initialization run behind the launch motion.
   // The splash owns its minimum display time and holds its completed mark when
-  // either dependency is slower, then performs the exit once both are ready.
+  // any dependency is slower, then performs the exit once all are ready.
   return (
     <>
       {launchReady && stage === "startup" && (
         <StartupScreen onWorkspaceReady={onWorkspaceReady} />
       )}
-      {launchReady && stage === "editor" && (
-        <App onCloseProject={onCloseProject} />
-      )}
+      {editorMounted && <App onCloseProject={onCloseProject} />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
-          ready={launchReady}
+          ready={destinationReady}
           autoComplete={!devSplashHeld}
           startupProgress={startupProgress}
           routePending={stage === "boot"}
+          onIntroComplete={onSplashIntroComplete}
           onComplete={onSplashComplete}
         />
       )}

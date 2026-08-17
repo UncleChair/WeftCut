@@ -10,6 +10,12 @@ interface Props {
   autoComplete?: boolean;
   startupProgress: StartupProgress | null;
   routePending: boolean;
+  /**
+   * Fires once when the intro motion finishes and the splash starts holding
+   * its completed mark. Heavy launch destinations mount on this signal so
+   * their long tasks land in the hold phase instead of mid-motion.
+   */
+  onIntroComplete?: () => void;
   onComplete: () => void;
 }
 
@@ -30,6 +36,7 @@ export function SplashScreen({
   autoComplete = true,
   startupProgress,
   routePending,
+  onIntroComplete,
   onComplete,
 }: Props) {
   const { t } = useTranslation();
@@ -40,13 +47,16 @@ export function SplashScreen({
 
   useEffect(() => {
     const timeout = window.setTimeout(
-      () => setIntroComplete(true),
+      () => {
+        setIntroComplete(true);
+        onIntroComplete?.();
+      },
       reduceMotion
         ? REDUCED_MOTION_INTRO_DURATION_MS
         : SPLASH_INTRO_DURATION_MS,
     );
     return () => window.clearTimeout(timeout);
-  }, [reduceMotion]);
+  }, [reduceMotion, onIntroComplete]);
 
   const exiting = introComplete && ready && autoComplete;
 

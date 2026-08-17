@@ -172,6 +172,28 @@ describe("SplashScreen launch mark", () => {
     expect(onComplete).toHaveBeenCalledOnce();
   });
 
+  it("signals intro completion exactly when the motion finishes", () => {
+    const onIntroComplete = vi.fn();
+    render(
+      <SplashScreen
+        {...READY_STATUS_PROPS}
+        ready={false}
+        onIntroComplete={onIntroComplete}
+        onComplete={() => {}}
+      />,
+    );
+
+    act(() => vi.advanceTimersByTime(2499));
+    expect(onIntroComplete).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(onIntroComplete).toHaveBeenCalledOnce();
+
+    // Still held (not ready) — the signal is about the motion, not the exit.
+    act(() => vi.advanceTimersByTime(5000));
+    expect(onIntroComplete).toHaveBeenCalledOnce();
+  });
+
   it("stays open for a manually controlled development preview", () => {
     const onComplete = vi.fn();
     const { container } = render(
