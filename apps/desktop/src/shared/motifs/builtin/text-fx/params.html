@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Text FX parameters</title>
+
+<!--
+  text-fx — the reference parameter page, and the copy-paste template for
+  motif authors.
+
+  A motif that drops a `params.html` next to its `index.html` takes over its
+  own slice of the property panel. There is no manifest field to set and no
+  host release to wait for: the file's presence IS the enablement.
+
+  WHERE THIS RUNS
+    The host frames this file from `motif://<id>/params.html` with
+    `sandbox="allow-scripts"` and NO `allow-same-origin`, under
+    `default-src 'none'; script-src 'unsafe-inline' motif:; …`. Consequences
+    an author must design around:
+      - The origin is OPAQUE. `localStorage`, `sessionStorage`, `document.cookie`
+        and `indexedDB` THROW on access — never touch them. `event.origin` on an
+        inbound message reads "null", so window identity is the only check worth
+        making.
+      - There is no network. No `connect-src` means fetch/XHR/WebSocket are
+        denied; every asset must be a relative URL (it resolves to
+        `motif://<id>/…`) or a `data:` URI.
+      - Inline style and script elements are allowed, so a single
+        self-contained file like this one works; splitting into companion
+        `.js`/`.css` files beside it works too.
+
+  THE PROTOCOL (postMessage, both directions)
+    host → page   `motif:init`          once per loaded document, on the frame's
+                                        `load`: { motifId, layerId, props,
+                                        schema, locale, themeTokens }
+    host → page   `motif:propsChanged`  the layer's props changed from OUTSIDE
+                                        this page (undo/redo, an agent edit)
+    page → host   `motif:preview`       mid-gesture. Overlays the canvas only —
+                                        no project mutation, no history entry.
+                                        The host throttles these to one recapture
+                                        per 250 ms, so send freely.
+    page → host   `motif:commit`        gesture end. ONE `update_layer_params`
+                                        carrying the whole patch → exactly ONE
+                                        undo entry, however many keys it holds.
+    page → host   `motif:resize`        this page's height in px (clamped host
+                                        side to [80, 1200]).
+
+    Everything inbound is filtered to the manifest's schema keys and leniently
+    canonicalized: an unknown key is dropped and an invalid value degrades to
+    its schema default rather than erroring. A page cannot corrupt a project —
+    but a page that sends sloppy values will watch them silently snap back, so
+    send well-formed ones (`#rrggbb` / `#rrggbbaa`, numbers inside min/max).
+
+  WHAT THIS PAGE DEMONSTRATES
+    - Grouped, hand-ordered sections. The schema is a dictionary; a panel
+      generated from it interleaves unrelated params. Order is the UI plane's
+      job, and it is expressed here simply by writing the markup in order.
+    - Bilingual labels switched off `init.locale`. The host never registers a
+      motif's strings; a page that cares about language carries its own.
+    - Host theme tokens applied as CSS custom properties, so the page reads as
+      part of the panel instead of a foreign form.
+    - Conditional rows (`type_speed` only matters to the typewriter effect,
+      `loop` only to color-shift) — inexpressible in the schema, trivial here.
+    - Alpha-capable color: `bg_color` defaults to `#00000000`, so it is edited
+      as an RGB picker plus an alpha slider composited into `#rrggbbaa`.
+    - Preset swatches that land three coupled colors in ONE commit, so one
+      undo takes all three back.
+-->
+
+<style>
+  /* Tokens arrive at `init` and are written onto :root by applyTheme(). Every
+     value below carries a literal fallback so the page is still legible in the
+     frame the host paints before the first message lands. */
+  :root { color-scheme: dark; }
+
+  html, body {
+    margin: 0;
+    /* The host iframe is transparent on purpose: the page paints its own
+       surfaces from the tokens, and any fill here would show at its edges. */
+    background: transparent;
+  }
+
+  body {
+    font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--foreground, #e5e7eb);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { display: flex; flex-direction: column; gap: 6px; padding: 0 0 4px; }
+
+  .group {
+    border: 1px solid var(--border-soft, #252a34);
+    border-radius: var(--radius, 6px);
+    background: var(--card, #111419);
+    overflow: hidden;
+  }
+
+  .group > h2 {
+    margin: 0;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border-soft, #252a34);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted-foreground, #9ca3af);
+  }
+
+  .rows { display: flex; flex-direction: column; gap: 6px; padding: 7px 8px; }
+
+  .row {
+    display: grid;
+    /* minmax(0, 1fr): a range input's ~129px intrinsic minimum would otherwise
+       push the control column past the panel's edge in a narrow dock. */
+    grid-template-columns: 58px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+  .row[hidden] { display: none; }
+  .row-block { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+
+  .lbl { color: var(--muted-foreground, #9ca3af); }
+  .ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .num {
+    flex: 0 0 auto;
+    min-width: 46px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted-foreground, #9ca3af);
+  }
+  .hex {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--muted-foreground, #9ca3af);
+  }
+
+  textarea, select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 3px 6px;
+    border: 1px solid var(--border-soft, #252a34);
+    border-radius: 4px;
+    background: var(--surface-sunken, #08090b);
+    color: var(--foreground, #e5e7eb);
+    font-family: inherit;
+    font-size: 12px;
+  }
+  textarea { resize: vertical; min-height: 40px; }
+
+  input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--ring, #3b82f6);
+  }
+
+  input[type="color"] {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border, #363e4b);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+  }
+  /* The swatch fills its box in both engines' shadow trees. */
+  input[type="color"]::-webkit-color-swatch-wrapper { padding: 1px; }
+  input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
+
+  .seg { display: flex; min-width: 0; }
+  .seg > button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 2px 4px;
+    border: 1px solid var(--border, #363e4b);
+    border-left-width: 0;
+    background: transparent;
+    color: var(--muted-foreground, #9ca3af);
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .seg > button:first-child { border-left-width: 1px; border-radius: 4px 0 0 4px; }
+  .seg > button:last-child { border-radius: 0 4px 4px 0; }
+  .seg > button:hover { background: var(--hover-neutral, rgba(255, 255, 255, 0.06)); }
+  .seg > button[aria-pressed="true"] {
+    background: var(--selection-bg, rgba(59, 130, 246, 0.16));
+    border-color: var(--selection-border, rgba(59, 130, 246, 0.5));
+    color: var(--foreground, #e5e7eb);
+  }
+
+  .swatches { display: flex; gap: 6px; }
+  .swatches > button {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 5px;
+    border: 1px solid var(--border, #363e4b);
+    border-radius: 4px;
+    background: var(--surface-raised, #181c23);
+    color: var(--muted-foreground, #9ca3af);
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .swatches > button:hover {
+    background: var(--hover-neutral, rgba(255, 255, 255, 0.06));
+    color: var(--foreground, #e5e7eb);
+  }
+  .sw {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border, #363e4b);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring, #3b82f6) 50%, transparent);
+    border-radius: 4px;
+  }
+</style>
+</head>
+
+<body>
+<!-- Order is authored, not derived. The generated fallback form would put
+     bg_color before color and split h_align from v_align; here the five
+     sections read the way the parameters are actually used. -->
+<div class="page" id="page">
+
+  <section class="group">
+    <h2 data-t="g.text"></h2>
+    <div class="rows">
+      <div class="row row-block" data-row="text">
+        <label class="lbl" for="f-text" data-t="p.text"></label>
+        <textarea id="f-text" rows="2" spellcheck="false"></textarea>
+      </div>
+      <div class="row" data-row="font">
+        <label class="lbl" for="f-font" data-t="p.font"></label>
+        <select id="f-font"></select>
+      </div>
+      <div class="row" data-row="font_size">
+        <label class="lbl" for="f-font_size" data-t="p.font_size"></label>
+        <div class="ctl">
+          <input type="range" id="f-font_size" min="8" max="400" step="1">
+          <output class="num" id="o-font_size"></output>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2 data-t="g.effect"></h2>
+    <div class="rows">
+      <div class="row" data-row="effect">
+        <span class="lbl" data-t="p.effect"></span>
+        <div class="seg" data-prop="effect" role="group" data-t-aria="p.effect">
+          <button type="button" data-value="typewriter" data-t="effect.typewriter"></button>
+          <button type="button" data-value="karaoke" data-t="effect.karaoke"></button>
+          <button type="button" data-value="color-shift" data-t="effect.color-shift"></button>
+        </div>
+      </div>
+      <div class="row" data-row="type_speed">
+        <label class="lbl" for="f-type_speed" data-t="p.type_speed"></label>
+        <div class="ctl">
+          <input type="range" id="f-type_speed" min="1" max="100" step="1">
+          <output class="num" id="o-type_speed"></output>
+        </div>
+      </div>
+      <div class="row" data-row="loop">
+        <span class="lbl" data-t="p.loop"></span>
+        <div class="seg" data-prop="loop" role="group" data-t-aria="p.loop">
+          <button type="button" data-value="once" data-t="loop.once"></button>
+          <button type="button" data-value="loop" data-t="loop.loop"></button>
+          <button type="button" data-value="pingpong" data-t="loop.pingpong"></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2 data-t="g.color"></h2>
+    <div class="rows">
+      <div class="row" data-row="color">
+        <label class="lbl" for="f-color" data-t="p.color"></label>
+        <div class="ctl">
+          <input type="color" id="f-color">
+          <code class="hex" id="h-color"></code>
+        </div>
+      </div>
+      <div class="row" data-row="color2">
+        <label class="lbl" for="f-color2" data-t="p.color2"></label>
+        <div class="ctl">
+          <input type="color" id="f-color2">
+          <code class="hex" id="h-color2"></code>
+        </div>
+      </div>
+      <div class="row" data-row="bg_color">
+        <label class="lbl" for="f-bg" data-t="p.bg_color"></label>
+        <div class="ctl">
+          <input type="color" id="f-bg">
+          <input type="range" id="f-bg-a" min="0" max="255" step="1" data-t-aria="p.bg_alpha">
+          <code class="hex" id="h-bg"></code>
+        </div>
+      </div>
+      <div class="row row-block" data-row="presets">
+        <span class="lbl" data-t="p.presets"></span>
+        <div class="swatches" id="presets">
+          <button type="button" data-preset="ivory">
+            <span class="sw" style="background: linear-gradient(135deg, #f7f3e8 50%, #e0b64a 50%)"></span>
+            <span data-t="preset.ivory"></span>
+          </button>
+          <button type="button" data-preset="ember">
+            <span class="sw" style="background: linear-gradient(135deg, #fff1e0 50%, #ff5a1f 50%)"></span>
+            <span data-t="preset.ember"></span>
+          </button>
+          <button type="button" data-preset="mint">
+            <span class="sw" style="background: linear-gradient(135deg, #eafff5 50%, #25d0a0 50%)"></span>
+            <span data-t="preset.mint"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2 data-t="g.outline"></h2>
+    <div class="rows">
+      <div class="row" data-row="outline_color">
+        <label class="lbl" for="f-outline_color" data-t="p.outline_color"></label>
+        <div class="ctl">
+          <input type="color" id="f-outline_color">
+          <code class="hex" id="h-outline_color"></code>
+        </div>
+      </div>
+      <div class="row" data-row="outline_width">
+        <label class="lbl" for="f-outline_width" data-t="p.outline_width"></label>
+        <div class="ctl">
+          <input type="range" id="f-outline_width" min="0" max="30" step="1">
+          <output class="num" id="o-outline_width"></output>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="group">
+    <h2 data-t="g.layout"></h2>
+    <div class="rows">
+      <div class="row" data-row="h_align">
+        <span class="lbl" data-t="p.h_align"></span>
+        <div class="seg" data-prop="h_align" role="group" data-t-aria="p.h_align">
+          <button type="button" data-value="left" data-t="h.left"></button>
+          <button type="button" data-value="center" data-t="h.center"></button>
+          <button type="button" data-value="right" data-t="h.right"></button>
+        </div>
+      </div>
+      <div class="row" data-row="v_align">
+        <span class="lbl" data-t="p.v_align"></span>
+        <div class="seg" data-prop="v_align" role="group" data-t-aria="p.v_align">
+          <button type="button" data-value="top" data-t="v.top"></button>
+          <button type="button" data-value="middle" data-t="v.middle"></button>
+          <button type="button" data-value="bottom" data-t="v.bottom"></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── The wire ─────────────────────────────────────────────────────────────
+  // "*" is the only workable targetOrigin: this document's origin is opaque,
+  // and so is the host's from here. The host authenticates us by window
+  // identity instead, which no other page can forge.
+  function post(msg) { window.parent.postMessage(msg, "*"); }
+  function preview(patch) { post({ type: "motif:preview", props: patch }); }
+  function commit(patch) { post({ type: "motif:commit", props: patch }); }
+
+  // ── Page state ───────────────────────────────────────────────────────────
+  var props = {};   // last COMMITTED values, as the host reports them
+  var schema = {};  // the manifest's props_schema, from init
+  var lang = "en";
+
+  var STRINGS = {
+    en: {
+      "g.text": "Text", "g.effect": "Effect", "g.color": "Color",
+      "g.outline": "Outline", "g.layout": "Layout",
+      "p.text": "Content", "p.font": "Typeface", "p.font_size": "Size",
+      "p.effect": "Style", "p.type_speed": "Speed", "p.loop": "Loop",
+      "p.color": "Fill", "p.color2": "Accent", "p.bg_color": "Backdrop",
+      "p.bg_alpha": "Backdrop opacity", "p.presets": "Presets",
+      "p.outline_color": "Color", "p.outline_width": "Width",
+      "p.h_align": "Across", "p.v_align": "Down",
+      "effect.typewriter": "Typewriter", "effect.karaoke": "Karaoke",
+      "effect.color-shift": "Color shift",
+      "loop.once": "Once", "loop.loop": "Loop", "loop.pingpong": "Ping-pong",
+      "h.left": "Left", "h.center": "Center", "h.right": "Right",
+      "v.top": "Top", "v.middle": "Middle", "v.bottom": "Bottom",
+      "font.sans-latin": "Sans (Latin)",
+      "preset.ivory": "Ivory", "preset.ember": "Ember", "preset.mint": "Mint",
+      "unit.px": " px", "unit.cps": " ch/s"
+    },
+    zh: {
+      "g.text": "文字", "g.effect": "效果", "g.color": "颜色",
+      "g.outline": "描边", "g.layout": "布局",
+      "p.text": "内容", "p.font": "字体", "p.font_size": "字号",
+      "p.effect": "样式", "p.type_speed": "速度", "p.loop": "循环",
+      "p.color": "填充", "p.color2": "强调", "p.bg_color": "背景",
+      "p.bg_alpha": "背景不透明度", "p.presets": "预设",
+      "p.outline_color": "颜色", "p.outline_width": "粗细",
+      "p.h_align": "水平", "p.v_align": "垂直",
+      "effect.typewriter": "打字机", "effect.karaoke": "卡拉OK",
+      "effect.color-shift": "渐变",
+      "loop.once": "一次", "loop.loop": "循环", "loop.pingpong": "往返",
+      "h.left": "左", "h.center": "居中", "h.right": "右",
+      "v.top": "上", "v.middle": "中", "v.bottom": "下",
+      "font.sans-latin": "无衬线（拉丁）",
+      "preset.ivory": "象牙", "preset.ember": "余烬", "preset.mint": "薄荷",
+      "unit.px": " px", "unit.cps": " 字/秒"
+    }
+  };
+
+  function t(key) {
+    var table = STRINGS[lang] || STRINGS.en;
+    return table[key] || STRINGS.en[key] || key;
+  }
+  function tOr(key, fallback) {
+    var table = STRINGS[lang] || STRINGS.en;
+    return table[key] || STRINGS.en[key] || fallback;
+  }
+
+  var $ = function (sel) { return document.querySelector(sel); };
+  var pageEl = $("#page");
+  var textEl = $("#f-text");
+  var fontEl = $("#f-font");
+  var bgRgbEl = $("#f-bg");
+  var bgAlphaEl = $("#f-bg-a");
+
+  // ── Color helpers ────────────────────────────────────────────────────────
+  // Props accept #rgb / #rgba / #rrggbb / #rrggbbaa. An <input type="color">
+  // holds only #rrggbb, so alpha is carried by its own slider and the two are
+  // recomposed on the way out.
+  function expandHex(v) {
+    if (typeof v !== "string") return null;
+    var m = /^#([0-9a-f]{3,8})$/i.exec(v.trim());
+    if (!m) return null;
+    var h = m[1].toLowerCase();
+    if (h.length === 3 || h.length === 4) h = h.replace(/./g, function (c) { return c + c; });
+    if (h.length === 6) h += "ff";
+    return h.length === 8 ? "#" + h : null;
+  }
+  function byteHex(n) {
+    var b = Math.max(0, Math.min(255, Math.round(n)));
+    return (b < 16 ? "0" : "") + b.toString(16);
+  }
+  function rgbOf(value, fallback) {
+    var full = expandHex(value) || expandHex(fallback) || "#000000ff";
+    return full.slice(0, 7);
+  }
+  function alphaOf(value, fallback) {
+    var full = expandHex(value) || expandHex(fallback) || "#000000ff";
+    return parseInt(full.slice(7, 9), 16);
+  }
+
+  // ── Reading the schema ───────────────────────────────────────────────────
+  // Bounds come from the manifest rather than being duplicated here, so a
+  // schema edit moves the sliders without touching this file.
+  function specOf(key) {
+    return Object.prototype.hasOwnProperty.call(schema, key) ? schema[key] : null;
+  }
+  function bindRangeBounds(el, key) {
+    var spec = specOf(key);
+    if (!spec || spec.type !== "number") return;
+    if (typeof spec.min === "number") el.min = String(spec.min);
+    if (typeof spec.max === "number") el.max = String(spec.max);
+  }
+  function num(key, el) {
+    var v = props[key];
+    if (typeof v === "number" && isFinite(v)) return v;
+    var spec = specOf(key);
+    return spec && typeof spec.default === "number" ? spec.default : Number(el.min || 0);
+  }
+  function str(key, dflt) {
+    var v = props[key];
+    if (typeof v === "string") return v;
+    var spec = specOf(key);
+    return spec && typeof spec.default === "string" ? spec.default : dflt;
+  }
+
+  // ── Painting ─────────────────────────────────────────────────────────────
+  // Every control is repainted from `props`, which is the whole reason undo is
+  // visible in this page: an undo arrives as `motif:propsChanged` and lands
+  // here like any other value change.
+  //
+  // The one exception is the control the user is currently holding: writing to
+  // a focused textarea or a range mid-drag would fight the gesture.
+  function held(el) { return document.activeElement === el; }
+
+  function paintRange(key, el, outEl, unitKey) {
+    var v = num(key, el);
+    if (!held(el)) el.value = String(v);
+    outEl.textContent = String(Math.round(Number(el.value))) + t(unitKey);
+  }
+
+  function paintColor(key, el, hexEl) {
+    if (!held(el)) el.value = rgbOf(props[key], "#000000");
+    hexEl.textContent = el.value;
+  }
+
+  function paintBackdrop() {
+    var raw = props.bg_color;
+    if (!held(bgRgbEl)) bgRgbEl.value = rgbOf(raw, "#000000");
+    if (!held(bgAlphaEl)) bgAlphaEl.value = String(alphaOf(raw, "#00000000"));
+    $("#h-bg").textContent = backdropValue();
+  }
+  function backdropValue() {
+    return bgRgbEl.value.toLowerCase() + byteHex(Number(bgAlphaEl.value));
+  }
+
+  function paintSegment(key) {
+    var current = str(key, "");
+    var buttons = document.querySelectorAll('.seg[data-prop="' + key + '"] > button');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].setAttribute("aria-pressed", buttons[i].dataset.value === current ? "true" : "false");
+    }
+  }
+
+  function paintConditional() {
+    // Conditional visibility is exactly what the data plane cannot express:
+    // `type_speed` only drives the typewriter, `loop` only the color shift.
+    var effect = str("effect", "karaoke");
+    $('.row[data-row="type_speed"]').hidden = effect !== "typewriter";
+    $('.row[data-row="loop"]').hidden = effect !== "color-shift";
+  }
+
+  function paintAll() {
+    if (!held(textEl)) textEl.value = str("text", "");
+    if (!held(fontEl)) fontEl.value = str("font", "");
+    paintRange("font_size", $("#f-font_size"), $("#o-font_size"), "unit.px");
+    paintRange("type_speed", $("#f-type_speed"), $("#o-type_speed"), "unit.cps");
+    paintRange("outline_width", $("#f-outline_width"), $("#o-outline_width"), "unit.px");
+    paintColor("color", $("#f-color"), $("#h-color"));
+    paintColor("color2", $("#f-color2"), $("#h-color2"));
+    paintColor("outline_color", $("#f-outline_color"), $("#h-outline_color"));
+    paintBackdrop();
+    paintSegment("effect");
+    paintSegment("loop");
+    paintSegment("h_align");
+    paintSegment("v_align");
+    paintConditional();
+    reportHeight();
+  }
+
+  // Commit AND repaint from the new values. The host deliberately does not
+  // echo a page's own commit back as `propsChanged` — that echo would fight a
+  // control the user is still holding — so the page owns its optimistic paint.
+  // Anything the host rejects arrives later as a genuine `propsChanged`.
+  function commitLocal(patch) {
+    commit(patch);
+    for (var k in patch) if (Object.prototype.hasOwnProperty.call(patch, k)) props[k] = patch[k];
+    paintAll();
+  }
+
+  // ── Wiring ───────────────────────────────────────────────────────────────
+
+  // Sliders are the gesture triple: `input` fires all through the drag and
+  // sends preview (canvas follows, history untouched); `change` fires once on
+  // release — or on each keyboard step — and sends the single commit.
+  function wireRange(key, el, outEl, unitKey) {
+    el.addEventListener("input", function () {
+      var v = Number(el.value);
+      outEl.textContent = String(Math.round(v)) + t(unitKey);
+      preview(patchOf(key, v));
+    });
+    el.addEventListener("change", function () {
+      commitLocal(patchOf(key, Number(el.value)));
+    });
+  }
+  function patchOf(key, value) { var p = {}; p[key] = value; return p; }
+
+  wireRange("font_size", $("#f-font_size"), $("#o-font_size"), "unit.px");
+  wireRange("type_speed", $("#f-type_speed"), $("#o-type_speed"), "unit.cps");
+  wireRange("outline_width", $("#f-outline_width"), $("#o-outline_width"), "unit.px");
+
+  // A text field previews per keystroke (the host's 250 ms throttle is what
+  // makes that affordable) and commits once, on `change` — blur or Enter.
+  textEl.addEventListener("input", function () { preview({ text: textEl.value }); });
+  textEl.addEventListener("change", function () { commitLocal({ text: textEl.value }); });
+
+  // Enums have no mid-gesture: a pick is the whole gesture, so it commits.
+  fontEl.addEventListener("change", function () { commitLocal({ font: fontEl.value }); });
+
+  function wireSegment(key) {
+    $('.seg[data-prop="' + key + '"]').addEventListener("click", function (ev) {
+      var btn = ev.target.closest("button[data-value]");
+      if (!btn) return;
+      // Re-picking the current value would spend an undo entry on nothing.
+      if (props[key] === btn.dataset.value) return;
+      commitLocal(patchOf(key, btn.dataset.value));
+    });
+  }
+  wireSegment("effect");
+  wireSegment("loop");
+  wireSegment("h_align");
+  wireSegment("v_align");
+
+  function wireColor(key, el, hexEl) {
+    el.addEventListener("input", function () {
+      hexEl.textContent = el.value;
+      preview(patchOf(key, el.value));
+    });
+    el.addEventListener("change", function () { commitLocal(patchOf(key, el.value)); });
+  }
+  wireColor("color", $("#f-color"), $("#h-color"));
+  wireColor("color2", $("#f-color2"), $("#h-color2"));
+  wireColor("outline_color", $("#f-outline_color"), $("#h-outline_color"));
+
+  // Two controls, one prop: both preview and commit the recomposed 8-digit
+  // value, so RGB and alpha can never land as two half-edits.
+  function wireBackdrop(el) {
+    el.addEventListener("input", function () {
+      $("#h-bg").textContent = backdropValue();
+      preview({ bg_color: backdropValue() });
+    });
+    el.addEventListener("change", function () { commitLocal({ bg_color: backdropValue() }); });
+  }
+  wireBackdrop(bgRgbEl);
+  wireBackdrop(bgAlphaEl);
+
+  // THE multi-key commit. Three coupled colors ride one `motif:commit`, which
+  // the host turns into one `update_layer_params` and therefore ONE undo entry.
+  // Three separate commits would look identical on screen and cost the user
+  // three undos to walk back.
+  var PRESETS = {
+    ivory: { color: "#f7f3e8", color2: "#e0b64a", bg_color: "#00000000" },
+    ember: { color: "#fff1e0", color2: "#ff5a1f", bg_color: "#1a0b05cc" },
+    mint: { color: "#eafff5", color2: "#25d0a0", bg_color: "#04211999" }
+  };
+  $("#presets").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-preset]");
+    if (!btn) return;
+    var preset = PRESETS[btn.dataset.preset];
+    if (preset) commitLocal({ color: preset.color, color2: preset.color2, bg_color: preset.bg_color });
+  });
+
+  // ── Height ───────────────────────────────────────────────────────────────
+  // The host starts the frame at a default height and honors whatever this
+  // page declares, clamped to [80, 1200]. Observing the content wrapper covers
+  // font loading, the conditional rows, and a narrowed panel wrapping a label.
+  var lastHeight = 0;
+  function reportHeight() {
+    var h = Math.ceil(pageEl.getBoundingClientRect().height);
+    if (h <= 0 || h === lastHeight) return;
+    lastHeight = h;
+    post({ type: "motif:resize", height: h });
+  }
+  if (typeof ResizeObserver === "function") new ResizeObserver(reportHeight).observe(pageEl);
+
+  // ── Theme + locale ───────────────────────────────────────────────────────
+  // The host sends a curated token map (`--background`, `--foreground`,
+  // `--border`, `--ring`, …). Writing them onto :root is all it takes for the
+  // `var(--…)` references in the stylesheet above to resolve to the app's own
+  // palette; a page that ignores them still renders, on its fallbacks.
+  function applyTheme(tokens) {
+    if (!tokens || typeof tokens !== "object") return;
+    var root = document.documentElement;
+    for (var name in tokens) {
+      if (!Object.prototype.hasOwnProperty.call(tokens, name)) continue;
+      if (!/^--[a-z0-9-]+$/i.test(name)) continue;
+      if (typeof tokens[name] === "string") root.style.setProperty(name, tokens[name]);
+    }
+  }
+
+  function applyLocale(locale) {
+    // The host never registers a motif's strings; locale in, labels out.
+    lang = /^zh/i.test(String(locale || "")) ? "zh" : "en";
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    var labelled = document.querySelectorAll("[data-t]");
+    for (var i = 0; i < labelled.length; i++) labelled[i].textContent = t(labelled[i].dataset.t);
+    var described = document.querySelectorAll("[data-t-aria]");
+    for (var j = 0; j < described.length; j++) {
+      described[j].setAttribute("aria-label", t(described[j].dataset.tAria));
+    }
+  }
+
+  function applySchema(next) {
+    schema = next && typeof next === "object" ? next : {};
+    bindRangeBounds($("#f-font_size"), "font_size");
+    bindRangeBounds($("#f-type_speed"), "type_speed");
+    bindRangeBounds($("#f-outline_width"), "outline_width");
+
+    var textSpec = specOf("text");
+    if (textSpec && typeof textSpec.max_length === "number") textEl.maxLength = textSpec.max_length;
+
+    // The typeface list is BUILT from the schema — a motif that grows a font
+    // gets the new option for free. The enums above are hand-authored instead,
+    // because their order and their labels are editorial choices.
+    var fontSpec = specOf("font");
+    var options = fontSpec && fontSpec.type === "enum" ? fontSpec.options : [];
+    fontEl.textContent = "";
+    for (var i = 0; i < options.length; i++) {
+      var opt = document.createElement("option");
+      opt.value = options[i];
+      // An option this page has no string for still renders — as its raw id.
+      opt.textContent = tOr("font." + options[i], options[i]);
+      fontEl.appendChild(opt);
+    }
+  }
+
+  // ── Inbound ──────────────────────────────────────────────────────────────
+  // Registered while the document parses, which is strictly before the frame's
+  // `load` event — the host posts `init` from `load`, so there is no race and
+  // no handshake to send.
+  window.addEventListener("message", function (ev) {
+    // On an opaque origin `ev.origin` is the string "null" for everyone, so
+    // window identity is the only check with meaning.
+    if (ev.source !== window.parent) return;
+    var msg = ev.data;
+    if (!msg || typeof msg !== "object") return;
+
+    if (msg.type === "motif:init") {
+      applyTheme(msg.themeTokens);
+      applyLocale(msg.locale);
+      applySchema(msg.schema);
+      props = msg.props && typeof msg.props === "object" ? msg.props : {};
+      // paintAll ends in reportHeight, so the locale's own label widths — and the
+      // conditional rows the incoming effect opens or closes — are already in the
+      // height the host is told about.
+      paintAll();
+    } else if (msg.type === "motif:propsChanged") {
+      // Undo, redo, an agent edit, another surface — anything that moved the
+      // layer's props without going through this page.
+      props = msg.props && typeof msg.props === "object" ? msg.props : {};
+      paintAll();
+    }
+  });
+
+  // Legible before the first message, in case a host ever frames this page
+  // without sending one.
+  applyLocale("en");
+  paintAll();
+})();
+</script>
+</body>
+</html>
