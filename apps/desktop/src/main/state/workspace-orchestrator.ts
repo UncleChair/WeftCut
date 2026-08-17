@@ -11,7 +11,7 @@ import type { ActorHandle } from './actor'
 import type { IdGen } from './ids'
 import type { Project } from './model'
 import { blankProject } from './model'
-import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE } from './persistence'
+import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } from './persistence'
 import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
 import { serializeProject, type GridRepair } from './serialize'
 
@@ -64,13 +64,29 @@ export interface OrchestratorDeps {
    *  row so a silently-migrated project is visible. Same timing constraint as
    *  `onRelink`: fired AFTER commitWorkspace, never during the parse. */
   onGridRepair?: (repairs: readonly GridRepair[]) => void
+  /** Surfaced only when the migration chain moved the project to a newer schema
+   *  version — the one on-open event that changes what the next save will write.
+   *  Same timing constraint as the two reports above. */
+  onSchemaUpgrade?: (report: SchemaUpgradeReport) => void
 }
 
-/** project_open. Pre-check sentinels → load →
- *  delete stale quick proxies → relink heal → commit_workspace (pre-broadcast)
- *  → onGridRepair report → replace_state → onRelink report → push_recent →
- *  (deferred) derivative re-fan-out. Both reports sit after commit_workspace
- *  because it rotates the per-workspace LogBus. */
+export interface SchemaUpgradeReport {
+  /** The schema version the file on disk was at. */
+  from: number
+  /** The version it now holds in memory (the build's `SCHEMA_VERSION`). */
+  to: number
+  /** The file the pre-upgrade bytes were preserved in, or null when that write
+   *  failed — in which case the next save is the point of no return, and the row
+   *  should say so rather than implying a safety net that isn't there. */
+  backupFile: string | null
+}
+
+/** project_open. Pre-check sentinels → load (schema gate + migration chain) →
+ *  delete stale quick proxies → preserve pre-upgrade bytes → relink heal →
+ *  commit_workspace (pre-broadcast) → onGridRepair + onSchemaUpgrade reports →
+ *  replace_state → onRelink report → push_recent → (deferred) derivative
+ *  re-fan-out. All three reports sit after commit_workspace because it rotates
+ *  the per-workspace LogBus. */
 export async function openProject(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
   // Typed sentinels for the two common failure modes (renderer matches them).
@@ -93,6 +109,27 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // Best-effort: never fail the open on a leftover proxy we couldn't remove.
   for (const p of quickProxiesToDelete) { try { fs.rm(p) } catch { /* ignore */ } }
 
+  // A schema upgrade happened in memory only; project.json still holds the old
+  // bytes until the first edit's autosave overwrites it. Preserve them NOW —
+  // this is the last moment they exist, and if a migration step is wrong they are
+  // the only way back. Written straight from `text` rather than re-serializing:
+  // a re-serialization would already be the upgraded shape.
+  //
+  // Best-effort like the two heals below, and reported either way: an upgrade the
+  // user is not told about is one they cannot second-guess. Skipped when the file
+  // is already there, so opening the same project twice without editing (each
+  // open upgrades again) cannot clobber the first, oldest copy.
+  let schemaUpgrade: SchemaUpgradeReport | null = null
+  if (loaded.upgradedFrom !== null) {
+    const backupFile = preUpgradeBackupFile(loaded.upgradedFrom)
+    let kept: string | null = backupFile
+    try {
+      const backupPath = join(dir, backupFile)
+      if (!fs.exists(backupPath)) fs.writeFile(backupPath, text)
+    } catch { kept = null }
+    schemaUpgrade = { from: loaded.upgradedFrom, to: project.schema_version, backupFile: kept }
+  }
+
   // Relink-by-content self-heal (relink.ts). Best-effort: a heal crash must
   // never block the open — the un-healed project still loads (MissingMedia UI).
   let relinkReport: RelinkReport | null = null
@@ -111,6 +148,10 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // project satisfy the backstop at all, so if the swap STILL fails validation this
   // row is the diagnostic that says what load already had to move.
   if (gridRepairs.length > 0) { try { deps.onGridRepair?.(gridRepairs) } catch { /* best-effort, never blocks the open */ } }
+  // Before replace_state for the same reason as the grid-repair row: if the swap
+  // fails validation, "this file was upgraded from v{n}" is the first thing worth
+  // knowing about why.
+  if (schemaUpgrade) { try { deps.onSchemaUpgrade?.(schemaUpgrade) } catch { /* best-effort, never blocks the open */ } }
   actor.replaceState(project)                 // throws CommandFailure on invalid
   // After commitWorkspace — see OrchestratorDeps.onRelink.
   if (relinkReport) { try { deps.onRelink?.(relinkReport) } catch { /* best-effort, never blocks the open */ } }

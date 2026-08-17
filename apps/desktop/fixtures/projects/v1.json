@@ -1,0 +1,441 @@
+{
+  "schema_version": 1,
+  "project_id": "00000000-0000-0000-0000-000000000003",
+  "metadata": {
+    "name": "Schema v1 fixture",
+    "created_at": "2026-01-01T00:00:00.000Z",
+    "modified_at": "2026-01-01T00:00:00.000Z",
+    "description": "Frozen v1 schema fixture — see fixtures/projects/README.md"
+  },
+  "composition": {
+    "width": 1920,
+    "height": 1080,
+    "fps": {
+      "num": 30,
+      "den": 1
+    },
+    "duration_us": 5000000,
+    "duration_pinned": false,
+    "sample_rate": 48000,
+    "channels": 2,
+    "color_space": "Bt709",
+    "background": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 255
+    }
+  },
+  "media_pool": {
+    "00000000-0000-0000-0000-0000000000aa": {
+      "id": "00000000-0000-0000-0000-0000000000aa",
+      "label": null,
+      "path_abs": "/ws/Schema v1 fixture.vproj/Media/clip.mp4",
+      "path_rel": "Media/clip.mp4",
+      "kind": "Video",
+      "metadata": {
+        "duration_us": 5000000,
+        "video": null,
+        "audio": {
+          "sample_rate": 0,
+          "channels": 0,
+          "codec": ""
+        },
+        "container_format": null
+      },
+      "file_hash_blake3": "b3fixture",
+      "file_size": 1024,
+      "file_mtime": 1700000000,
+      "imported_at": "2026-01-01T00:00:00Z",
+      "decode_route": {
+        "route": "proxied",
+        "quick_proxy": null,
+        "full_proxy": "Proxies/clip.master.mp4",
+        "format_version": 2
+      },
+      "conform_path": null,
+      "waveform_path": "Cache/clip.wave",
+      "thumbnails_dir": "Cache/clip.thumbs"
+    }
+  },
+  "tracks": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "label": null,
+      "enabled": true,
+      "locked": false,
+      "muted": false,
+      "solo": false,
+      "removable": false,
+      "role": "ARoll",
+      "transient": false,
+      "height_px": 64,
+      "layers": [
+        {
+          "id": "00000000-0000-0000-0000-000000000008",
+          "label": null,
+          "t_start_us": 0,
+          "t_end_us": 5000000,
+          "enabled": true,
+          "locked": false,
+          "metadata": {},
+          "params": {
+            "kind": "VideoClip",
+            "media": "00000000-0000-0000-0000-0000000000aa",
+            "src_in_us": 0,
+            "src_out_us": 5000000,
+            "transform": {
+              "x": {
+                "mode": "Static",
+                "value": 0
+              },
+              "y": {
+                "mode": "Static",
+                "value": 0
+              },
+              "scale_x": {
+                "mode": "Static",
+                "value": 1
+              },
+              "scale_y": {
+                "mode": "Static",
+                "value": 1
+              },
+              "rotation_deg": {
+                "mode": "Static",
+                "value": 0
+              },
+              "anchor_x": {
+                "mode": "Static",
+                "value": 0.5
+              },
+              "anchor_y": {
+                "mode": "Static",
+                "value": 0.5
+              },
+              "scale_linked": true
+            },
+            "opacity": {
+              "mode": "Static",
+              "value": 1
+            },
+            "crop": null,
+            "flip_h": false,
+            "flip_v": false,
+            "blend_mode": "Normal",
+            "speed": 1,
+            "fade_in_us": 0,
+            "fade_out_us": 0
+          },
+          "effects": []
+        },
+        {
+          "id": "00000000-0000-0000-0000-00000000000a",
+          "label": null,
+          "t_start_us": 0,
+          "t_end_us": 5000000,
+          "enabled": true,
+          "locked": false,
+          "metadata": {},
+          "params": {
+            "kind": "Audio",
+            "media": "00000000-0000-0000-0000-0000000000aa",
+            "src_in_us": 0,
+            "src_out_us": 5000000,
+            "gain_db": {
+              "mode": "Static",
+              "value": 0
+            },
+            "pan": {
+              "mode": "Static",
+              "value": 0
+            },
+            "fade_in_us": 0,
+            "fade_out_us": 0,
+            "mute": false,
+            "role": "dialogue"
+          },
+          "effects": []
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "label": null,
+      "enabled": true,
+      "locked": false,
+      "muted": false,
+      "solo": false,
+      "removable": false,
+      "role": "BRoll",
+      "transient": false,
+      "height_px": 64,
+      "layers": [
+        {
+          "id": "00000000-0000-0000-0000-00000000000e",
+          "label": null,
+          "t_start_us": 0,
+          "t_end_us": 2500000,
+          "enabled": true,
+          "locked": false,
+          "metadata": {},
+          "params": {
+            "kind": "Color",
+            "color": {
+              "mode": "Static",
+              "value": {
+                "r": 0,
+                "g": 0,
+                "b": 0,
+                "a": 255
+              }
+            },
+            "width": 1920,
+            "height": 1080
+          },
+          "effects": []
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000010",
+          "label": null,
+          "t_start_us": 2000000,
+          "t_end_us": 4000000,
+          "enabled": true,
+          "locked": false,
+          "metadata": {},
+          "params": {
+            "kind": "Color",
+            "color": {
+              "mode": "Static",
+              "value": {
+                "r": 0,
+                "g": 0,
+                "b": 0,
+                "a": 255
+              }
+            },
+            "width": 1920,
+            "height": 1080
+          },
+          "effects": []
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000014",
+      "label": null,
+      "enabled": true,
+      "locked": false,
+      "muted": false,
+      "solo": false,
+      "removable": true,
+      "role": null,
+      "transient": true,
+      "height_px": 64,
+      "layers": [
+        {
+          "id": "00000000-0000-0000-0000-000000000016",
+          "label": null,
+          "t_start_us": 1000000,
+          "t_end_us": 4000000,
+          "enabled": true,
+          "locked": false,
+          "metadata": {},
+          "params": {
+            "kind": "Text",
+            "content": "Text",
+            "font": {
+              "family": "Arial",
+              "size_px": 72,
+              "weight": 400,
+              "italic": false
+            },
+            "color": {
+              "mode": "Static",
+              "value": {
+                "r": 255,
+                "g": 255,
+                "b": 255,
+                "a": 255
+              }
+            },
+            "align": "Center",
+            "transform": {
+              "x": {
+                "mode": "Keyframed",
+                "value": [
+                  {
+                    "id": "00000000-0000-0000-0000-00000000001c",
+                    "t_us": 1000000,
+                    "value": 0,
+                    "interp": {
+                      "kind": "Bezier",
+                      "p1": [
+                        0.42,
+                        0
+                      ],
+                      "p2": [
+                        1,
+                        1
+                      ]
+                    }
+                  },
+                  {
+                    "id": "00000000-0000-0000-0000-00000000001d",
+                    "t_us": 3000000,
+                    "value": 400,
+                    "interp": {
+                      "kind": "Elastic",
+                      "dir": "Out",
+                      "amplitude": 1,
+                      "period": 0.3
+                    }
+                  },
+                  {
+                    "id": "00000000-0000-0000-0000-00000000001e",
+                    "t_us": 4000000,
+                    "value": 100,
+                    "interp": {
+                      "kind": "Hold"
+                    }
+                  }
+                ]
+              },
+              "y": {
+                "mode": "Static",
+                "value": 0
+              },
+              "scale_x": {
+                "mode": "Static",
+                "value": 1
+              },
+              "scale_y": {
+                "mode": "Static",
+                "value": 1
+              },
+              "rotation_deg": {
+                "mode": "Static",
+                "value": 0
+              },
+              "anchor_x": {
+                "mode": "Static",
+                "value": 0.5
+              },
+              "anchor_y": {
+                "mode": "Static",
+                "value": 0.5
+              },
+              "scale_linked": true
+            },
+            "opacity": {
+              "mode": "Static",
+              "value": 1
+            },
+            "shadow": null,
+            "outline": null,
+            "intro": null,
+            "outro": null,
+            "backend_hint": "DrawText"
+          },
+          "effects": [
+            {
+              "id": "00000000-0000-0000-0000-000000000020",
+              "kind": "blur",
+              "enabled": true,
+              "params": {
+                "strength": {
+                  "mode": "Keyframed",
+                  "value": [
+                    {
+                      "id": "00000000-0000-0000-0000-000000000022",
+                      "t_us": 1000000,
+                      "value": 0,
+                      "interp": {
+                        "kind": "Linear"
+                      }
+                    },
+                    {
+                      "id": "00000000-0000-0000-0000-000000000023",
+                      "t_us": 4000000,
+                      "value": 20,
+                      "interp": {
+                        "kind": "Bounce",
+                        "dir": "Out"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "markers": [
+    {
+      "id": "00000000-0000-0000-0000-000000000018",
+      "t_us": 1000000,
+      "end_t_us": null,
+      "label": "point",
+      "color": {
+        "r": 0,
+        "g": 128,
+        "b": 255,
+        "a": 255
+      },
+      "metadata": {}
+    },
+    {
+      "id": "00000000-0000-0000-0000-00000000001a",
+      "t_us": 2000000,
+      "end_t_us": 3000000,
+      "label": "region",
+      "color": {
+        "r": 0,
+        "g": 128,
+        "b": 255,
+        "a": 255
+      },
+      "metadata": {}
+    }
+  ],
+  "transitions": [
+    {
+      "id": "00000000-0000-0000-0000-000000000012",
+      "from_layer": "00000000-0000-0000-0000-00000000000e",
+      "to_layer": "00000000-0000-0000-0000-000000000010",
+      "duration_us": 500000,
+      "kind": {
+        "kind": "Crossfade"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "00000000-0000-0000-0000-00000000000c",
+      "members": [
+        "00000000-0000-0000-0000-000000000008",
+        "00000000-0000-0000-0000-00000000000a"
+      ]
+    }
+  ],
+  "audio_roles": {
+    "dialogue": {
+      "gain_db": -3,
+      "muted": false,
+      "solo": false
+    }
+  },
+  "settings": {
+    "preview_width": 1280,
+    "preview_height": 720,
+    "autosave_interval_secs": 60,
+    "history_capacity": 200,
+    "auto_pair_audio_on_import": true,
+    "prefer_proxies": true,
+    "proxy_overrides": {
+      "00000000-0000-0000-0000-0000000000aa": false
+    }
+  }
+}

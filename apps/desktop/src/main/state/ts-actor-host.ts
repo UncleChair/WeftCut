@@ -5,7 +5,7 @@ import { blankProject } from './model'
 import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
-import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs } from './workspace-orchestrator'
+import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
 import { serializeProjectToJson } from './persistence'
 import { describeGridRepairs, type GridRepair } from './serialize'
@@ -216,10 +216,27 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       })
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (grid repair)', err) }
   }
+  // Load-time schema upgrade: the migration chain moved an older project.json
+  // forward (migrate.ts). `warn` for the same reason as the grid repair — what the
+  // next save writes is no longer what was opened — and the row names the
+  // preserved original, or says plainly that there isn't one.
+  const onSchemaUpgrade = (report: SchemaUpgradeReport): void => {
+    try {
+      deps.emitLog?.({
+        level: 'warn',
+        category: { kind: 'Project' },
+        source: { kind: 'System' },
+        message: report.backupFile
+          ? `Project upgraded from schema v${report.from} to v${report.to}; the original is kept as ${report.backupFile}`
+          : `Project upgraded from schema v${report.from} to v${report.to}; the original could NOT be preserved`,
+        details: { kind: 'SchemaUpgrade', from: report.from, to: report.to, backup: report.backupFile },
+      })
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (schema upgrade)', err) }
+  }
   const relink = deps.relinkFs
     ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
     : undefined
-  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair }
+  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and

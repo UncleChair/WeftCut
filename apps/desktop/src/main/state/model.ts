@@ -3,7 +3,15 @@ import type { IdGen } from './ids'
 import type { DecodeRoute } from '../../shared/decode-route'
 import type { Interpolation } from '../../shared/easing'
 
-export const SCHEMA_VERSION = 10
+/** The on-disk `project.json` schema version this build reads and writes.
+ *
+ *  Bump it and ship the matching `v_n → v_n+1` step in `migrate.ts` IN THE SAME
+ *  CHANGE, with a committed fixture at the old version — `migrate.completeness.test.ts`
+ *  fails otherwise. See `docs/data-model.md` §Versioning and ADR 0047.
+ *
+ *  This is the only home for the number: Rust deserializes projects but has no
+ *  opinion about the version (`native/src/state/project.rs`). */
+export const SCHEMA_VERSION = 1
 
 export type Uuid = string
 export type TimeUs = number
@@ -25,14 +33,15 @@ export interface Transform {
   rotation_deg: Animated<number>
   /** Normalized transform PIVOT (0.5 = centre on that axis) — what rotation
    *  turns around and what a flip mirrors about; animatable like the rest of the
-   *  transform. Replaced a plain `anchor: [x, y]` tuple WITHOUT a schema bump,
-   *  so the tuple→tracks conversion lives in parseProject's backfill
-   *  (serialize.ts) — the one place that sees legacy shapes. */
+   *  transform. Replaced a plain `anchor: [x, y]` tuple pre-release; the
+   *  conversion is gone with the formats it read (ADR 0047), so v1 knows only
+   *  these two tracks. */
   anchor_x: Animated<number>
   anchor_y: Animated<number>
   /** Uniform-scale intent: true ⇒ scale_x/scale_y are structural twins and edit
-   *  as one. Invariant enforced on results (mutations/scaleLink.ts); absent on
-   *  older saves — parseProject backfills it from a twin check, never blindly. */
+   *  as one. Invariant enforced on results (mutations/scaleLink.ts); a flag that
+   *  contradicts its own tracks (only a hand-edited file can hold one) is
+   *  repaired by parseProject's normalize pass. */
   scale_linked: boolean
 }
 export interface Rect { x: number; y: number; w: number; h: number }

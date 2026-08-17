@@ -691,13 +691,14 @@ flip mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
 default). It is `Animated` like the rest of the transform, so the pivot can be
 keyframed — a rotation whose centre travels needs nothing else. The pair is
 **unbounded**: a pivot outside the layer's own box is a legitimate authoring
-choice. It is additive on the wire: a save predating the split carries a single
-`anchor: [x, y]`, which the load pass converts into two Static tracks
-(`state/serialize.ts`). That backfill must READ the legacy tuple rather than
-default the two fields — ASS `\an` import writes an off-centre anchor on every
-caption layer, so defaulting them to the centre would re-position every imported
-subtitle. What `x`/`y` mean depends on the kind, and the difference is
-deliberate:
+choice. It replaced a single `anchor: [x, y]` tuple pre-release; the load-time
+conversion that read that tuple is gone with the formats that carried it (ADR
+0047), so v1 knows only the two tracks. The lesson it left behind is worth
+keeping, because it is why a conversion belongs in a migration step rather than a
+default: the tuple held authored data — ASS `\an` import writes an off-centre
+anchor on every caption layer — so defaulting the new fields to the centre would
+have re-positioned every imported subtitle. What `x`/`y` mean depends on the
+kind, and the difference is deliberate:
 
 | Kind | `x`/`y` is | why |
 |---|---|---|
@@ -1075,36 +1076,69 @@ original, verify, roll back, prompt-to-delete-after-success.**
    never removes `userData` itself; "Keep" is a one-time dismiss that clears the
    marker.
 
-"No migration" elsewhere in this repo refers to **legacy on-disk formats** (the
-project has no shipped users, so there is no upgrade-from-old-layout path); the
-data-root *change* flow above is fully migrated and reversible.
+This data-root *change* flow is a separate thing from project-schema migration
+(§Versioning) — different unit, different trigger. Where the repo says "no
+migration" it means **pre-v1 on-disk formats**: `.vproj` folders written by
+pre-release builds are refused, not carried forward.
 
 ## Versioning
 
-`project.json` embeds a `schema_version: u32` field. `SCHEMA_VERSION`
-is bumped whenever the on-disk shape changes incompatibly.
+`project.json` embeds a `schema_version: u32`. `SCHEMA_VERSION`
+(`state/model.ts`) is the single home for the number and is bumped
+whenever the on-disk shape changes incompatibly. Rust deserializes whole
+projects but holds no constant and never gates on the value — the field's
+doc comment in `native/src/state/project.rs` records that.
 
-The load path is a cut-over gate, not a migration chain: a project at
-the build's `SCHEMA_VERSION` loads; anything below it is rejected with
-guidance to re-create the project in a fresh workspace; anything above
-it is rejected with "update the app". The gate is enforced in two
-TypeScript readers — `state/persistence.ts` (the load guard) and
-`state/serialize.ts` (`parseProject`) — and `SCHEMA_VERSION` itself
-lives in `state/model.ts`. There is no carry-forward of older folders:
-maintaining migration code for unshipped formats is pure overhead.
+The load path is a **version-keyed upgrade chain** (ADR 0047):
 
-**This is a pre-release stance with a one-way expiry.** Once the format
-ships, the first bump makes every existing project unopenable, and a
-chain added afterwards cannot rescue files already written. Replacing
-this gate with a version-keyed upgrade chain is therefore a release
-blocker rather than a nice-to-have.
+1. `state/persistence.ts` refuses what the build cannot read — a
+   missing/non-numeric version, or one *ahead* of the build (that file may
+   carry fields this binary would drop on the next save).
+2. `state/migrate.ts` walks an older file forward through one `v_n → v_n+1`
+   step per generation. The runner writes `schema_version` after each step
+   and works on a clone, so a step that throws leaves the caller holding
+   the original bytes.
+3. `state/serialize.ts` (`parseProject`) then casts and normalizes. Its own
+   version-equality check is a post-condition on the walk, not the
+   user-facing error.
 
-Within a schema version, additive fields use `#[serde(default)]` so
-existing `project.json` files keep loading without a version bump;
-the default fills in and the field materializes on next save. Be
-permissive at deserialization (unknown fields are ignored) so a
-binary can load projects authored by a slightly newer binary without
-crashing — the unknown fields drop on next save.
+Upgrading happens **in memory**. `project.json` is rewritten by the normal
+autosave on the first edit, and when the chain runs the open first copies
+the original bytes to `project.pre-v{n}.json` beside it (never into
+`Backups/`, whose snapshots are post-write and gc'd), reporting the upgrade
+as a status-log row.
+
+### Where a change belongs
+
+| Kind of change | Where it goes |
+|---|---|
+| A new **optional** field | Additive: `#[serde(default)]` on the Rust side, and a default in `parseProject`'s normalize pass so no consumer ever sees `undefined`. No version bump. |
+| A **validity repair** (off-grid geometry, a flag contradicting its own data) | The same version-blind normalize pass. Idempotent, carries no version. |
+| A **shape conversion** — field renamed, merged, split, retyped; an enum variant retired | A step in the chain, with a version number. **Never** an unconditional rewrite in `parseProject`. |
+
+That third row is a rule, not a preference: three conversions once rode the
+blind pass because the cut-over gate left no alternative, and the on-disk
+shape drifted across three generations while the version sat still. ADR 0047
+has the history.
+
+A step imports **nothing** — not `SCHEMA_VERSION` (the target version is a
+parameter), not a model type, not `defaultSettings()`. It takes the wire
+object, declares local types for the fields it touches, and writes frozen
+literals; otherwise it silently re-anchors to a model that has moved on, and
+the failure only ever appears on a real user's old file.
+
+Be permissive at deserialization (unknown fields are ignored) so a binary can
+load projects authored by a slightly newer binary within the same version —
+the unknown fields drop on next save.
+
+### Bumping `SCHEMA_VERSION`
+
+A bump ships **in the same change** as its migration step and a frozen fixture
+of the version it leaves behind (`fixtures/projects/v{n}.json`, never
+regenerated — see that directory's README). `migrate.completeness.test.ts`
+fails otherwise: it pins `MIN_SCHEMA_VERSION + STEPS.length ===
+SCHEMA_VERSION`, that the steps sit at exactly the versions in between, and
+that every fixture still upgrades and passes `parseProject` + `validate`.
 
 ## Pitfalls
 
@@ -1113,6 +1147,7 @@ crashing — the unknown fields drop on next save.
 3. **`media_pool` cleanup.** Don't auto-remove a `MediaItem` when its last reference goes away — the user might be mid-edit. Mark unreferenced; sweep on save with consent.
 4. **`enabled: false` ≠ deleted.** Disabled layers still serialize, still occupy their time range for layout. Agents will toggle these for A/B variations.
 5. **Keyframes are relative.** Document this prominently — it's the kind of bug that bites once and forever.
+6. **A `SCHEMA_VERSION` bump without its migration step** is the one mistake here that cannot be repaired after the fact — a chain added later cannot rescue files already written. The step and the frozen fixture ship in the same change; `migrate.completeness.test.ts` is what makes that mechanical (§Versioning).
 6. **Schema migrations under MCP.** Including `schema_version` in every resource response is the simplest defense; agents holding `project://` reads then adapt.
 7. **Motif raster invalidation.** Patch `MotifParams.props`
    field-wise rather than replacing whole `params` — otherwise the

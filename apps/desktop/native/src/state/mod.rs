@@ -49,7 +49,6 @@ pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{
     Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch, TrackFlagsPatch,
-    SCHEMA_VERSION,
 };
 pub use time::{snap_frame_ceil, snap_frame_floor, Rational, TimeUs, US_PER_MS, US_PER_SEC};
 pub use track::{Track, TrackRole};
@@ -148,7 +147,7 @@ mod tests {
         };
 
         Project {
-            schema_version: SCHEMA_VERSION,
+            schema_version: 1,
             project_id: uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000000").unwrap(),
             metadata: ProjectMetadata {
                 name: "Round-trip fixture".into(),

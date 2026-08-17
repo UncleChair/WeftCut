@@ -144,7 +144,10 @@ const transitions = SCENARIO === 'transitions' ? transitionsList() : [];
 log(`scenario: ${SCENARIO} (${layers.length} layers, ${transitions.length} transitions)`);
 
 fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
-  schema_version: 10,
+  // The app must OPEN this file, so it declares the CURRENT schema version
+  // (src/main/state/model.ts). A .mjs script cannot import the TS constant; when
+  // SCHEMA_VERSION bumps, this literal moves with it or the ratchet stops opening.
+  schema_version: 1,
   project_id: '019f0000-0000-7000-8000-00000000c0de',
   metadata: { name: `memory-ratchet-${SCENARIO}`, created_at: '2026-01-01T00:00:00.000Z', modified_at: '2026-01-01T00:00:00.000Z', description: null },
   composition: {

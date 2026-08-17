@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest'
 import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS, parseMechanical } from '../commands'
 import type { Project } from '../model'
 import { createActor } from '../actor'
-import { blankProject } from '../model'
+import { blankProject, SCHEMA_VERSION } from '../model'
 import { seededGen } from '../ids'
 
 // ── PRODUCTION_OPS coverage assertion ────────────────────────────────────────
@@ -176,7 +176,7 @@ describe('demoColor', () => {
 // ── prodMediaLayer ────────────────────────────────────────────────────────
 function makeProject(overrides?: Partial<Project>): Project {
   const base: Project = {
-    schema_version: 10, project_id: 'proj',
+    schema_version: SCHEMA_VERSION, project_id: 'proj',
     metadata: { name: 'test', created_at: '', modified_at: '', description: null },
     composition: { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
       duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',

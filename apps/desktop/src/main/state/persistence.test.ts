@@ -16,7 +16,8 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
   })
   it('round-trips through parseProjectJson canonically', () => {
     const p = blankProject(seededGen(), 'doc')
-    const back = parseProjectJson(serializeProjectToJson(p))
+    const { project: back, upgradedFrom } = parseProjectJson(serializeProjectToJson(p))
+    expect(upgradedFrom).toBeNull()          // a file this build wrote needs no upgrade
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
   it('round-trips all three transition kinds (wire twin: native/src/state/transition.rs)', () => {
@@ -26,37 +27,52 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
       { id: 't2', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Wipe', direction: 'left' } },
       { id: 't3', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Slide', direction: 'up' } },
     )
-    const back = parseProjectJson(serializeProjectToJson(p))
+    const { project: back } = parseProjectJson(serializeProjectToJson(p))
     expect(back.transitions).toEqual(p.transitions)
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
 })
 
-describe('schemaGate (mirror io/migrate.rs:20 run)', () => {
-  it('accepts the current schema version', () => {
-    expect(() => schemaGate({ schema_version: SCHEMA_VERSION })).not.toThrow()
+describe('schemaGate', () => {
+  it('admits the current schema version, reporting it', () => {
+    expect(schemaGate({ schema_version: SCHEMA_VERSION })).toBe(SCHEMA_VERSION)
   })
-  it('rejects an older version with fresh-workspace guidance', () => {
-    expect(() => schemaGate({ schema_version: SCHEMA_VERSION - 1 }))
-      .toThrow(/below the supported minimum.*fresh workspace/s)
+  it('admits an OLDER version — that is the migration chain\'s input, not an error', () => {
+    expect(schemaGate({ schema_version: SCHEMA_VERSION - 1 })).toBe(SCHEMA_VERSION - 1)
   })
-  it('rejects a newer version with update-the-app guidance', () => {
+  it('refuses a newer version without guessing that an app update fixes it', () => {
+    // The file this fires on most often is a .vproj left by a different build of
+    // this repo, where "update the app" is simply wrong. State the mismatch.
     expect(() => schemaGate({ schema_version: SCHEMA_VERSION + 5 }))
-      .toThrow(/newer than this build.*Update the app/s)
+      .toThrow(new RegExp(`written by a different build \\(schema v${SCHEMA_VERSION + 5}\\); this build reads v${SCHEMA_VERSION}`))
   })
-  it('rejects a non-numeric / absent version', () => {
-    expect(() => schemaGate({})).toThrow(/schema/i)
+  it('refuses an absent, non-numeric or fractional version', () => {
+    expect(() => schemaGate({})).toThrow(/missing or non-numeric/)
+    expect(() => schemaGate({ schema_version: '1' })).toThrow(/missing or non-numeric/)
+    expect(() => schemaGate({ schema_version: 1.5 })).toThrow(/missing or non-numeric/)
+    expect(() => schemaGate(null)).toThrow(/missing or non-numeric/)
+    expect(() => schemaGate(42)).toThrow(/missing or non-numeric/)
   })
 })
 
 describe('parseProjectJson', () => {
+  const wireAt = (v: number): string => {
+    const p = blankProject(seededGen(), 'doc')
+    return JSON.stringify({ ...(serializeProject(p) as object), schema_version: v })
+  }
+
   it('throws on malformed JSON', () => {
     expect(() => parseProjectJson('{not json')).toThrow()
   })
-  it('throws on a wrong schema version (gate before cast)', () => {
-    const p = blankProject(seededGen(), 'doc')
-    const bad = JSON.stringify({ ...(serializeProject(p) as object), schema_version: 8 })
-    expect(() => parseProjectJson(bad)).toThrow(/below the supported minimum/)
+  it('reports no upgrade for a current-version file', () => {
+    expect(parseProjectJson(wireAt(SCHEMA_VERSION)).upgradedFrom).toBeNull()
+  })
+  it('refuses a newer file at the gate, before the structural cast', () => {
+    expect(() => parseProjectJson(wireAt(SCHEMA_VERSION + 1))).toThrow(/written by a different build/)
+  })
+  it('refuses a version below the chain floor rather than guessing at its shape', () => {
+    // v0 never shipped. The chain has no step for it and must not invent one.
+    expect(() => parseProjectJson(wireAt(0))).toThrow(/predates the oldest upgradable version/)
   })
 })
 
@@ -73,7 +89,7 @@ function mediaItem(over: Partial<MediaItem>): MediaItem {
 }
 function withMedia(items: MediaItem[]): Project {
   return {
-    schema_version: 10, project_id: 'p', metadata: { name: 'm', created_at: '<TS>', modified_at: '<TS>', description: null },
+    schema_version: SCHEMA_VERSION, project_id: 'p', metadata: { name: 'm', created_at: '<TS>', modified_at: '<TS>', description: null },
     composition: { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0, duration_pinned: false,
       sample_rate: 48000, channels: 2, color_space: 'Bt709', background: { r: 0, g: 0, b: 0, a: 255 } },
     media_pool: Object.fromEntries(items.map((i) => [i.id, i])), tracks: [], markers: [],

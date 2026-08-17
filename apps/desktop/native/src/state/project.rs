@@ -14,15 +14,14 @@ use super::media::MediaItem;
 use super::track::{Track, TrackRole};
 use super::transition::Transition;
 
-/// `.vproj` schema version. Bump on any breaking change to the on-disk
-/// `Project` shape. Pre-release: the TS loader (`persistence.ts`) rejects
-/// anything below `SCHEMA_VERSION` with a clear error rather than migrating —
-/// older `.vproj` folders must be re-created. Rust only ever deserializes
-/// already-gated JSON. Per-version history lives in git / the ADRs.
-pub const SCHEMA_VERSION: u32 = 10;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
+    /// `.vproj` schema version. **TS owns this number** — `state/model.ts`'s
+    /// `SCHEMA_VERSION`, with the upgrade chain in `state/migrate.ts` and the
+    /// gate in `state/persistence.ts`. Rust round-trips it opaquely: it never
+    /// reads the value, never gates on it, and never writes a project to disk,
+    /// so a constant here would be a version claim with no reader (ADR 0047).
+    /// The fixtures in this crate's tests therefore write any valid version.
     pub schema_version: u32,
     pub project_id: Uuid,
     pub metadata: ProjectMetadata,
@@ -78,7 +77,8 @@ impl Project {
 
         let tracks = imbl::vector![a_roll, b_roll];
         Self {
-            schema_version: SCHEMA_VERSION,
+            // TS owns the real number (see the field doc); this is a fixture.
+            schema_version: 1,
             project_id: new_id(),
             metadata: ProjectMetadata {
                 name: name.into(),

@@ -272,7 +272,7 @@ mod tests {
     use crate::state::decode_route::DecodeRoute;
     use crate::state::layer::{AudioParams, Layer, LayerParams};
     use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
-    use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
+    use crate::state::project::{Project, ProjectMetadata, ProjectSettings};
     use crate::state::track::Track;
     use tempfile::TempDir;
 
@@ -477,7 +477,7 @@ mod tests {
         };
 
         Project {
-            schema_version: SCHEMA_VERSION,
+            schema_version: 1,
             project_id: uuid::Uuid::new_v4(),
             metadata: ProjectMetadata {
                 name: "mute/solo test".into(),

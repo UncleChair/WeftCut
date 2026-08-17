@@ -219,89 +219,36 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
   return repairs
 }
 
-/** Wire-shaped and defensive like repairGrid (runs BEFORE the cast to Project):
- *  a transform missing its scale tracks is left for validate to reject; the
- *  twin predicate itself treats malformed entries as diverged. */
-function backfillScaleLinked(o: Record<string, unknown>): void {
+/** `Transform.scale_linked`: one DEFAULT and one REPAIR, both version-blind.
+ *
+ *  REPAIR — a `true` the tracks contradict is a lie the collapsed Scale UI would
+ *  act on (it hides `scale_y` behind a single field), so the flag goes, not the
+ *  divergence. This is the same `linked ⇒ twins` rule `enforceScaleLinkInvariant`
+ *  applies to every mutation result — which does NOT run on load, so a loaded
+ *  project needs it here. Only a hand-edited file can hold such a flag.
+ *
+ *  DEFAULT — an absent flag becomes `false`, so the UI never reads `undefined`.
+ *  Deliberately NOT inferred from a twin check: "the two tracks happen to be
+ *  equal" is not evidence that the user asked them to move as one, and linking is
+ *  the destructive direction (it collapses one axis onto the other on the next
+ *  edit). Inferring intent from data is a CONVERSION's job and would belong to a
+ *  migration step, not to this pass (ADR 0047); v1 always writes the field, so
+ *  absence means hand-edited, and the conservative answer is the honest one.
+ *
+ *  Wire-shaped and defensive like repairGrid (runs BEFORE the cast to Project):
+ *  a transform missing its scale tracks is left for validate to reject; the twin
+ *  predicate itself treats malformed entries as diverged. Idempotent. */
+function normalizeScaleLinked(o: Record<string, unknown>): void {
   forEachWireTransform(o, (tr) => {
-    if (tr.scale_linked !== undefined && tr.scale_linked !== true) return
-    const twins = scaleTracksTwins(tr.scale_x as Animated<number>, tr.scale_y as Animated<number>)
-    if (tr.scale_linked === undefined || !twins) tr.scale_linked = twins
+    if (tr.scale_linked === undefined) { tr.scale_linked = false; return }
+    if (tr.scale_linked !== true) return
+    if (!scaleTracksTwins(tr.scale_x as Animated<number>, tr.scale_y as Animated<number>)) tr.scale_linked = false
   })
 }
 
-/** `anchor: [x, y]` (a plain pair) → `anchor_x`/`anchor_y` as Static tracks, so
- *  the pivot animates like every other transform field. Additive-with-conversion
- *  rather than a schema bump, because `schemaGate` rejects any version but the
- *  current one — bumping would refuse to OPEN every project that already exists.
- *
- *  LANDMINE: the legacy tuple carries real data, not just the default. ASS `\an`
- *  import writes an off-centre anchor on every caption layer
- *  (`mutations/captions.ts`), so dropping the tuple and letting the 0.5 default
- *  apply would re-position every imported subtitle. That is why this reads the
- *  tuple instead of relying on Rust's `#[serde(default)]`, which cannot see it.
- *
- *  Idempotent, and already-converted projects are untouched: a transform that
- *  has `anchor_x` keeps it (a re-saved project has no `anchor` left to read). */
-function backfillAnchorTracks(o: Record<string, unknown>): void {
-  forEachWireTransform(o, (tr) => {
-    const legacy = tr.anchor
-    const pair = Array.isArray(legacy) ? legacy : []
-    // Per axis: an existing track wins, then the legacy tuple slot, then centre.
-    // Split per axis (not all-or-nothing) so a half-written hand-edited file
-    // still lands on a renderable transform rather than one bad axis poisoning
-    // the other.
-    if (tr.anchor_x === undefined) tr.anchor_x = staticAnchor(pair[0])
-    if (tr.anchor_y === undefined) tr.anchor_y = staticAnchor(pair[1])
-    delete tr.anchor
-  })
-}
-
-const DEFAULT_ANCHOR = 0.5
-
-function staticAnchor(v: unknown): Animated<number> {
-  return { mode: 'Static', value: typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_ANCHOR }
-}
-
-/** Rewrite the RETIRED named-ease interp kinds to their baked cubic-bezier
- *  params in every keyframe track: `EaseIn` → Bezier (0.42,0),(1,1) and
- *  `EaseOut` → Bezier (0,0),(0.58,1) — the exact params the engine always used
- *  for them, so eval results are numerically identical before and after
- *  (.scratch/keyframe-easing/spec.md §Migration). Additive-with-conversion
- *  rather than a schema bump, for the same reason as the anchor conversion
- *  above: `schemaGate` has no forward-migration path, so a bump would refuse
- *  to OPEN the very projects this rewrite exists for. The params are frozen
- *  literals on purpose — a migration must stay byte-stable even if the preset
- *  table ever (wrongly) retunes its `ease_in`/`ease_out` entries.
- *
- *  SHAPE-DRIVEN walk, not a field enumeration: anything matching the
- *  `{mode:"Keyframed", value:[...]}` wire shape is rewritten, wherever it
- *  lives (transform fields, opacity, color, gain/pan, effect params), so an
- *  animatable added later cannot dodge the ONE rewrite site. Idempotent —
- *  a rewritten project holds no named kinds. Defensive like the other
- *  backfills (runs before the cast; malformed entries are left for validate). */
-function convergeNamedEases(node: unknown): void {
-  if (Array.isArray(node)) {
-    for (const v of node) convergeNamedEases(v)
-    return
-  }
-  if (node === null || typeof node !== 'object') return
-  const o = node as Record<string, unknown>
-  if (o.mode === 'Keyframed' && Array.isArray(o.value)) {
-    for (const k of o.value as Array<Record<string, unknown> | null>) {
-      if (k === null || typeof k !== 'object') continue
-      const kind = (k.interp as { kind?: unknown } | null | undefined)?.kind
-      if (kind === 'EaseIn') k.interp = { kind: 'Bezier', p1: [0.42, 0], p2: [1, 1] }
-      else if (kind === 'EaseOut') k.interp = { kind: 'Bezier', p1: [0, 0], p2: [0.58, 1] }
-    }
-    return // keyframe values are leaves — no tracks nest inside a track
-  }
-  for (const v of Object.values(o)) convergeNamedEases(v)
-}
-
-/** Every transform object on the WIRE shape, for the backfills above. Shares one
- *  defensive walk so a new transform-field backfill can't disagree with the
- *  existing ones about what counts as a layer. */
+/** Every transform object on the WIRE shape, for the repair above. One
+ *  defensive walk, so a second transform-field pass can't disagree with this one
+ *  about what counts as a layer. */
 function forEachWireTransform(o: Record<string, unknown>, fn: (transform: Record<string, unknown>) => void): void {
   for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
     for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
@@ -313,9 +260,17 @@ function forEachWireTransform(o: Record<string, unknown>, fn: (transform: Record
   }
 }
 
-/** Validate + type a wire object as a Project. The load guard is the schema
- *  version (`schemaGate` in persistence.ts rejects anything but `SCHEMA_VERSION`);
- *  beyond that, a shallow structural check rejects a truncated/corrupt
+/** Validate + type a wire object as a Project, and normalize it.
+ *
+ *  Takes the CURRENT schema version as given: `parseProjectJson` (persistence.ts)
+ *  refuses what it cannot read and runs the migration chain (migrate.ts) first,
+ *  so the equality check below is a post-condition on that walk — it fires only
+ *  if the chain returned something at the wrong version, or if a caller reached
+ *  past the door. Which is why the version-blind pass here holds no CONVERSIONS:
+ *  by the time it runs there is exactly one shape left to normalize (ADR 0047).
+ *
+ *  What it does normalize: DEFAULTS for additive fields, and VALIDITY REPAIRS.
+ *  Beyond that a shallow structural check rejects a truncated/corrupt
  *  project.json (right version, missing/wrong required fields) with a clear error
  *  rather than letting `undefined` reach the actor. Shallow by design —
  *  field-level fidelity is proven by the round-trip gates, and an undeclared NEW
@@ -353,24 +308,11 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // get_project_settings → the renderer proxy store) hands `undefined` downstream
   // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.
   o.settings = { ...defaultSettings(), ...(o.settings as Record<string, unknown>) }
-  // `Transform.scale_linked` is additive the same way (absent on older saves).
-  // Backfilled from a TWIN CHECK, never blindly: linked means "the two scale
-  // tracks edit as one", and a blind `true` would assert that on a layer whose
-  // tracks a user deliberately diverged. Present-but-lying flags (true over
-  // diverged tracks — only a hand-edited file can hold one, mutations enforce
-  // the invariant) are repaired the same way, so the collapsed Scale UI can
-  // never hide a divergent scale_y. Idempotent: a twin check on already-linked
-  // twins is the identity.
-  backfillScaleLinked(o)
-  // The anchor pair became two Animated tracks the same additive way; unlike
-  // scale_linked it CONVERTS a legacy value rather than deriving one, because the
-  // old tuple holds authored data (see the function's landmine note).
-  backfillAnchorTracks(o)
-  // The retired EaseIn/EaseOut interp kinds converge to their baked Bezier
-  // params here, in the SAME single normalize pass — every consumer downstream
-  // (validator, eval, UI) only ever sees the five-variant schema.
-  convergeNamedEases(o)
-  // Grid repair belongs in THIS pass, beside the additive-field backfill above:
+  // `scale_linked`: absent → false (a default), and a claimed link the tracks
+  // contradict → false (a repair). Never inferred from the tracks — see the
+  // function.
+  normalizeScaleLinked(o)
+  // Grid repair belongs in THIS pass, beside the additive-field default above:
   // one normalize site, so the validator that `replaceState` shares with
   // `project_open` only ever sees already-canonical input. A second repair site is
   // how blank-screen-on-open bugs happen here.

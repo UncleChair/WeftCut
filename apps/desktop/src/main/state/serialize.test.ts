@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
-import { blankProject, type Project } from './model'
+import { blankProject, SCHEMA_VERSION, type Project } from './model'
 import { canonicalString } from './canonical'
 import { parseProject, serializeProject, type GridRepair } from './serialize'
 import { serializeProjectToJson } from './persistence'
 import { validate } from './validate'
 import { createActor } from './actor'
-import { applyAddLayer, colorParams, textParamsDefault } from './mutations/add'
+import { applyAddLayer, colorParams } from './mutations/add'
 import { isCommandFailure } from './errors'
 
 describe('serialize round-trip', () => {
@@ -22,8 +22,13 @@ describe('serialize round-trip', () => {
     expect(wire.groups[0].members).toEqual(['00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b'])
     expect('label' in wire.groups[0]).toBe(false)
   })
-  it('rejects a wrong schema version', () => {
-    expect(() => parseProject({ schema_version: 8 })).toThrow(/schema/i)
+  it('rejects any version but the current one, in both directions', () => {
+    // parseProject sees only current-shaped input by construction: the gate and
+    // the migration chain (persistence.ts → migrate.ts) run ahead of it. So this
+    // check is a post-condition on that walk, not the user-facing version error —
+    // which is why it stays blunt in both directions.
+    expect(() => parseProject({ schema_version: SCHEMA_VERSION - 1 })).toThrow(/schema_version/)
+    expect(() => parseProject({ schema_version: SCHEMA_VERSION + 1 })).toThrow(/schema_version/)
   })
 })
 
@@ -208,80 +213,5 @@ describe('parseProject grid repair', () => {
     parseProject(wire, { onGridRepair: (r) => reported.push([...r]) })
     expect(reported).toEqual([])
     expect(wire.composition.duration_us).toBe(2_999_999)
-  })
-})
-
-// ── The anchor pair's tuple → tracks conversion ───────────────────────────────
-// Why it converts on load rather than behind a schema bump: see
-// `backfillAnchorTracks` in serialize.ts.
-describe('parseProject anchor backfill', () => {
-  /** The wire transform of the project's only layer — wire-shaped (all fields
-   *  `unknown`), because this suite writes legacy values validate would reject. */
-  const wireTransform = (w: Wire): Record<string, unknown> =>
-    (w.tracks[0].layers[0].params as { transform: Record<string, unknown> }).transform
-
-  /** A blank project holding one Text layer whose transform still carries the
-   *  legacy tuple and neither track — i.e. exactly what an older save looks like. */
-  function legacyAnchorWire(anchor: unknown): Wire {
-    const g = seededGen()
-    const p = blankProject(g, 'legacy')
-    applyAddLayer(p, g, p.tracks[0].id, textParamsDefault('hi'), 0, 1_000_000)
-    const wire = serializeProject(p) as Wire
-    const t = wireTransform(wire)
-    delete t.anchor_x
-    delete t.anchor_y
-    t.anchor = anchor
-    return wire
-  }
-
-  const transformOf = (p: Project) =>
-    (p.tracks[0]!.layers[0]!.params as unknown as { transform: Record<string, unknown> }).transform
-
-  it('converts a legacy off-centre tuple instead of defaulting it away', () => {
-    // The case that makes this a conversion and not a `#[serde(default)]`: ASS
-    // `\an` import writes an off-centre anchor on every caption, so a blind 0.5
-    // would silently re-position every imported subtitle.
-    const t = transformOf(parseProject(legacyAnchorWire([0.25, 1.0]), silent))
-    expect(t.anchor_x).toEqual({ mode: 'Static', value: 0.25 })
-    expect(t.anchor_y).toEqual({ mode: 'Static', value: 1.0 })
-    expect('anchor' in t).toBe(false)
-  })
-
-  it('centres a missing or malformed tuple, per axis', () => {
-    for (const legacy of [undefined, null, 'nope', [], [Number.NaN, Number.NaN]]) {
-      const t = transformOf(parseProject(legacyAnchorWire(legacy), silent))
-      expect([t.anchor_x, t.anchor_y]).toEqual([
-        { mode: 'Static', value: 0.5 },
-        { mode: 'Static', value: 0.5 },
-      ])
-    }
-    // Half-written (only x usable): the good axis survives, the bad one centres.
-    const half = transformOf(parseProject(legacyAnchorWire([0.75, 'x']), silent))
-    expect([half.anchor_x, half.anchor_y]).toEqual([
-      { mode: 'Static', value: 0.75 },
-      { mode: 'Static', value: 0.5 },
-    ])
-  })
-
-  it('leaves an already-converted project alone, keyframes included', () => {
-    const g = seededGen()
-    const p = blankProject(g, 'current')
-    applyAddLayer(p, g, p.tracks[0].id, textParamsDefault('hi'), 0, 1_000_000)
-    const wire = serializeProject(p) as Wire
-    const keyed = {
-      mode: 'Keyframed',
-      value: [{ id: 'k1', t_us: 0, value: 0.1, interp: { kind: 'Linear' } }],
-    }
-    wireTransform(wire).anchor_x = keyed
-    const t = transformOf(parseProject(wire, silent))
-    expect(t.anchor_x).toEqual(keyed)
-    expect(t.anchor_y).toEqual({ mode: 'Static', value: 0.5 })
-  })
-
-  it('round-trips: a converted project re-saves without the tuple and reloads unchanged', () => {
-    const once = parseProject(legacyAnchorWire([0.25, 1.0]), silent)
-    const wire = serializeProject(once)
-    expect(canonicalString(serializeProject(parseProject(wire, silent)))).toBe(canonicalString(wire))
-    expect(JSON.stringify(wire)).not.toContain('"anchor"')
   })
 })

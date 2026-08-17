@@ -124,7 +124,11 @@ describe('scale-link invariant (result-based, same commit)', () => {
   })
 })
 
-describe('parseProject scale_linked backfill', () => {
+// The load-pass normalize for this flag: one default, one repair, no inference.
+// It used to DERIVE an absent flag from a twin check; that inference went with the
+// pre-v1 formats it existed for (ADR 0047) — v1 always writes the field, so
+// absence now means hand-edited and gets the conservative answer.
+describe('parseProject scale_linked normalize', () => {
   function wireWithoutFlag(diverge: boolean) {
     const { actor, id } = textActor()
     if (diverge) actor.dispatch('update_layer_param_track', { layer: id, param_key: 'scale_y', track: kf([['00000000-0000-0000-0000-0000000000f1', 0, 2]]) })
@@ -134,13 +138,20 @@ describe('parseProject scale_linked backfill', () => {
     delete wire.tracks[1].layers[0].params.transform.scale_linked
     return wire
   }
-  it('absent flag + twin tracks → true', () => {
+  it('absent flag → false, even when the tracks happen to be twins', () => {
+    // Equal tracks are not evidence of intent, and linking is the destructive
+    // direction (the next edit collapses one axis onto the other). So the default
+    // never manufactures a link the file did not claim.
     const p = parseProject(wireWithoutFlag(false), { onGridRepair: () => {} })
-    expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(true)
+    expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
   })
-  it('absent flag + diverged tracks → false (never a blind true)', () => {
+  it('absent flag + diverged tracks → false', () => {
     const p = parseProject(wireWithoutFlag(true), { onGridRepair: () => {} })
     expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
+  })
+  it('never leaves the flag undefined for the UI to read', () => {
+    const p = parseProject(wireWithoutFlag(false), { onGridRepair: () => {} })
+    expect('scale_linked' in (p.tracks[1].layers[0].params as TextParams).transform).toBe(true)
   })
   it('present flag is honored: explicit false over twin tracks stays false', () => {
     const wire = wireWithoutFlag(false)
