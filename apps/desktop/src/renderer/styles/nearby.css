@@ -50,15 +50,46 @@
   transition: transform var(--transition-base);
 }
 
-/* Row wraps the reveal button and the explicit Go To affordance side by side. */
+/* Row wraps the reveal button and the explicit Go To affordance side by side.
+   Hover / selection / LIVE paint HERE, not on the inner button — the grip and
+   Go To must sit on the same surface as the content, or the row reads as
+   three separate objects. */
 .peek-item-row {
   display: flex;
   align-items: stretch;
+  transition: background var(--transition-fast);
+}
+
+.peek-item-row:hover {
+  background: var(--hover-neutral);
+}
+
+.peek-item-row.is-selected {
+  background: var(--selection-bg);
+}
+
+.peek-item-row.is-live {
+  background: color-mix(in srgb, var(--destructive) 8%, transparent);
+}
+
+.peek-item-row.is-live.is-selected {
+  background: color-mix(in srgb, var(--destructive) 22%, transparent);
+}
+
+/* Keyboard focus lands on the inner button; the ring draws on the whole row
+   — inward, the outer variant would clip against the panel edges. */
+.peek-item-row:has(> .peek-item:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 .peek-item-row .peek-item {
   flex: 1 1 auto;
   min-width: 0;
+  /* Outranks the global .kind-* badge palette (settings.css, later in the
+     cascade at equal specificity), which otherwise paints video rows navy
+     through the row's kind-* hook. */
+  background: transparent;
 }
 
 .peek-item {
@@ -74,30 +105,6 @@
   padding: 6px 12px;
   cursor: pointer;
   font: inherit;
-  transition: background var(--transition-fast);
-}
-
-.peek-item:hover {
-  background: var(--hover-neutral);
-}
-
-/* Full-bleed rows: the ring is drawn inward, the outer variant would clip
-   against the panel edges. */
-.peek-item:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-
-.peek-item.is-selected {
-  background: var(--selection-bg);
-}
-
-.peek-item.is-live {
-  background: color-mix(in srgb, var(--destructive) 8%, transparent);
-}
-
-.peek-item.is-live.is-selected {
-  background: color-mix(in srgb, var(--destructive) 22%, transparent);
 }
 
 .peek-thumb {
@@ -157,18 +164,27 @@
   color: var(--muted-foreground);
 }
 
+/* Go To is a control IN the row, not an icon floating beside it: an inset
+   pill (thumb-height) with its own hover surface on top of the row's. */
 .peek-goto {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  width: 26px;
+  height: 24px;
+  align-self: center;
+  margin-right: 4px;
   border: none;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--transition-fast), color var(--transition-fast);
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast),
+    background var(--transition-fast);
 }
 
 .peek-item-row:hover .peek-goto,
@@ -178,6 +194,7 @@
 
 .peek-goto:hover {
   color: var(--foreground);
+  background: var(--hover-neutral);
 }
 
 .peek-goto:focus-visible {
@@ -291,7 +308,7 @@
 /* Mid-gesture the pointer is a positioning tool: rows under the floating
    row must not light up or sprout the Go To affordance. Selection / LIVE
    tints keep their steady-state rules. */
-.peek-stack--reordering .peek-item:not(.is-selected):not(.is-live):hover {
+.peek-stack--reordering .peek-item-row:not(.is-selected):not(.is-live):hover {
   background: transparent;
 }
 

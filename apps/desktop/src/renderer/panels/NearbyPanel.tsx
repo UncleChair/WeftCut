@@ -532,7 +532,13 @@ function PeekRow({
       onContextMenu={openMenuFromPointer}
       onKeyDown={openMenuFromKeyboard}
     >
-      <div className="peek-item-row">
+      {/* Hover / selection / LIVE paint on the ROW, not the inner button —
+          the grip and Go To must sit on the same surface as the content. */}
+      <div
+        className={`peek-item-row ${isSelected ? "is-selected" : ""} ${
+          item.spansPlayhead ? "is-live" : ""
+        }`}
+      >
         {/* Restack affordance (ADR 0044 decision 6): the row body already
             spends click on select and double-click on rename, so the drag
             needs its own handle. Pointer-only — see usePointerReorder. */}
