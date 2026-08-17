@@ -81,7 +81,13 @@ test('motif live preview: accent pixels reach the Pixi compositor via CDP', asyn
           }))
           .catch((e: unknown) => ({ ok: false, error: String(e) })),
       )
-      if (!snap.ok) throw new Error('weftcutSampleComposite failed: ' + snap.error)
+      if (!snap.ok) {
+        // Same async-mount gotcha as weftcutSeekUs above: the PixiPreview
+        // bridge registers after App mounts, so under load the first rounds
+        // can sample before it exists — retry until the deadline.
+        if (String(snap.error).includes('preview bridge not registered')) continue
+        throw new Error('weftcutSampleComposite failed: ' + snap.error)
+      }
       s = snap.p as typeof s
       renders = snap.renders as number
       console.log(
