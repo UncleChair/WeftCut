@@ -1,33 +1,14 @@
 // @vitest-environment jsdom
-import { Buffer, BufferUsage, GCSystem, type UniformGroup } from "pixi.js";
-import { describe, expect, it, vi } from "vitest";
+// This filter's own UBO-residency coverage lives in
+// uniformBufferResidency.test.ts, which runs the same three assertions over
+// every custom filter that owns a UniformGroup.
+import { describe, expect, it } from "vitest";
 import { ChromaKeyFilter, type ChromaParamName } from "./ChromaKeyFilter";
 import { CHROMA_UNIFORM_DEFAULTS } from "./chromaKeySources";
 
 function uniforms(f: ChromaKeyFilter): Record<string, number | Float32Array> {
   return (f.resources as Record<string, { uniforms: Record<string, number | Float32Array> }>)
     .chromaUniforms!.uniforms;
-}
-
-function chromaUniformGroup(f: ChromaKeyFilter): UniformGroup {
-  return (f.resources as { chromaUniforms: UniformGroup }).chromaUniforms;
-}
-
-function applyWithMaterializedUniformBuffer(f: ChromaKeyFilter): Buffer {
-  let buffer: Buffer | null = null;
-  const filterManager = {
-    applyFilter: () => {
-      buffer = new Buffer({
-        data: new Float32Array(12),
-        usage: BufferUsage.UNIFORM | BufferUsage.COPY_DST,
-      });
-      // Pixi's UboSystem performs this same lazy assignment during the first
-      // WebGPU render of a UniformGroup.
-      chromaUniformGroup(f).buffer = buffer;
-    },
-  };
-  f.apply(filterManager as never, null as never, null as never, false);
-  return buffer!;
 }
 
 describe("ChromaKeyFilter", () => {
@@ -62,50 +43,4 @@ describe("ChromaKeyFilter", () => {
     });
   });
 
-  it("keeps its uniform GPU buffer resident while a cached filter is idle", () => {
-    const f = new ChromaKeyFilter();
-    const buffer = applyWithMaterializedUniformBuffer(f);
-    const gc = new GCSystem({} as never);
-    gc.init({ gcActive: false, gcMaxUnusedTime: 60_000, gcFrequency: 30_000 });
-    const managedBuffers = { items: { [buffer.uid]: buffer } };
-    // GpuBufferSystem tracks its Buffer wrappers through this hash-based GC
-    // path, which is the path that destroyed the observed chroma UBO.
-    gc.addResourceHash(managedBuffers, "items", "resource");
-    buffer._gcLastUsed = 0;
-    const onUnload = vi.fn();
-    buffer.on("unload", onUnload);
-    const now = vi.spyOn(performance, "now").mockReturnValue(60_001);
-
-    try {
-      gc.run();
-      expect(onUnload).not.toHaveBeenCalled();
-    } finally {
-      now.mockRestore();
-      gc.destroy();
-      if (!buffer.destroyed) buffer.destroy();
-      f.destroy();
-    }
-  });
-
-  it("releases its retained uniform GPU buffer exactly once", () => {
-    const f = new ChromaKeyFilter();
-    const buffer = applyWithMaterializedUniformBuffer(f);
-    const destroyBuffer = vi.spyOn(buffer, "destroy");
-
-    f.destroy();
-    f.destroy();
-
-    expect(destroyBuffer).toHaveBeenCalledTimes(1);
-    expect(buffer.destroyed).toBe(true);
-  });
-
-  it("can be destroyed before the WebGPU path materializes a uniform buffer", () => {
-    const f = new ChromaKeyFilter();
-    expect(chromaUniformGroup(f).buffer).toBeUndefined();
-
-    expect(() => {
-      f.destroy();
-      f.destroy();
-    }).not.toThrow();
-  });
 });

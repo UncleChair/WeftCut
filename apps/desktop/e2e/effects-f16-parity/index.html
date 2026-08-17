@@ -50,7 +50,8 @@
             colorBufferFloat: !!gl.getExtension("EXT_color_buffer_float"),
           };
 
-          function readRed(rt, label) {
+          // The middle row of a render target, red channel only.
+          function readRedRow(rt) {
             renderer.renderTarget.bind(rt, false);
             const type = gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE);
             const y = H >> 1, reds = [];
@@ -63,6 +64,13 @@
               gl.readPixels(0, y, W, 1, gl.RGBA, gl.HALF_FLOAT, buf);
               for (let i = 0; i < W; i++) reds.push(halfToFloat(buf[i * 4]));
             }
+            return reds;
+          }
+
+          const r5 = (v) => Math.round(v * 100000) / 100000;
+
+          function readRed(rt, label) {
+            const reds = readRedRow(rt);
             // `distinct` alone cannot tell a filter that ran from a filter that
             // silently did nothing — a colour matrix that never reached the GPU
             // (or a uAlpha of 0, which makes the fragment early-return the
@@ -71,11 +79,10 @@
             // reads 0.25: brightness at amount -40 must land near 0.15 and
             // contrast near 0.35. Reported, not asserted — run.mjs still gates
             // on `distinct`; this is the evidence a phase records about itself.
-            const q1 = reds[W >> 2];
             return {
               label,
               distinct: new Set(reds.map((v) => Math.round(v * 100000))).size,
-              atQuarter: Math.round(q1 * 100000) / 100000,
+              atQuarter: r5(reds[W >> 2]),
               glError: gl.getError(),
             };
           }
@@ -91,17 +98,32 @@ gl_Position=vec4((mvp*vec3(aPosition,1.0)).xy,0.0,1.0); vUV=aUV; }`;
 precision highp float; in vec2 vUV; out vec4 finalColor;
 void main(){ finalColor=vec4(vUV.x,vUV.x,vUV.x,1.0); }`;
 
-          const srcRT = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
-          const mesh = new Mesh({
-            geometry: new MeshGeometry({
-              positions: new Float32Array([0, 0, W, 0, W, H, 0, H]),
-              uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-              indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-            }),
-            shader: Shader.from({ gl: { vertex: VERT, fragment: FRAG }, resources: {} }),
-          });
-          renderer.render({ container: mesh, target: srcRT });
+          // A hard step at x = 512, in values 8 bits can hold exactly
+          // (0.4 = 102/255, 0.6 = 153/255) so the sharpen ring probe below
+          // predicts the same numbers in both pool conditions.
+          const STEP_FRAG = `#version 300 es
+precision highp float; in vec2 vUV; out vec4 finalColor;
+void main(){ float v = vUV.x < 0.5 ? 0.4 : 0.6; finalColor=vec4(v,v,v,1.0); }`;
+
+          // Paint a full-target quad with `fragment` into a fresh f16 texture.
+          function paint(fragment) {
+            const rt = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+            const mesh = new Mesh({
+              geometry: new MeshGeometry({
+                positions: new Float32Array([0, 0, W, 0, W, H, 0, H]),
+                uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+                indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+              }),
+              shader: Shader.from({ gl: { vertex: VERT, fragment }, resources: {} }),
+            });
+            renderer.render({ container: mesh, target: rt });
+            return rt;
+          }
+
+          const srcRT = paint(FRAG);
           phase("source", () => readRed(srcRT, "source-f16-gradient"));
+          // Kept for the sharpen pass-through probe, which diffs against it.
+          const sourceReds = readRedRow(srcRT);
 
           // Report which format the pool actually allocates.
           phase("poolFormat", () => {
@@ -208,6 +230,117 @@ void main(){ finalColor=vec4(vUV.x,vUV.x,vUV.x,1.0); }`;
             0.08504, 0.28608, 0.62888, 0, 0,
             0, 0, 0, 1, 0,
           ]);
+
+          // Sharpen — the catalog's second custom shader, loaded from the REAL
+          // product source exactly as chroma is above (both files are
+          // type-annotation-free JS by contract, and a unit test replays this
+          // loading path). Unlike the colour trio, here the shared source is
+          // the point: the maths is the shader.
+          const sharpenText = fsMod
+            .readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/sharpenSources.ts"), "utf8")
+            .replace(/^export /gm, "");
+          const SH = new Function(sharpenText + "\nreturn { SHARPEN_FRAG_GL, SHARPEN_UNIFORM_DEFAULTS };")();
+          // uAmount carries the catalog's PERCENTAGE — the shader owns the /100,
+          // which is why the gate can drive the same number the slider shows.
+          const sharpenFilter = (amount) => new Filter({
+            glProgram: GlProgram.from({ vertex: defaultFilterVert, fragment: SH.SHARPEN_FRAG_GL, name: "sharpen-gate" }),
+            resources: {
+              sharpenUniforms: new UniformGroup({
+                uAmount: { value: amount, type: "f32" },
+              }),
+            },
+          });
+          const throughSharpen = (sourceRT, amount) => {
+            const rt = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+            const st = new Container();
+            const spr = new Sprite(sourceRT);
+            spr.filters = [sharpenFilter(amount)];
+            st.addChild(spr);
+            renderer.render({ container: st, target: rt });
+            return rt;
+          };
+
+          // A substantial amount, not a token one: at 60 the ring probe below
+          // predicts a ±0.12 excursion, which no broken kernel lands on.
+          const SHARPEN_AMOUNT = 60;
+          const r8 = (v) => Math.round(v * 1e8) / 1e8;
+
+          // The same filter at amount 0 — the kernel's own control. It travels
+          // the identical pool path (sprite → pool intermediate → f16 target),
+          // so diffing the amount-60 row against THIS row, rather than against
+          // the source, isolates what the kernel did from what the pool did.
+          const sharpenZeroReds = readRedRow(throughSharpen(srcRT, 0));
+          const sharpenRT = throughSharpen(srcRT, SHARPEN_AMOUNT);
+
+          phase("sharpen", () => {
+            const base = readRed(sharpenRT, `sharpen-amount-${SHARPEN_AMOUNT}`);
+            const reds = readRedRow(sharpenRT);
+            // Interior only: at x = 0 and x = W-1 `uInputClamp` folds the
+            // outward tap back onto the centre, which is a one-sided second
+            // difference and a real (documented) excursion of amount × one ramp
+            // step. Reported separately rather than hidden in the maximum.
+            let interior = 0;
+            for (let i = 1; i < W - 1; i++) {
+              interior = Math.max(interior, Math.abs(reds[i] - sharpenZeroReds[i]));
+            }
+            return {
+              ...base,
+              // How far the kernel moved the ramp away from its own
+              // pass-through. On an 8-bit pool intermediate the input is a
+              // 256-step staircase and a high-pass amplifies every step by
+              // amount: 0.6/255 = 0.00235. On an f16 pool the ramp is smooth,
+              // the second derivative vanishes and the kernel is identity.
+              rampMaxDiff: r8(interior),
+              edgeDiffs: [r8(reds[0] - sharpenZeroReds[0]), r8(reds[W - 1] - sharpenZeroReds[W - 1])],
+            };
+          });
+
+          // amount 0 must be an EXACT pass-through — the shader early-returns
+          // the untouched texel rather than the unpremultiply/re-premultiply
+          // round trip of it. Diffed against the source row instead of
+          // eyeballed: in the f16 condition the pool is lossless, so the only
+          // honest expectation is a max difference of zero; in the default-pool
+          // condition the 8-bit intermediate is the whole difference, bounded by
+          // one 8-bit step.
+          phase("sharpenZero", () => {
+            let maxDiff = 0;
+            for (let i = 0; i < W; i++) {
+              maxDiff = Math.max(maxDiff, Math.abs(sharpenZeroReds[i] - sourceReds[i]));
+            }
+            return {
+              label: "sharpen-amount-0",
+              distinct: new Set(sharpenZeroReds.map((v) => Math.round(v * 100000))).size,
+              maxDiffVsSource: r8(maxDiff),
+              glError: gl.getError(),
+            };
+          });
+
+          // The ramp phase above cannot prove the kernel RAN. A 3x3 cross
+          // unsharp is exactly identity on a linear gradient — the second
+          // derivative of a ramp is zero — which is what makes it a clean pool
+          // measurement and a useless no-op detector, and `atQuarter` reads the
+          // same 0.25 as the source for the same reason. So feed the same filter
+          // a STEP and report the six pixels around it. Hand-checkable at
+          // amount 60 (a = 0.6, step 0.4 → 0.6):
+          //   x ≤ 510 unchanged 0.4 | x = 511 undershoot 0.4 − 0.6·0.2 = 0.28
+          //   x = 512 overshoot 0.6 + 0.6·0.2 = 0.72 | x ≥ 513 unchanged 0.6
+          // It is a texel-size proof as well: a tap fed a hand-rolled 200×200
+          // texel size would land 5 px away, leaving 511/512 alone and moving
+          // 507/517 instead — the ConvolutionFilter defect spec decision 4
+          // rejected.
+          const stepRT = paint(STEP_FRAG);
+          const RING_XS = [509, 510, 511, 512, 513, 514];
+          phase("sharpenRing", () => {
+            const stepReds = readRedRow(stepRT);
+            const reds = readRedRow(throughSharpen(stepRT, SHARPEN_AMOUNT));
+            return {
+              label: `sharpen-step-amount-${SHARPEN_AMOUNT}`,
+              xs: RING_XS,
+              sourceWindow: RING_XS.map((x) => r5(stepReds[x])),
+              window: RING_XS.map((x) => r5(reds[x])),
+              glError: gl.getError(),
+            };
+          });
 
           ipcRenderer.send("gate-result", out);
         } catch (err) {

@@ -1,0 +1,175 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>WGSL twin gate (WebGPU)</title></head>
+  <body>
+    <script>
+      // Renderer side of the gate's WGSL condition.
+      //
+      // The other two conditions force `preference: "webgl"` — that is the
+      // export backend, and the only one whose readback can see float16. The
+      // PREVIEW prefers WebGPU, so a filter's WGSL source is the half a user
+      // actually looks at, and nothing else in the repo executes it. This
+      // condition runs the shipped WGSL text (loaded from the same source file
+      // the product imports) on a real WebGPU device and checks the SAME
+      // hand-derived numbers the WebGL step probe checks, at 8-bit.
+      //
+      // Readback note: `extract.pixels({ target: <Container> })` fails on this
+      // platform's WebGPU path — Pixi tries to copy the canvas-backed
+      // BGRA8Unorm texture into an RGBA8Unorm one and Dawn rejects it
+      // ("not copy compatible"). Extracting from a RenderTexture WE created as
+      // rgba8unorm avoids the mismatch. (Same bug makes the app's e2e frame
+      // capture hook unusable under WebGPU — noted so it is not rediscovered.)
+      const { ipcRenderer } = require("electron");
+
+      (async () => {
+        const out = { condition: "wgsl-webgpu", phases: {} };
+        const phaseAsync = async (name, fn) => {
+          try { out.phases[name] = await fn(); } catch (e) { out.phases[name] = { error: String((e && e.stack) || e) }; }
+        };
+        try {
+          const PIXI = require("pixi.js");
+          const {
+            autoDetectRenderer, RenderTexture, Sprite, Container, Texture,
+            BufferImageSource, Filter, GlProgram, GpuProgram, UniformGroup,
+            defaultFilterVert,
+          } = PIXI;
+
+          const W = 1024, H = 4;
+          let renderer;
+          try {
+            renderer = await autoDetectRenderer({ preference: "webgpu", width: W, height: H, antialias: false });
+          } catch (e) {
+            ipcRenderer.send("wgsl-result", { ...out, unavailable: `renderer init failed: ${String(e)}` });
+            return;
+          }
+          // Pixi's RendererType: 1 = WebGL, 2 = WebGPU. A silent fallback is
+          // exactly the failure this condition exists to catch, so it is
+          // reported as unavailable rather than measured.
+          if (renderer.type !== 2) {
+            ipcRenderer.send("wgsl-result", { ...out, unavailable: `no WebGPU adapter (renderer.type=${renderer.type})` });
+            return;
+          }
+          out.diag = { pixi: PIXI.VERSION, rendererType: renderer.type };
+
+          // The same hard step the WebGL probe uses, in values 8 bits hold
+          // exactly: 102/255 = 0.4 on the left half, 153/255 = 0.6 on the
+          // right. Built as raw RGBA8 rather than painted by a shader so this
+          // condition tests the product's shader and nothing else of its own.
+          const buf = new Uint8Array(W * H * 4);
+          for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+              const v = x < W / 2 ? 102 : 153;
+              const i = (y * W + x) * 4;
+              buf[i] = v; buf[i + 1] = v; buf[i + 2] = v; buf[i + 3] = 255;
+            }
+          }
+          const stepTexture = new Texture({
+            source: new BufferImageSource({ resource: buf, width: W, height: H, format: "rgba8unorm" }),
+          });
+
+          // The real product source, loaded the way the chroma/sharpen WebGL
+          // phases load theirs (strip `export ` + new Function; the sources file
+          // is type-annotation-free JS by contract and a unit test replays this
+          // path). Both programs are built, as SharpenFilter does — on this
+          // renderer only the WGSL one can run.
+          const fsMod = require("fs");
+          const pathMod = require("path");
+          const srcText = fsMod
+            .readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/sharpenSources.ts"), "utf8")
+            .replace(/^export /gm, "");
+          const SH = new Function(srcText + "\nreturn { SHARPEN_FRAG_GL, SHARPEN_WGSL, SHARPEN_UNIFORM_DEFAULTS };")();
+
+          const sharpenFilter = (amount) => new Filter({
+            gpuProgram: GpuProgram.from({
+              vertex: { source: SH.SHARPEN_WGSL, entryPoint: "mainVertex" },
+              fragment: { source: SH.SHARPEN_WGSL, entryPoint: "mainFragment" },
+            }),
+            glProgram: GlProgram.from({ vertex: defaultFilterVert, fragment: SH.SHARPEN_FRAG_GL, name: "sharpen-wgsl-gate" }),
+            resources: {
+              sharpenUniforms: new UniformGroup({
+                uAmount: { value: amount, type: "f32" },
+              }),
+            },
+          });
+
+          // DEFAULT format on purpose. Two WebGPU constraints meet here: Pixi
+          // builds its render pipelines against the device's preferred canvas
+          // format, so a render texture in any other format is rejected
+          // ("Attachment state of [RenderPipeline] is not compatible"), and
+          // `getPixels` copies the texture into a webgpu canvas configured with
+          // that same preferred format, which `copyTextureToTexture` requires to
+          // match. Pinning a format breaks both; the default satisfies both.
+          const through = (amount) => {
+            const rt = RenderTexture.create({ width: W, height: H });
+            const stage = new Container();
+            const sp = new Sprite(stepTexture);
+            sp.filters = [sharpenFilter(amount)];
+            stage.addChild(sp);
+            renderer.render({ container: stage, target: rt });
+            return rt;
+          };
+
+          // Read the middle row straight off the GPU with copyTextureToBuffer,
+          // NOT through `renderer.extract.pixels`. Pixi's WebGPU readback goes
+          // via `generateCanvas`, which copies the texture into a webgpu canvas
+          // configured with `getPreferredCanvasFormat()` — rgba8unorm on this
+          // device — while Pixi's own textures are bgra8unorm, and
+          // `copyTextureToTexture` requires the formats to match. So extract
+          // fails here with "not copy compatible" and hands back zeros. (That is
+          // also why the app's e2e frame-capture hook is unusable under WebGPU on
+          // this platform; it is a Pixi/device-format bug, not a filter bug.)
+          const rowOf = async (rt) => {
+            const device = renderer.gpu.device;
+            const source = renderer.texture.getGpuSource(rt.source);
+            // 1024 px x 4 B = 4096, already a multiple of WebGPU's 256-byte
+            // bytesPerRow alignment.
+            const bytesPerRow = W * 4;
+            const buffer = device.createBuffer({
+              size: bytesPerRow * H,
+              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+            });
+            const encoder = device.createCommandEncoder();
+            encoder.copyTextureToBuffer(
+              { texture: source },
+              { buffer, bytesPerRow, rowsPerImage: H },
+              { width: W, height: H, depthOrArrayLayers: 1 },
+            );
+            device.queue.submit([encoder.finish()]);
+            await buffer.mapAsync(GPUMapMode.READ);
+            const bytes = new Uint8Array(buffer.getMappedRange().slice(0));
+            buffer.unmap();
+            buffer.destroy();
+            const y = H >> 1;
+            const row = [];
+            // The step is neutral grey, so bgra8unorm vs rgba8unorm cannot move
+            // the number; the format is reported so the record says which it was.
+            for (let x = 0; x < W; x++) row.push(bytes[y * bytesPerRow + x * 4]);
+            return row;
+          };
+
+          const RING_XS = [509, 510, 511, 512, 513, 514];
+          const AMOUNT = 60;
+
+          // Same prediction as the WebGL step probe, in 8-bit units:
+          //   x <= 510 unchanged 102 | x = 511 undershoot 0.28*255 = 71
+          //   x = 512 overshoot 0.72*255 = 184 | x >= 513 unchanged 153
+          await phaseAsync("sharpenWgslRing", async () => {
+            const source = await rowOf(through(0));
+            const ringed = await rowOf(through(AMOUNT));
+            return {
+              label: `sharpen-wgsl-step-amount-${AMOUNT}`,
+              // amount 0 is the shader's early-out: the step, untouched.
+              zeroWindow: RING_XS.map((x) => source[x]),
+              window: RING_XS.map((x) => ringed[x]),
+            };
+          });
+
+          ipcRenderer.send("wgsl-result", out);
+        } catch (err) {
+          out.fatal = String((err && err.stack) || err);
+          ipcRenderer.send("wgsl-error", out);
+        }
+      })();
+    </script>
+  </body>
+</html>

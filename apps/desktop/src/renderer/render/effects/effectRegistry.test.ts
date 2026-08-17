@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { BlurFilter, ColorMatrixFilter } from "pixi.js";
 import { getDescriptor } from "./effectRegistry";
 import { ChromaKeyFilter } from "./filters/ChromaKeyFilter";
+import { SharpenFilter } from "./filters/SharpenFilter";
 import { writeBrightness, writeContrast, writeSaturation } from "./filters/colorMatrices";
 
 import { listEffects } from "./effectRegistry";
@@ -143,5 +144,36 @@ describe("the colour-matrix trio", () => {
     for (const kind of Object.keys(TRIO)) {
       expect(byKind.get(kind)?.category, kind).toBe("color");
     }
+  });
+});
+
+describe("sharpen", () => {
+  it("descriptor builds a SharpenFilter and routes amount to its uniform", () => {
+    const d = getDescriptor("sharpen")!;
+    expect(d.fidelity).toBe("f16-verified");
+    expect(d.colorspace).toBe("display-gamma");
+    expect(d.nameI18nKey).toBe("effects.sharpen.name");
+    expect(d.colorGroups).toBeUndefined();
+    const f = d.create();
+    expect(f).toBeInstanceOf(SharpenFilter);
+    d.params.amount!.apply(f, 60);
+    const u = (f.resources as Record<string, { uniforms: Record<string, unknown> }>)
+      .sharpenUniforms!.uniforms;
+    expect(u.uAmount).toBe(60);
+  });
+
+  it("breaks the shared calibration deliberately: [0, 100], no negative", () => {
+    // A negative unsharp amount is a box blur, and `blur` is already in the
+    // catalog — one way to soften an image, called Blur.
+    const d = getDescriptor("sharpen")!;
+    expect(Object.keys(d.params)).toEqual(["amount"]);
+    expect(d.params.amount!.range).toEqual([0, 100]);
+    expect(d.params.amount!.step).toBe(1);
+    expect(d.params.amount!.default).toBe(0);
+  });
+
+  it("is the catalog's Stylise entry", () => {
+    const byKind = new Map(listEffects().map((d) => [d.kind, d]));
+    expect(byKind.get("sharpen")?.category).toBe("stylize");
   });
 });

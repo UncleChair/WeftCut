@@ -9,6 +9,7 @@
 
 import { BlurFilter, ColorMatrixFilter, type Filter } from "pixi.js";
 import { ChromaKeyFilter, type ChromaParamName } from "./filters/ChromaKeyFilter";
+import { SharpenFilter } from "./filters/SharpenFilter";
 import {
   writeBrightness,
   writeContrast,
@@ -134,6 +135,26 @@ const REGISTRY: Record<string, EffectDescriptor> = {
   brightness: colorMatrixEffect("brightness", writeBrightness),
   contrast: colorMatrixEffect("contrast", writeContrast),
   saturation: colorMatrixEffect("saturation", writeSaturation),
+  sharpen: {
+    kind: "sharpen",
+    nameI18nKey: "effects.sharpen.name",
+    category: "stylize",
+    create: () => new SharpenFilter(),
+    params: {
+      // The one deliberate break from the colour trio's shared calibration:
+      // [0, 100], not [-100, 100]. A negative unsharp amount is a box blur and
+      // `blur` is already in the catalog — the picker offers exactly one way to
+      // soften an image.
+      amount: {
+        default: 0,
+        range: [0, 100],
+        step: 1,
+        apply: (f, v) => (f as SharpenFilter).applyParam("amount", v),
+      },
+    },
+    fidelity: "f16-verified",
+    colorspace: "display-gamma",
+  },
 };
 
 export function getDescriptor(kind: string): EffectDescriptor | null {

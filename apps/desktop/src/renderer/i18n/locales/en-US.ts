@@ -1082,6 +1082,11 @@ const enUS = {
       desc: "Color intensity, down to gray",
       params: { amount: "Amount" },
     },
+    sharpen: {
+      name: "Sharpen",
+      desc: "Crisp soft or downscaled footage",
+      params: { amount: "Amount" },
+    },
   },
   property_panel: {
     heading: "Properties",

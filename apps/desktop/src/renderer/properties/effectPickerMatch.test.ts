@@ -106,9 +106,12 @@ describe("the shipped catalog", () => {
     });
   }
 
-  it("typing an English name prefix reaches the colour trio", () => {
+  it("typing an English name prefix reaches the colour trio and sharpen", () => {
     const rows = rowsIn(en);
-    for (const [query, kind] of [["bright", "brightness"], ["contr", "contrast"], ["satur", "saturation"]]) {
+    for (const [query, kind] of [
+      ["bright", "brightness"], ["contr", "contrast"], ["satur", "saturation"],
+      ["sharp", "sharpen"],
+    ]) {
       expect(filterEffects(query!, rows)[0]?.kind, query).toBe(kind);
     }
   });
@@ -118,5 +121,12 @@ describe("the shipped catalog", () => {
     const color = groups.find((g) => g.category === "color")!;
     expect(color.label).toBe("Color");
     expect(color.items.map((i) => i.kind)).toEqual(["brightness", "contrast", "saturation"]);
+  });
+
+  it("groups sharpen under Stylize", () => {
+    const groups = groupEffects(rowsIn(en));
+    const stylize = groups.find((g) => g.category === "stylize")!;
+    expect(stylize.label).toBe("Stylize");
+    expect(stylize.items.map((i) => i.kind)).toEqual(["sharpen"]);
   });
 });

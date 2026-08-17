@@ -9,6 +9,7 @@ import {
   CHROMA_WGSL,
   CHROMA_UNIFORM_DEFAULTS,
 } from "./chromaKeySources";
+import { pinUniformBuffer, releaseUniformBuffer } from "./uniformBufferResidency";
 
 export type ChromaParamName =
   | "keyR"
@@ -69,20 +70,11 @@ export class ChromaKeyFilter extends Filter {
 
   override apply(...args: Parameters<Filter["apply"]>): void {
     super.apply(...args);
-    const buffer = this.chromaUniforms.buffer;
-    if (buffer) {
-      // Pixi creates this buffer lazily on the first WebGPU apply. Its GC can
-      // unload the buffer while EffectChain still owns this filter, but Pixi's
-      // bind-group cache then keeps pointing at the destroyed GPUBuffer.
-      // Keep this tiny filter-owned UBO resident for the filter's lifetime;
-      // destroy() below is its explicit release point.
-      buffer.autoGarbageCollect = false;
-    }
+    pinUniformBuffer(this.chromaUniforms);
   }
 
   override destroy(destroyPrograms = false): void {
-    const buffer = this.chromaUniforms.buffer;
-    if (buffer && !buffer.destroyed) buffer.destroy();
+    releaseUniformBuffer(this.chromaUniforms);
     super.destroy(destroyPrograms);
   }
 

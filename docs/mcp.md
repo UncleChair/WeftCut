@@ -233,10 +233,11 @@ Layers:
 - `delete_layer { layer_id }`
 - `duplicate_layer { layer_id, t_offset_us }` → `LayerId`
 
-Effects (per-layer Pixi filter chains; catalog: `blur`, `chromakey`, `brightness`, `contrast`, `saturation`):
+Effects (per-layer Pixi filter chains; catalog: `blur`, `chromakey`, `brightness`, `contrast`, `saturation`, `sharpen`):
 - In v1, effects render on all five visual layer kinds: VideoClip, ImageOverlay, Color, Text, and Motif.
 - `add_effect { layer_id, kind }` → `EffectId`. Append an effect to the end of the chain (applied last). Creates the effect with no params set; use `update_effect` to set a static value or `set_keyframe` to keyframe a param.
 - `brightness`, `contrast` and `saturation` each carry exactly one param, `amount`: a percentage offset from neutral in `[-100, 100]`, `0` = no change (`amount: 20` is "+20 %"). Brightness is a gain, so `0` preserves black; saturation desaturates on Rec.709 luma weights.
+- `sharpen` carries the same `amount` param on the same percentage scale, but in `[0, 100]` — `0` = no change and there is no negative side, since a negative unsharp amount is a box blur and that is what `blur` is for (a negative value renders as no change, not as a blur). It is a fixed 3×3 cross unsharp (no radius param).
 - `update_effect { layer_id, effect_id, patch }` — patch is `{ enabled?, params? }`; v1 params are scalar `{ "mode": "Static", "value": <number> }`.
 - `move_effect { layer_id, effect_id, new_index }` — reorder (0 = first applied).
 - `remove_effect { layer_id, effect_id }` — delete.

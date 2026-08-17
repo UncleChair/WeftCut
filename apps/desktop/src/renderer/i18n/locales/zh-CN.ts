@@ -1024,6 +1024,11 @@ const zhCN: Resources = {
       desc: "色彩浓度，可降至灰度",
       params: { amount: "数量" },
     },
+    sharpen: {
+      name: "锐化",
+      desc: "让偏软或缩小后的画面更清晰",
+      params: { amount: "数量" },
+    },
   },
   property_panel: {
     heading: "属性",
