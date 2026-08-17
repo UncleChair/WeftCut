@@ -59,9 +59,8 @@ export class SharpenFilter extends Filter {
     super.destroy(destroyPrograms);
   }
 
-  /// The catalog's `amount` in PERCENT, straight through — the shader owns the
-  /// /100, so the gate (which loads the shader source but not this class)
-  /// drives the same number the slider shows.
+  /// Straight through, with no conversion: the shader owns the /100, per
+  /// `SHARPEN_UNIFORM_DEFAULTS`.
   applyParam(name: SharpenParamName, value: number): void {
     const u = (this.resources as { sharpenUniforms: { uniforms: SharpenUniforms } })
       .sharpenUniforms.uniforms;

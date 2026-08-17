@@ -15,8 +15,11 @@
 // it with fs.readFileSync + strip-`export ` + new Function. A unit test
 // replays that loading path; type annotations here break the gate.
 
-// Three things below are load-bearing, all three inherited from
-// chromaKeySources.ts rather than rediscovered:
+// Four things below are load-bearing. The first two are inherited from
+// chromaKeySources.ts rather than rediscovered; the third is this file's own
+// (the sibling has no precision statement at all, and does not need one — see
+// there), and the fourth is the structural claim that made this filter
+// self-authored instead of pixi-filters' ConvolutionFilter:
 //
 //  1. The `#version 300 es` line. Pixi's GlProgram only checks the FRAGMENT
 //     text for that literal string to decide isES300; without it Pixi
@@ -49,11 +52,11 @@
 //
 // Two things are this filter's own:
 //
-//  - Taps read STRAIGHT colour (`rgb / a`) and a tap with no alpha falls back
-//    to the centre's, so the kernel degenerates to identity at a soft alpha
-//    edge instead of dragging the sprite's transparent surround into the
-//    negative lobes. That is the dark-fringe-on-text failure, and it is also
-//    why no `padding` is set: edge behaviour comes from `uInputClamp`.
+//  - Taps read STRAIGHT (unpremultiplied) colour, and alpha is never
+//    convolved — see `tapStraight` for the mechanism. The consequence is that
+//    the kernel degenerates to identity at a soft alpha edge, so sharpening
+//    one-colour content (text, a Motif glyph) is a no-op rather than the dark
+//    fringe a premultiplied convolution leaves.
 //  - The kernel is written as a sum of DIFFERENCES rather than
 //    `centre*(1 + 4a) - sum*a`. The two are algebraically identical, but the
 //    difference form subtracts nearby values (exact, by Sterbenz) and adds a

@@ -18,12 +18,12 @@ final mux see [`export.md`](export.md).
   ffmpeg `-c copy`), source probing / proxy generation / waveforms /
   thumbnails (all Rust-side).
 - **Per-layer effects:** each layer carries an ordered `effects` chain of
-  Pixi filters — one per picker category: blur, keying, colour, stylise. Two of
-  them are shaders authored here (chroma key, sharpen), the rest wrap stock Pixi
-  filters. The compositor attaches them to the layer's
-  sprite per frame; the renderer owns the filter *catalog*
-  (`render/effects/effectRegistry.ts`) while the project state holds the
-  effect *instances* and their keyframeable params (authored in the TS
+  Pixi filters, drawn from a catalog spanning four picker categories — blur,
+  keying, colour, stylise. Two catalog entries are shaders authored here
+  (chroma key, sharpen); the rest wrap stock Pixi filters. The compositor
+  attaches them to the layer's sprite per frame; the renderer owns the filter
+  *catalog* (`render/effects/effectRegistry.ts`) while the project state holds
+  the effect *instances* and their keyframeable params (authored in the TS
   actor, mirrored to Rust for export). See
   [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md).
 

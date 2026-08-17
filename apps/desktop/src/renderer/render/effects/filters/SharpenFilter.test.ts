@@ -18,17 +18,18 @@ describe("SharpenFilter", () => {
     expect(uniforms(f).uAmount).toBe(0);
   });
 
+  // Pinned because `padding` is a Filter option a construction site can add
+  // without thinking; the reason it must stay 0 is on SharpenFilter itself.
   it("sets no padding — edge behaviour comes from uInputClamp", () => {
-    // Padding would draw the sprite's transparent surround into the kernel and
-    // the negative lobes would ring it as a dark halo.
     expect(new SharpenFilter().padding).toBe(0);
   });
 
+  // No /100 here — the scale is the shader's, per `SHARPEN_UNIFORM_DEFAULTS`.
+  // Pinned because a conversion added on either side silently halves or
+  // hundred-folds the effect, and the parity gate drives the shader directly so
+  // it would not see it.
   it("applyParam carries the catalog's amount into the uniform as a percentage", () => {
     const f = new SharpenFilter();
-    // Straight through, no /100 here: the shader owns the scale so the parity
-    // gate, which loads the shader source but not this class, drives the same
-    // number the slider shows.
     for (const v of [0, 1, 60, 100]) {
       f.applyParam("amount", v);
       expect(uniforms(f).uAmount, `amount ${v}`).toBe(v);

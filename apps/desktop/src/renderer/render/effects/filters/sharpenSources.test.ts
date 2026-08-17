@@ -1,8 +1,9 @@
 // @vitest-environment node
-// The GPU-free guards on a dual-source shader, same three as
-// chromaKeySources.test.ts plus the two landmines this file's header calls
-// load-bearing. CI cannot run the f16 parity gate; it can protect the gate's
-// preconditions and the pair of traps that only fail on the backend nobody ran.
+// The GPU-free guards on a dual-source shader: the same three as
+// chromaKeySources.test.ts, plus one per load-bearing item the source's own
+// header lists (three GLSL landmines and the uInputSize.zw / uInputClamp
+// structure). CI cannot run the f16 parity gate; it can protect the gate's
+// preconditions and the traps that only fail on the backend nobody ran.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

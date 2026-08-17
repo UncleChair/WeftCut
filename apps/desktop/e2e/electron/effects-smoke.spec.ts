@@ -412,12 +412,12 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   await app.close()
 })
 
-// Why this test exists when the spec said "no new e2e": sharpen is a custom
-// shader, and nothing else drives one through the LIVE app — the parity gate
-// builds its own renderer from the shader source, and the registry tests never
-// reach a GPU. This is the only check that the shipped SharpenFilter (its
-// programs, its uniform group, the effect chain around it) actually changes a
-// frame in the product.
+// A custom shader earns a live-app frame check that a data-driven descriptor
+// over a stock filter does not: the parity gate builds its own renderer from the
+// shader source and the registry tests never reach a GPU, so nothing else runs
+// the shipped SharpenFilter — its two programs, its uniform group, the effect
+// chain around it — against a real composited frame. The colour-matrix entries
+// need no equivalent, which is why sharpen is the only one here.
 //
 // It exercises whichever backend the preview picked, which on Linux today is
 // WebGL: Chromium hands `requestAdapter()` null without --enable-features=Vulkan,

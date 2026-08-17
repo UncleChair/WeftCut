@@ -22,8 +22,9 @@ const REPO = path.resolve(HERE, "..", "..", "..", "..");
 
 /// The path Electron *should* be at. It may not exist — deciding what a missing
 /// binary means belongs to the caller, and the callers disagree: the f16 parity
-/// gate exits BLOCKED, while the Playwright launchers fall back to Playwright's
-/// own resolution by passing `executablePath: undefined`.
+/// gate exits BLOCKED, `playback-perf.mjs` and `ruler-node-count.mjs` fall back
+/// to Playwright's own resolution by passing `executablePath: undefined`, and
+/// `memory-ratchet.mjs` hands the path over unchecked and lets the launch fail.
 export function electronBinPath() {
   const dir = path.join(REPO, "node_modules", "electron");
   const nameFile = path.join(dir, "path.txt");
