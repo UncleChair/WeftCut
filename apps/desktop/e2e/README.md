@@ -280,7 +280,7 @@ reusing the surviving `lib/analyze.mjs` + `fixtures/`. What remains **not yet
 ported** are the UI-driving specs, which should be re-homed when their areas are
 next touched — they exercise UI that has since drifted (timeline redesign), so
 they're closer to a rewrite than a port (originals recoverable from git history
-before the retirement commit `e1321538`):
+before the retirement commit `b650f88e`):
 
 - **ui** — `keyframe_authoring`, `layers`, `shortcut_focus`
 - **image** — `image_support`'s still-image composite matrix (png/jpg/webp/bmp

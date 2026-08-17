@@ -12,7 +12,7 @@ engineering.
 
 - Environment: Electron **42.4.1** (Chromium 148), Windows 11, NVIDIA RTX 3050, `ffmpeg-next` 8.1 / FFmpeg 8.1.1.
 - Branch: `poc/shared-texture-import`. Standalone under `poc/shared-texture/`; does **not** touch `@weftcut/core`.
-- Commits: `04827a9d` (BGRA) → `a0b47d50` (NV12) → `84231a7d` (ffmpeg CPU-bounce) → `ad31685d` (ffmpeg zero-copy) → `03eac452` (streaming, Result 3) → `8ddfbcf3` (this writeup) → `de08a824` (persistent import / zero per-frame IPC, Result 4) → `1fd95f72` (renderer color paths, Result 5) → `705a8d69` (native NV12→BGRA convert, Result 6).
+- Commits: `3c0f1d7b` (BGRA) → `c4ebf5bf` (NV12) → `7e95b8cf` (ffmpeg CPU-bounce) → `be72894a` (ffmpeg zero-copy) → `37cba608` (streaming, Result 3) → `2fc4f701` (this writeup) → `9314f112` (persistent import / zero per-frame IPC, Result 4) → `4b52d2ef` (renderer color paths, Result 5) → `28e6c4e0` (native NV12→BGRA convert, Result 6).
 
 ---
 
@@ -120,14 +120,14 @@ preview ships.
 
 | # | Commit | What | Evidence |
 |---|---|---|---|
-| 1 | `04827a9d` | synthetic **BGRA** checkerboard → import → display | cellA `[255,102,51]`, cellB `[34,34,34]` |
-| 1a | `a0b47d50` | synthetic **NV12** (YUV) bands | top `[210,210,210]`, bottom `[60,60,60]` |
-| 1b-i | `84231a7d` | real H.264 → **ffmpeg d3d11va** HW-decode → `av_hwframe_transfer_data` (GPU→CPU NV12) → upload → display | `format=NV12`, lumaTop 235, lumaBottom 16 |
-| 1b-ii | `ad31685d` | **true zero-copy**: HW-decode → `CopySubresourceRegion` (GPU→GPU) into a shared NV12 texture on ffmpeg's device → display | identical to 1b-i |
-| 3 streaming | `03eac452` | pool of reusable shared NV12 textures, per-frame import/send/release | see streaming table below |
-| 4 persistent import | `de08a824` | import ONCE, renderer pulls a live `getVideoFrame()` → zero per-frame texture IPC | §6b: import/send==poolSize, 60 distinct frames, 0 tearing |
-| 5 color paths | `1fd95f72` | which renderer ingestion path is color-correct for non-709 | §6c: only 2D `drawImage` correct; both WebGPU paths WRONG |
-| 6 native BGRA convert | `705a8d69` | native NV12→BGRA (matrix shader) → share BGRA → WebGPU | §6d: byte-identical to `drawImage` ref (601 + 709) — **color gap closed** |
+| 1 | `3c0f1d7b` | synthetic **BGRA** checkerboard → import → display | cellA `[255,102,51]`, cellB `[34,34,34]` |
+| 1a | `c4ebf5bf` | synthetic **NV12** (YUV) bands | top `[210,210,210]`, bottom `[60,60,60]` |
+| 1b-i | `7e95b8cf` | real H.264 → **ffmpeg d3d11va** HW-decode → `av_hwframe_transfer_data` (GPU→CPU NV12) → upload → display | `format=NV12`, lumaTop 235, lumaBottom 16 |
+| 1b-ii | `be72894a` | **true zero-copy**: HW-decode → `CopySubresourceRegion` (GPU→GPU) into a shared NV12 texture on ffmpeg's device → display | identical to 1b-i |
+| 3 streaming | `37cba608` | pool of reusable shared NV12 textures, per-frame import/send/release | see streaming table below |
+| 4 persistent import | `9314f112` | import ONCE, renderer pulls a live `getVideoFrame()` → zero per-frame texture IPC | §6b: import/send==poolSize, 60 distinct frames, 0 tearing |
+| 5 color paths | `4b52d2ef` | which renderer ingestion path is color-correct for non-709 | §6c: only 2D `drawImage` correct; both WebGPU paths WRONG |
+| 6 native BGRA convert | `28e6c4e0` | native NV12→BGRA (matrix shader) → share BGRA → WebGPU | §6d: byte-identical to `drawImage` ref (601 + 709) — **color gap closed** |
 
 Streaming verification (60-frame 256×256 H.264, center-patch luma ramps 20→235 with
 frame index; renderer keys each frame by `VideoFrame.timestamp` = frame index and

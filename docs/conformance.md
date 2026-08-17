@@ -153,7 +153,7 @@ The UI-driving specs (`layers`, `keyframe_authoring`, `shortcut_focus`) are
 ported when the wdio harness was retired, and they exercise UI that has drifted
 since (the timeline redesign), so they are closer to a rewrite than a port. They
 should be re-homed when their areas are next touched (originals are in git
-history before the retirement commit `e1321538`); the still-image / animated-GIF
+history before the retirement commit `b650f88e`); the still-image / animated-GIF
 classification they covered remains unit-pinned in `io::probe::tests` (captured
 ffprobe JSON + a real-ffprobe integration test) meanwhile.
 

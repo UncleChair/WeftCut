@@ -8,7 +8,7 @@ Re-verify on the next Chromium major bump, or on hardware that breaks an entry's
 
 `element.requestPointerLock()` locks fine on a visible, focused window. A *hidden* window forces `pointerlockerror` — that is a probe-harness artifact, not an engine limit.
 
-History: in the Tauri WebView2/Edge webview, pointer lock never engaged, so the Base UI `NumberField.ScrubArea` drag-to-scrub gesture (which needs pointer lock for unbounded relative cursor movement) could only move the cursor right — the value only ever increased. The ScrubArea grip was removed (`a1142fce`) and `AppNumberField` fell back to typing + arrow keys + hover-revealed steppers.
+History: in the Tauri WebView2/Edge webview, pointer lock never engaged, so the Base UI `NumberField.ScrubArea` drag-to-scrub gesture (which needs pointer lock for unbounded relative cursor movement) could only move the cursor right — the value only ever increased. The ScrubArea grip was removed (`3edd7b15`) and `AppNumberField` fell back to typing + arrow keys + hover-revealed steppers.
 
 Implication: drag-to-scrub on numeric fields is unblocked on Electron and can be re-introduced as a feature; the stepper/typing path remains the no-pointer-lock fallback.
 

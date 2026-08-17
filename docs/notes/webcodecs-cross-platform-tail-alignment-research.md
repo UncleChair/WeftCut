@@ -7,7 +7,7 @@
 > export never ran" — are resolved. (a) The blocker was the export's
 > unconditional `prefer-hardware` request for H.264: Chromium treats the hint
 > as mandatory and Linux has no WebCodecs hardware encoder at all (a
-> codec-matrix boundary), platform-gated in `bfd0e0ee`. (b) On current main, Gate B's
+> codec-matrix boundary), platform-gated in `309cd220`. (b) On current main, Gate B's
 > output encode is native-first anyway and no longer touches VideoEncoder.
 > On the original Linux/RTX 3050 host: Gate B then passed ten sequential runs
 > 10/10 (300 frames on both legs, every sample aligned, byte-identical
@@ -15,9 +15,9 @@
 > 30000/1001, 60000/1001, non-zero start PTS 3.2 s, B-frame + edit-list
 > input, and a range ending mid-frame). The historical `N→N+1` is judged
 > **not reproducible on current main** (no retained artifacts, so this is
-> closure by non-reproduction; likely fixes: the `56f09adf` REORDER_MARGIN
+> closure by non-reproduction; likely fixes: the `4d957078` REORDER_MARGIN
 > lead-in plus the ExportFrameStore duration-eviction/identity rework).
-> Gate B's Linux skip was removed in `49b7f57e` and the tracker thread is
+> Gate B's Linux skip was removed in `98417970` and the tracker thread is
 > closed. VFR remains uncovered — the analyzer and composition grid assume
 > CFR, so VFR alignment needs its own verdict semantics first. The rest of
 > this document is kept as the historical record of the investigation.
@@ -57,7 +57,7 @@
 
 > Lite/WebCodecs 代理链的尾部存在一次已观察到、尚未重新固化的“内容索引领先输出格一帧”。
 
-历史证据不能回答：具体哪个 N、是否每次复现、以及 `56f09adf` 之后是否仍存在。旧记录 `linux-lite-export-off-by-one-tail.md` 本身也将这些列为未知项。
+历史证据不能回答：具体哪个 N、是否每次复现、以及 `4d957078` 之后是否仍存在。旧记录 `linux-lite-export-off-by-one-tail.md` 本身也将这些列为未知项。
 
 ### 2026-07-22 当前 Linux 诊断
 
@@ -87,7 +87,7 @@
 
 ## 对 macOS 修复的复核
 
-提交 [`56f09adf`](https://github.com/UncleChair/WeftCut/commit/56f09adf41c80b7e38da01221402ecf2039deb7b) 把 `REORDER_MARGIN = 16` 的额外输入从部分 lane 推广到全部 Lite decode lane。
+提交 [`4d957078`](https://github.com/UncleChair/WeftCut/commit/4d95707889aa94aeb7956839a0b3084a10aeda7e) 把 `REORDER_MARGIN = 16` 的额外输入从部分 lane 推广到全部 Lite decode lane。
 
 **[直接证据] 修复与观察到的故障链一致：**
 
@@ -106,7 +106,7 @@
 
 ## Linux 硬件黑帧不是尾帧 +1
 
-提交 [`3e677dd2`](https://github.com/UncleChair/WeftCut/commit/3e677dd2824ee02cba468528244c8834c981b054) 记录了同一 Linux/NVIDIA 主机上的隔离探针（结论同时归档在 codec-matrix 的 tracker 讨论里）：
+提交 [`4a30765b`](https://github.com/UncleChair/WeftCut/commit/4a30765b27b78d3ae40450a6544d1d715c40262a) 记录了同一 Linux/NVIDIA 主机上的隔离探针（结论同时归档在 codec-matrix 的 tracker 讨论里）：
 
 - **[直接证据]** software I420 在 Window/Worker 以及四条导入/回读路径都正常；
 - **[直接证据]** hardware BGRA 在四条路径都读成纯黑，包括 `VideoFrame.copyTo()`；

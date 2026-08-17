@@ -1,7 +1,7 @@
 # Linux Lite-export off-by-one tail alignment — investigation handoff (resolved)
 
 **Status:** RESOLVED 2026-07-23 — does not reproduce on current `main`
-(Gate B's Linux skip removed in `49b7f57e`). See "Resolution" below. The
+(Gate B's Linux skip removed in `98417970`). See "Resolution" below. The
 rest of this document is kept as the historical record of the observation
 and the investigation trail.
 **Environment when last observed:** Linux x64, Electron 42.4.1 (Chromium 148),
@@ -20,14 +20,14 @@ sidecar ffmpeg n7.1 (BtbN), Lite/webcodecs export lane.
   mid-frame (both legs agree on the ceil'd frame count). VFR remains
   untested by design — the analyzer and composition grid assume CFR.
 - **Likely fixes** (landed between the historical observation and the
-  validation run): the `REORDER_MARGIN` lead-in (`56f09adf`) and the
+  validation run): the `REORDER_MARGIN` lead-in (`4d957078`) and the
   `ExportFrameStore` duration-eviction/identity rework described in the
   2026-07-22 update below. The historical failure retained no artifacts, so
   this is closure-by-non-reproduction, not a proven root cause.
 - **Why the gate was un-runnable on this host before:** the export's
   unconditional `prefer-hardware` VideoEncoder hint was a guaranteed hard
   error on Linux (Chromium treats the hint as mandatory and has no Linux HW
-  encoder — a codec-matrix boundary, platform-gated in `bfd0e0ee`); and on
+  encoder — a codec-matrix boundary, platform-gated in `309cd220`); and on
   current `main` Gate B's output encode is native-first anyway, so it no
   longer touches VideoEncoder at all.
 - Full evidence tables: the two 2026-07-23 closure comments on the tracker
@@ -55,7 +55,7 @@ On Linux the **proxy (Lite/webcodecs) leg completes** but fails the alignment
 precondition: **a tail sample best-matches source frame +1** instead of its
 own index (recorded in the skip comment at `:226-238`). The native
 software-lane leg is clean. The gate is currently skipped on Linux only
-(`:238`); macOS was un-skipped in `56f09adf` after its separate wedge was
+(`:238`); macOS was un-skipped in `4d957078` after its separate wedge was
 fixed (see "Not this bug" below).
 
 What the assertion is: `analyze()` (`e2e/lib/analyze.mjs:13`) shells the
@@ -71,7 +71,7 @@ PTS-grid defect near end-of-stream, not a quality regression.
 Verified:
 - The Lite leg **runs to completion** on Linux (unlike the macOS wedge), so
   this is a tail-selection defect, not a starvation.
-- The skip predates `3e761485` (the `preferSoftware` pin on the Lite export
+- The skip predates `e6c76db7` (the `preferSoftware` pin on the Lite export
   lane) — it existed in the prefer-hardware era too.
 - The macOS failure mode that shared this gate was different and is fixed
   (next section).
@@ -79,7 +79,7 @@ Verified:
 Unknown (needs a Linux machine):
 - Which sample indices misalign (only the last?), and whether
   `totalFrames === 300` held on the failing run.
-- Whether `56f09adf` (REORDER_MARGIN lead-in on every lane) changed anything
+- Whether `4d957078` (REORDER_MARGIN lead-in on every lane) changed anything
   — it alters dispatch at every chunk tail, so the failing behavior may have
   moved, vanished, or (unlikely) worsened. **Re-run before any theorizing.**
 - Whether the defect also affects other tail-sensitive Lite specs on Linux
@@ -92,7 +92,7 @@ The macOS failure on the same gate was a **decoder reorder-tail hold-back**:
 Chromium's macOS prefer-software H.264 decoder withholds the last 2 frames of
 every fed window (4 with B-frames), and the chunked dispatch's 1-packet
 margin never pushed them out → export wedged in `progress`. Fixed in
-`56f09adf` by feeding a `REORDER_MARGIN` lead-in past each stop key in
+`4d957078` by feeding a `REORDER_MARGIN` lead-in past each stop key in
 `ExportDecoderPool.decodeRange`. The Linux symptom (completes, tail sample
 off by one) is a different shape — treat it as a PTS-grid/tail problem in the
 territory of ADR 0012, not a decode-delay problem.
@@ -131,7 +131,7 @@ PATH="$PWD/resources/ffmpeg/linux:$PATH" WEFTCUT_DECODE_E2E=1 \
 
 The failing expect prints the misaligned samples as JSON (`:271-272`) — start
 there: which indices, and is the offset consistently +1. Then, in order:
-(1) confirm on current `main` (post-`56f09adf`) before touching code;
+(1) confirm on current `main` (post-`4d957078`) before touching code;
 (2) ffprobe both legs' outputs for frame count + first/last PTS against the
 source grid; (3) add a temporary dump of ring PTS order at `finishEosDrain`
 for the tail GOP; (4) if a clamp-boundary race is suspected, run the spec
@@ -140,7 +140,7 @@ repeatedly — a race gives intermittent ±1, a deterministic grid bug gives
 
 When fixed: remove the Linux arm of the skip, keep the comment recording the
 resolution, and re-run the full export + conformance specs on Linux.
-**Done 2026-07-23:** skip removed in `49b7f57e` with the resolution recorded
+**Done 2026-07-23:** skip removed in `98417970` with the resolution recorded
 in the test comment; the repro steps above no longer need the un-skip edit.
 
 ## References
@@ -152,5 +152,5 @@ in the test comment; the repro steps above no longer need the un-skip edit.
 - Canonical WebCodecs clock: `src/renderer/render/decoder/decodeClock.ts`
 - ADR 0012 (`docs/adr/0012-directexport-worker-decodable-codecs.md`) — the
   earlier PTS-grid deadlock in the same store
-- `56f09adf` — REORDER_MARGIN lead-in (the fix for the macOS wedge cousin)
-- `3e761485` — Lite export lane pinned to prefer-software
+- `4d957078` — REORDER_MARGIN lead-in (the fix for the macOS wedge cousin)
+- `e6c76db7` — Lite export lane pinned to prefer-software

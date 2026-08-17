@@ -409,19 +409,19 @@ only inside the measured window. The two 67.0/68.9 ms reports waited 1.549/1.555
 and are invalidated. The gate now also requires the derivative pill to stay absent;
 the same fixture then waits 15–16 s and records why it waited in `quietGate`.
 
-Five valid same-sitting pairs on `35cf93d3` put every 1-track baseline at
+Five valid same-sitting pairs on `5e1074d2` put every 1-track baseline at
 16.9–17.2 ms and the 2-track tick p99 at **17.5, 17.6, 40.5, 27.9, 38.9 ms**:
 3/5 smooth, 2/5 STUTTER. Drops stayed 0.00 % and presented fps stayed
 58.6–60.0. This is not admission: two 4K sessions consume 2/5 session slots and
 two thirds of the coded-area budget, so both execute the same admitted path.
 
-It is not a branch regression at `45a98405` either. Corrected-gate isolated runs
-gave `3e5adabf` 43.5/40.6/42.1 ms and `45a98405` 17.3/36.3/33.9 ms. The
+It is not a branch regression at `0147d0fa` either. Corrected-gate isolated runs
+gave `e080001d` 43.5/40.6/42.1 ms and `0147d0fa` 17.3/36.3/33.9 ms. The
 documented 17.4 ms source,
-`playback-perf-2026-07-26-5a1c7357-t11-2160.json`, labels a
-`rendererFence` cell even though a clean `5a1c7357` checkout does not recognise
+`playback-perf-2026-07-26-d508bf91-t11-2160.json`, labels a
+`rendererFence` cell even though a clean `d508bf91` checkout does not recognise
 that barrier; it was a dirty worktree containing the implementation later
-committed as `3e5adabf`. The same implementation has therefore measured both
+committed as `e080001d`. The same implementation has therefore measured both
 green and red.
 
 The clean red shape is the live-thread branch of
@@ -538,7 +538,7 @@ a shared wait rather than per-frame work.
 Its weight: **0.29–0.71 thread-seconds per wall-second**, against the
 0.03 thread-s/s the entire composite plus present consumes. The barrier is
 roughly **20×** the loop it is stalling. This supersedes the reading recorded in
-the revert of `e8371231`, which attributed the cost to a full-frame
+the revert of `99943c8a`, which attributed the cost to a full-frame
 `createImageBitmap` transfer; at equal session count the cost is flat across
 resolution.
 
@@ -629,9 +629,9 @@ the resolution-blind FrameRing.
 
 ### Current policy verification — HEVC and H.264 both accepted
 
-The production-shaped candidate later checkpointed as `adfbd7f5` has three
+The production-shaped candidate later checkpointed as `743cb0d0` has three
 current-build HEVC repeats per heavy cell. The JSON names retain base SHA
-`35cf93d3` because measurement preceded the checkpoint:
+`5e1074d2` because measurement preceded the checkpoint:
 
 | current 4K HEVC | runs | lane mix | drops | tick p99 | timer gaps >50 ms | ring result |
 |---|---:|---|---:|---:|---:|---|
@@ -653,8 +653,8 @@ all rings tracking and the timer alive in all three, though drops were
 named `playback-perf-t13-cap3-spill540p15[-4t]-r1..r3.json`.
 
 The formal main-worktree run on the final IPC/admission implementation with the
-final replay state gate is now collected — `84182572`, six cells named
-`playback-perf-2026-07-27-84182572-t13-h264-{4,5}-r1..r3.json`:
+final replay state gate is now collected — `a5e51441`, six cells named
+`playback-perf-2026-07-27-a5e51441-t13-h264-{4,5}-r1..r3.json`:
 
 | current 4K H.264 | runs | lane mix | drops | tick p99 | timer gaps >50 ms | ring result |
 |---|---:|---|---:|---:|---:|---|

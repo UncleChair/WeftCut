@@ -5,4 +5,4 @@
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
 #
 # One-time `cargo fmt --all` reformat of apps/desktop/native (no logic change).
-4dba2cd7750520665435bff1fabe48d92db0bc3e
+a4356f154a895aa4b3d6f219aa12bf24f8d9e43f

@@ -214,7 +214,7 @@ empty when `nvidia-smi` is absent, and reports the NVDEC *decode* engine only �
 not the copy/DMA engine or PCIe. The load-bearing signals are the fps/×realtime,
 the per-process CPU split, and that decoder-util reading.
 
-**What the RTX 3050 measured** (NVDEC, `h264-1080`, 3 runs; git `eda76e87`, all
+**What the RTX 3050 measured** (NVDEC, `h264-1080`, 3 runs; git `3b961042`, all
 cells `hwLane: nvdec`):
 
 | signal | reading |
@@ -228,7 +228,7 @@ cells `hwLane: nvdec`):
 | cold start — first frame / warm P50 | ~435 / ~525 ms |
 
 **What the Intel iGPU measured** (VAAPI, `--hw-lane vaapi`, 3 runs; git
-`296840b6`, every cell `hwLane: vaapi` across H.264 / HEVC / VP9 — the
+`7fbdc75e`, every cell `hwLane: vaapi` across H.264 / HEVC / VP9 — the
 bundled-libva copy-back fix):
 
 | fixture | throughput fps (median) | ×realtime | seek forward-far P95 | cold start first frame |
@@ -314,7 +314,7 @@ bump may open VT ProRes *software* sessions even on base M1 — re-verify then.)
 So on this host the 10-bit/VT proof is HEVC Main10, and the ProRes copy-back
 cell is a TODO for a ProRes-engine Mac (command below).
 
-**What the Apple M1 measured** (base M1, 3-run medians, git `032daf84`; every
+**What the Apple M1 measured** (base M1, 3-run medians, git `e7315089`; every
 copy-back cell `hwLane: videotoolbox`; CPU is the per-process
 `app.getAppMetrics` mean % during the throughput window — main is where the
 napi decode lands, renderer is unpack + paint):
