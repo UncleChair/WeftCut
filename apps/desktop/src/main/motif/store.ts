@@ -47,6 +47,17 @@ export class UserMotifStore {
     try { return readFileSync(draft); } catch { return null; }
   }
 
+  /** Published copy first, then draft — the `readFile` resolution order without
+   *  the read. Used for presence checks on optional companion files. */
+  hasFile(id: string, rel: string): boolean {
+    if (id === DRAFTS_DIR) return false;
+    const safeId = safeRel(id);
+    const safe = safeRel(rel);
+    if (!safeId || !safe) return false;
+    if (existsSync(path.join(this._root, ...safeId, ...safe))) return true;
+    return existsSync(path.join(this.draftsRoot(), ...safeId, ...safe));
+  }
+
   readHtml(id: string): string | null {
     const b = this.readFile(id, "index.html");
     return b ? b.toString("utf8") : null;

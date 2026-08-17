@@ -7,6 +7,7 @@ import {
   listMotifs,
   setUserMotifs,
   subscribeMotifCatalog,
+  BUILTIN_MANIFESTS,
   motifCatalogRevision,
   type MotifManifest,
 } from "./catalog";
@@ -137,4 +138,34 @@ it("setUserMotifs bumps the revision and notifies subscribers", () => {
   un();
   setUserMotifs([]);
   expect(calls).toBe(1); // unsubscribed → no further calls
+});
+
+describe("has_params_ui", () => {
+  it("reaches getMotif for a BUILT-IN, whose manifest never comes from the payload", () => {
+    // `catalog.get` answers built-ins from the static BUILTIN_MANIFESTS import,
+    // so the flag has to travel beside the manifest layer, not inside it. The
+    // backend payload lists built-ins, which is what makes that possible.
+    expect(getMotif("countdown")!.hasParamsUi).toBe(false);
+    setUserMotifs([{ ...base, has_params_ui: true }]);
+    expect(getMotif("countdown")!.hasParamsUi).toBe(true);
+    expect(getMotif("countdown")!.manifest).toBe(BUILTIN_MANIFESTS.get("countdown"));
+  });
+
+  it("reaches getMotif for a user Motif and clears when the file goes away", () => {
+    const user: MotifManifest = {
+      id: "u-params", name: "U", version: 1, size: [10, 10], default_duration_s: 1,
+      props_schema: {}, has_params_ui: true,
+    };
+    setUserMotifs([user]);
+    expect(getMotif("u-params")!.hasParamsUi).toBe(true);
+    // The watcher re-pulls the whole catalog; a vanished params.html comes back
+    // as an absent flag.
+    setUserMotifs([{ ...user, has_params_ui: false }]);
+    expect(getMotif("u-params")!.hasParamsUi).toBe(false);
+  });
+
+  it("defaults to false for a payload that omits the field", () => {
+    setUserMotifs([{ id: "plain", name: "P", version: 1, size: [10, 10], default_duration_s: 1, props_schema: {} }]);
+    expect(getMotif("plain")!.hasParamsUi).toBe(false);
+  });
 });

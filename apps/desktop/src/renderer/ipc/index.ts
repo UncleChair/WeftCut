@@ -1728,6 +1728,12 @@ export interface MotifSummary {
   /// The installed Motif id this draft was forked from (`create_edit_draft`).
   /// Present only on edit-mode drafts; absent for new drafts and installed/builtin entries.
   target_id?: string;
+  /// True when a `params.html` sits next to this Motif's `index.html`, i.e. the
+  /// Motif owns its parameter UI and the property panel embeds that page
+  /// instead of generating the fallback form. Presence of the file is the whole
+  /// switch — additive catalog metadata, NOT a `props_schema` / `PropSpec`
+  /// change (the data plane above is frozen).
+  has_params_ui?: boolean;
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;

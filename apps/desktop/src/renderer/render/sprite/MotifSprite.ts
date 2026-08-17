@@ -183,8 +183,11 @@ export class MotifSprite implements StageableSprite {
       return;
     }
 
+    // `layerId` opts the on-screen frame into the preview overlay: a params
+    // page mid-gesture renders here and nowhere else (the baker and the export
+    // path deliberately omit it — see motifFrameDescriptor).
     const desc = motifFrameDescriptor(
-      view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, this.motif,
+      view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, this.motif, this.layerId,
     );
     if (!desc) {
       // eslint-disable-next-line no-console

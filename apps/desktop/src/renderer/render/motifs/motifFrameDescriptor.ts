@@ -1,5 +1,6 @@
 import type { MotifView } from "../../ipc";
 import { canonicalizePropsLenient, resolveMotifContentDurationUs, type Motif } from "./catalog";
+import { overlayMotifProps } from "./previewOverlay";
 import {
   US_PER_SEC,
   frameTimeSec,
@@ -29,6 +30,13 @@ export interface MotifFrameDescriptor {
 /// Always returns a descriptor — the lenient canonicalize never fails. The
 /// `| null` return type is kept for defensive typing; callers' null guards are
 /// safe no-ops.
+///
+/// `layerId`, when given, opts this call into the preview overlay: any pending
+/// (uncommitted) props for that layer are layered over `view.props` first, so
+/// the frame AND the cache key both describe what the user is dragging. Callers
+/// that must describe the COMMITTED state — the disk baker, bake status, the
+/// baked-key GC, the export bake — omit it, and a live preview can therefore
+/// never write a transient frame to disk or move a progress bar.
 export function motifFrameDescriptor(
   // Only the non-animated identity fields — the cache key must not (and
   // cannot) vary with per-frame transform/opacity resolution, so both the
@@ -39,12 +47,17 @@ export function motifFrameDescriptor(
   fpsNum: number,
   fpsDen: number,
   motif: Motif,
+  layerId?: string,
 ): MotifFrameDescriptor | null {
+  // Single choke point for props: the overlay merge happens here, immediately
+  // ahead of the canonicalize that feeds both the frame inputs and the cache
+  // key, so no downstream consumer can see one without the other.
+  const props = layerId === undefined ? view.props : overlayMotifProps(layerId, view.props);
   // Render path is resilient: lenient canonicalize (drop unknown / fill defaults
   // / fall back on invalid) so a layer whose Motif schema changed under it (an
   // in-place update) still renders rather than blanking.
-  const canonicalProps = canonicalizePropsLenient(view.props, motif.manifest);
-  const cap = resolveMotifContentDurationUs(motif.manifest, view.props);
+  const canonicalProps = canonicalizePropsLenient(props, motif.manifest);
+  const cap = resolveMotifContentDurationUs(motif.manifest, props);
   const contentDurationUs = cap ?? durationUs;
   // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`).
   // A `content_duration_s` holdable always plays from content frame 0 (its

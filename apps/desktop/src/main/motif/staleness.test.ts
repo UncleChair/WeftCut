@@ -61,14 +61,14 @@ describe('buildAckEntries', () => {
 
 describe('currentVersions', () => {
   it('merges built-ins and published user motifs; published wins on collision', () => {
-    const builtins: BuiltinMotif[] = [{ id: 'countdown', manifest: man('countdown', 'Countdown', 1), html: '' }]
+    const builtins: BuiltinMotif[] = [{ id: 'countdown', manifest: man('countdown', 'Countdown', 1), html: '', hasParamsUi: false }]
     const m = currentVersions(builtins, [man('user-x', 'User X', 7)])
     expect(m.get('countdown')).toEqual({ name: 'Countdown', version: 1 })
     expect(m.get('user-x')).toEqual({ name: 'User X', version: 7 })
   })
 
   it('published overrides builtin on id collision', () => {
-    const builtins: BuiltinMotif[] = [{ id: 'x', manifest: man('x', 'BuiltIn', 1), html: '' }]
+    const builtins: BuiltinMotif[] = [{ id: 'x', manifest: man('x', 'BuiltIn', 1), html: '', hasParamsUi: false }]
     const m = currentVersions(builtins, [man('x', 'UserX', 9)])
     expect(m.get('x')).toEqual({ name: 'UserX', version: 9 })
   })

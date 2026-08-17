@@ -12,7 +12,7 @@
 // so they match the label whether it renders as the raw prop key or its
 // Title Case form — the queries pin wiring and commit shape, not label cosmetics.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 import type { LayerSummary, TrackSummary } from "../ipc";
@@ -280,5 +280,55 @@ describe("MotifFields commit contract", () => {
     const swatch = within(section).getByLabelText(/^bg.color$/i) as HTMLInputElement;
     // The 8-digit schema default "#00000000" truncates the same way.
     expect(swatch.value).toBe("#000000");
+  });
+});
+
+describe("MotifFields params-page branch", () => {
+  it("keeps the generated form for a motif with no params page", () => {
+    const section = renderMotifPanel();
+    expect(section.querySelector("iframe")).toBeNull();
+    expect(section.querySelectorAll(".prop-field").length).toBe(5);
+  });
+
+  it("embeds the motif's own sandboxed page instead of the form when it ships one", () => {
+    setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
+    render(
+      <AttributePanel
+        tracks={[motifTrack(TEST_MANIFEST.id, DEFAULT_PROPS)]}
+        selectedLayerId="layer-m1"
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+        fpsNum={30}
+        fpsDen={1}
+        currentTimeUs={1_000_000}
+      />,
+    );
+    const section = screen.getByRole("region", { name: "Props" });
+    const frame = section.querySelector("iframe")!;
+    expect(frame).toBeTruthy();
+    // Scripts only — no `allow-same-origin`, so the page can never reach the
+    // app's DOM or its cookies.
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("src")).toMatch(/^motif:\/\/test-props-motif\/params\.html\?v=\d+$/);
+    // The page owns the whole surface — no generated rows beside it.
+    expect(section.querySelectorAll(".prop-field").length).toBe(0);
+    expect(updateLayerParams).not.toHaveBeenCalled();
+  });
+
+  it("busts the page URL when the catalog revision bumps (watcher hot-reload)", () => {
+    setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
+    render(
+      <AttributePanel
+        tracks={[motifTrack(TEST_MANIFEST.id, DEFAULT_PROPS)]}
+        selectedLayerId="layer-m1"
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+        fpsNum={30}
+        fpsDen={1}
+        currentTimeUs={1_000_000}
+      />,
+    );
+    const srcOf = () => screen.getByRole("region", { name: "Props" }).querySelector("iframe")!.getAttribute("src");
+    const before = srcOf();
+    act(() => setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]));
+    expect(srcOf()).not.toBe(before);
   });
 });

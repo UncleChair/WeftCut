@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { getMotif, resolveMotifContentDurationUs } from "./catalog";
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
+import { resetMotifPreview, setMotifPreviewProps } from "./previewOverlay";
 import { motifContentFrame, motifFrameCacheKey } from "./motifFrames";
 import { canonicalizeProps } from "./Rasterizer";
 
@@ -43,6 +44,7 @@ describe("motifFrameDescriptor", () => {
         content_duration_s: 0.8,
         props_schema: {},
       },
+      hasParamsUi: false,
     };
     // Layer 5 s wide; sample tInLayer = 3 s — well past the 0.8 s content.
     const d = motifFrameDescriptor(view({}, 1_000_000), 3_000_000, 5_000_000, 30, 1, holdable)!;
@@ -99,5 +101,42 @@ describe("motifFrameDescriptor", () => {
     const a = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, m as never)!;
     const b = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, m as never)!;
     expect(a.cacheKey).toBe(b.cacheKey);
+  });
+});
+
+describe("motifFrameDescriptor preview overlay", () => {
+  const tpl = getMotif("countdown")!;
+  afterEach(() => resetMotifPreview());
+
+  it("layers pending props over the view for the frame AND the cache key", () => {
+    const v = view({ seconds: 6, accent: "#ff3366" });
+    const committed = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-a")!;
+    setMotifPreviewProps("layer-a", { accent: "#00ff00" });
+    const previewed = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-a")!;
+    expect(previewed.canonicalProps.accent).toBe("#00ff00");
+    expect(previewed.cacheKey).not.toBe(committed.cacheKey);
+  });
+
+  it("only the named layer sees the overlay", () => {
+    const v = view({ seconds: 6, accent: "#ff3366" });
+    setMotifPreviewProps("layer-a", { accent: "#00ff00" });
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-b")!.canonicalProps.accent)
+      .toBe("#ff3366");
+  });
+
+  it("a caller that omits layerId describes the COMMITTED state", () => {
+    // The disk baker, the bake status readout and the export bake all take this
+    // branch — a live preview must never reach them.
+    const v = view({ seconds: 6, accent: "#ff3366" });
+    setMotifPreviewProps("layer-a", { accent: "#00ff00" });
+    expect(motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl)!.canonicalProps.accent)
+      .toBe("#ff3366");
+  });
+
+  it("a pending duration prop moves the content window like a committed one", () => {
+    const v = view({ seconds: 6 });
+    setMotifPreviewProps("layer-a", { seconds: 3 });
+    const d = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, tpl, "layer-a")!;
+    expect(d.contentDurationUs).toBe(3_000_000);
   });
 });

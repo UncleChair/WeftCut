@@ -21,7 +21,7 @@ let store: UserMotifStore
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), 'motif-auth-')); store = new UserMotifStore(root) })
 
 // A synthetic built-in (avoids depending on disk-relocated assets in this unit).
-const BUILTINS: BuiltinMotif[] = [{ id: 'countdown', manifest: m('Countdown', 'countdown'), html: doc(m('Countdown', 'countdown'), 'CD') }]
+const BUILTINS: BuiltinMotif[] = [{ id: 'countdown', manifest: m('Countdown', 'countdown'), html: doc(m('Countdown', 'countdown'), 'CD'), hasParamsUi: false }]
 
 describe('getMotifSource', () => {
   it('returns a built-in by id (built-in wins)', () => {
@@ -48,6 +48,15 @@ describe('motifToPayload', () => {
     expect(p.id).toBe('foo'); expect(p.name).toBe('Foo'); expect(p.status).toBe('installed')
     expect(p.html).toBe(html)
     expect(p.content_hash).toBe(motifContentHash(man, html)) // FULL html (island included)
+  })
+  it('stamps has_params_ui, defaulting to false', () => {
+    const man = m('Foo', 'foo')
+    const html = doc(man, 'FOO')
+    expect(motifToPayload(man, html, 'installed').has_params_ui).toBe(false)
+    expect(motifToPayload(man, html, 'installed', true).has_params_ui).toBe(true)
+    // Presence is payload decoration only — it never enters the content hash.
+    expect(motifToPayload(man, html, 'installed', true).content_hash)
+      .toBe(motifToPayload(man, html, 'installed', false).content_hash)
   })
 })
 
@@ -77,6 +86,34 @@ describe('listMotifsInner', () => {
     const list = listMotifsInner(store, BUILTINS)
     expect(list.find((e) => e.id === 'd1')!.target_id).toBe('countdown')
   })
+  it('reports has_params_ui per entry for builtin, installed and draft', () => {
+    // built-in: carried on the BuiltinMotif (stat'd once at load).
+    const builtins: BuiltinMotif[] = [{ ...BUILTINS[0]!, hasParamsUi: true }]
+    // installed "foo" WITH a params page, installed "bare" without.
+    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    writeFileSync(path.join(root, 'foo', 'params.html'), '<html>p</html>')
+    store.writeDraft('bare', doc(m('Bare', 'bare'))); store.installDraft('bare', 'bare')
+    // draft "d2" WITH a params page written next to its draft index.html.
+    store.writeDraft('d2', doc(m('D2', 'd2')))
+    writeFileSync(path.join(root, 'drafts', 'd2', 'params.html'), '<html>p</html>')
+
+    const list = listMotifsInner(store, builtins)
+    const flag = (id: string) => list.find((e) => e.id === id)!.has_params_ui
+    expect(flag('countdown')).toBe(true)
+    expect(flag('foo')).toBe(true)
+    expect(flag('bare')).toBe(false)
+    expect(flag('d2')).toBe(true)
+  })
+  it('hot-updates has_params_ui when the file appears and vanishes', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    const flag = () => listMotifsInner(store, BUILTINS).find((e) => e.id === 'foo')!.has_params_ui
+    expect(flag()).toBe(false)
+    // The watcher re-runs this list on any disk change; nothing is cached.
+    writeFileSync(path.join(root, 'foo', 'params.html'), '<html>p</html>')
+    expect(flag()).toBe(true)
+    rmSync(path.join(root, 'foo', 'params.html'))
+    expect(flag()).toBe(false)
+  })
 })
 
 describe('builtinMotifs', () => {
@@ -90,6 +127,15 @@ describe('builtinMotifs', () => {
     expect(cd).toBeDefined()
     expect(cd!.manifest.id).toBe('countdown') // manifest comes from BUILTIN_MANIFESTS, not the disk island
     expect(cd!.html).toContain('CD')
+    expect(cd!.hasParamsUi).toBe(false)
+    rmSync(bdir, { recursive: true, force: true })
+  })
+  it('flags a built-in that ships params.html next to its index.html', () => {
+    const bdir = mkdtempSync(path.join(tmpdir(), 'motif-builtins-'))
+    mkdirSync(path.join(bdir, 'countdown'), { recursive: true })
+    writeFileSync(path.join(bdir, 'countdown', 'index.html'), doc(m('Countdown', 'countdown'), 'CD'))
+    writeFileSync(path.join(bdir, 'countdown', 'params.html'), '<html>params</html>')
+    expect(builtinMotifs(bdir).find((b) => b.id === 'countdown')!.hasParamsUi).toBe(true)
     rmSync(bdir, { recursive: true, force: true })
   })
 })

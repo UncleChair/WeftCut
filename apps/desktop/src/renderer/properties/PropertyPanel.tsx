@@ -50,6 +50,7 @@ import { useProjectStore, useProjectSummary } from "../state/projectStore";
 import { useSelectedLayerIds, useSelectedTransitionId } from "../state/selectionStore";
 import { TransitionFields } from "./TransitionFields";
 import { Field } from "./Field";
+import { MotifParamsFrame } from "./MotifParamsFrame";
 import { MotifPropField } from "./MotifPropFields";
 import { PropSection } from "./PropSection";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
@@ -845,6 +846,19 @@ function MotifFields({
       <TransformSection layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       {motif === null ? (
         <p className="meta">{t("property_panel.unknown_motif")}</p>
+      ) : motif.hasParamsUi ? (
+        // The Motif ships its own page — it owns the whole props surface,
+        // including labels, grouping and order. The fallback form below stays
+        // the default for every Motif that doesn't.
+        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
+          <MotifParamsFrame
+            layerId={layer.id}
+            motifId={v.motif_id}
+            manifest={motif.manifest}
+            props={v.props}
+            commit={(patch) => commit({ kind: "Motif", props: patch })}
+          />
+        </PropSection>
       ) : propEntries.length > 0 ? (
         <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
           {propEntries.map(([key, spec]) => (

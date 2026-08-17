@@ -38,7 +38,16 @@ export interface Manifest {
   status?: "builtin" | "installed" | "draft";
   target_id?: string;
   fonts?: Array<{ family: string; file: string; weight?: number; style?: string }>;
+  /// Whether a `params.html` sits next to this motif's `index.html`. Payload
+  /// decoration stamped by the catalog (main side is the only one that can stat
+  /// the file), NOT an on-disk manifest field: it is absent from the island,
+  /// from `coreManifestForHash`, and from `validateManifest`.
+  has_params_ui?: boolean;
 }
+
+/// The optional companion page a motif ships to own its parameter UI. Presence
+/// alone enables it — there is no manifest field to set.
+export const PARAMS_PAGE_FILE = "params.html";
 
 // ---------------------------------------------------------------------------
 // Error

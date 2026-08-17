@@ -100,6 +100,26 @@ describe("UserMotifStore reads", () => {
     expect(s.listManifests()).toEqual([]);
     expect(s.readHtml("anything")).toBeNull();
   });
+  it("hasFile resolves published-then-draft and refuses unsafe paths", () => {
+    const s = new UserMotifStore(root);
+    // Draft-only: the companion sits beside the draft's index.html.
+    s.writeDraft("foo", composeMotifHtml(man("foo", "Foo", 1), body));
+    expect(s.hasFile("foo", "params.html")).toBe(false);
+    writeFileSync(path.join(root, "drafts", "foo", "params.html"), "<html>p</html>");
+    expect(s.hasFile("foo", "params.html")).toBe(true);
+    // Published copy answers once installed (the draft dir moved with it).
+    s.installDraft("foo", "foo");
+    expect(s.hasFile("foo", "params.html")).toBe(true);
+    // A published motif WITHOUT the file must not inherit a same-id draft's.
+    s.writeDraft("bar", composeMotifHtml(man("bar", "Bar", 1), body));
+    s.installDraft("bar", "bar");
+    expect(s.hasFile("bar", "params.html")).toBe(false);
+    // Same traversal guards as readFile.
+    expect(s.hasFile("foo", "../params.html")).toBe(false);
+    expect(s.hasFile("..", "params.html")).toBe(false);
+    expect(s.hasFile("drafts", "params.html")).toBe(false);
+    expect(s.hasFile("foo", "")).toBe(false);
+  });
   it("readFile falls back to draft then prefers published", () => {
     const s = new UserMotifStore(root);
     s.writeDraft("foo", composeMotifHtml(man("foo", "Draft Foo", 1), "<head></head><body>draft<script>motif.define({setup(){}})</script></body>"));

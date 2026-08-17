@@ -184,7 +184,7 @@ describe("MotifSprite.refreshMotif", () => {
       content_hash: contentHash,
       status: "draft",
     };
-    return { manifest };
+    return { manifest, hasParamsUi: false };
   }
 
   const view: ResolvedMotifView = {

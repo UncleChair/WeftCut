@@ -68,6 +68,7 @@ import {
 import { subscribeRoleGainOverrides } from "./audio/roleGainOverrides";
 import { subscribeTransformOverrides } from "./transformOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
+import { subscribeMotifPreview } from "./motifs/previewOverlay";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import type { ExportDecodeRouting } from "./exportDecodeRouting";
@@ -732,6 +733,21 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // and bail if absent.
   useEffect(() => {
     return subscribeMotifCatalog(() => {
+      const c = compositorRef.current;
+      if (!c) return;
+      c.refreshMotifs();
+      c.compositeFrame(engineRef.current?.positionUs() ?? 0);
+    });
+  }, []);
+
+  // A Motif params page previewing a gesture writes pending props into the
+  // overlay store instead of the state actor, so no `summary` ever changes and
+  // the effect above never fires. Ride the same signal path a catalog change
+  // uses — the overlay is folded in at the frame descriptor, so re-arming the
+  // sprites and recompositing is all it takes for the new props to reach the
+  // canvas (the last bitmap holds until the fresh capture lands, so no flash).
+  useEffect(() => {
+    return subscribeMotifPreview(() => {
       const c = compositorRef.current;
       if (!c) return;
       c.refreshMotifs();

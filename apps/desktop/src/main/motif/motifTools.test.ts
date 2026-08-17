@@ -21,7 +21,7 @@ let rebinds: unknown[][]
 let layers: MotifLayerRef[]
 let logs: string[]
 let deps: MotifToolDeps
-const BUILTINS: BuiltinMotif[] = [{ id: 'countdown', manifest: m('Countdown', 'countdown'), html: doc(m('Countdown', 'countdown'), 'CD') }]
+const BUILTINS: BuiltinMotif[] = [{ id: 'countdown', manifest: m('Countdown', 'countdown'), html: doc(m('Countdown', 'countdown'), 'CD'), hasParamsUi: false }]
 
 beforeEach(() => {
   store = new UserMotifStore(mkdtempSync(path.join(tmpdir(), 'motiftools-')))

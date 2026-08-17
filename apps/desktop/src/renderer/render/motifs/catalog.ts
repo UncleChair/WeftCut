@@ -23,6 +23,11 @@ export type MotifManifest = Manifest;
 
 export interface Motif {
   manifest: MotifManifest;
+  /// The Motif ships its own parameter page (`params.html`). Stamped by the
+  /// backend catalog payload — only the main process can stat the file — and
+  /// tracked beside the manifest layer rather than inside it, because built-in
+  /// manifests come from static JSON imports that never see the payload.
+  hasParamsUi: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -49,18 +54,26 @@ export function motifCatalogRevision(): number {
   return catalogRevision;
 }
 
+/// Ids whose backend payload reported a `params.html` companion. Kept OUTSIDE
+/// `MotifCatalog` on purpose: `catalog.get` answers built-ins from the static
+/// `BUILTIN_MANIFESTS` JSON, which the payload never replaces, so a flag stored
+/// on the user manifest layer would be invisible for exactly the built-ins.
+/// The payload lists built-ins too, so this set covers every entry.
+let paramsUiIds: ReadonlySet<string> = new Set();
+
 /// Replace the runtime user-Motif layer (from the backend `list_motifs` IPC).
 /// Built-ins are always present and authoritative; this only adds/removes the
 /// user entries. Idempotent — call it whenever the backend catalog changes.
 export function setUserMotifs(manifests: MotifManifest[]): void {
   catalog.setUserManifests(manifests);
+  paramsUiIds = new Set(manifests.filter((m) => m.has_params_ui === true).map((m) => m.id));
   catalogRevision += 1;
   for (const cb of catalogSubscribers) cb();
 }
 
 export function getMotif(id: string): Motif | null {
   const m = catalog.get(id);
-  return m != null ? { manifest: m } : null;
+  return m != null ? { manifest: m, hasParamsUi: paramsUiIds.has(id) } : null;
 }
 
 export function listMotifs(): MotifManifest[] {

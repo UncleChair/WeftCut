@@ -3,24 +3,26 @@
 // The Motif authoring lifecycle + catalog payload (TS-owned outright — no
 // Rust counterpart exists). Pure: no actor, no IPC, no event emit — the host
 // dispatcher (motifTools.ts) wraps these with the store/actor/emit.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
-  BUILTIN_IDS, BUILTIN_MANIFESTS, type Manifest,
+  BUILTIN_IDS, BUILTIN_MANIFESTS, PARAMS_PAGE_FILE, type Manifest,
   parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId, canonicalizePropsLenient,
 } from '../../shared/motifs/catalog'
 import type { MotifRebindEntry } from '../state/model'
 import { motifContentHash } from './contentHash'
 import type { UserMotifStore } from './store'
 
-export interface BuiltinMotif { id: string; manifest: Manifest; html: string }
+export interface BuiltinMotif { id: string; manifest: Manifest; html: string; hasParamsUi: boolean }
 export interface MotifSourceTs { manifest: Manifest; html: string }
 
 /** Load each built-in's {id, manifest, html}. Manifest comes from the bundled
  *  BUILTIN_MANIFESTS (authoritative); html is read from `<builtinDir>/<id>/index.html`
  *  (the served assets). `builtinDir` is passed explicitly
  *  (host computes via builtinAssetDir(); tests pass a fixture dir) so this is
- *  hermetic. A built-in whose html can't be read is skipped (defensive). */
+ *  hermetic. A built-in whose html can't be read is skipped (defensive).
+ *  `hasParamsUi` is stat'd from the same directory — built-in assets are
+ *  packaged read-only, so the boot-time answer holds for the process. */
 export function builtinMotifs(builtinDir: string): BuiltinMotif[] {
   const out: BuiltinMotif[] = []
   for (const id of BUILTIN_IDS) {
@@ -28,7 +30,8 @@ export function builtinMotifs(builtinDir: string): BuiltinMotif[] {
     if (!manifest) continue
     let html: string
     try { html = readFileSync(path.join(builtinDir, id, 'index.html'), 'utf8') } catch { continue }
-    out.push({ id, manifest, html })
+    const hasParamsUi = existsSync(path.join(builtinDir, id, PARAMS_PAGE_FILE))
+    out.push({ id, manifest, html, hasParamsUi })
   }
   return out
 }
@@ -45,30 +48,40 @@ export function getMotifSource(store: UserMotifStore, builtins: BuiltinMotif[], 
 /** Serialize manifest + raw html into the picker payload (superset of MCP
  *  list_motifs: every manifest field + html + status + content_hash). One helper
  *  so built-in/installed/draft emit the same shape. `html` MUST be the
- *  composed/stored FULL html (island included) — content_hash is computed over it. */
-export function motifToPayload(manifest: Manifest, html: string, status: string): Record<string, unknown> {
+ *  composed/stored FULL html (island included) — content_hash is computed over it.
+ *  `hasParamsUi` is presence of the optional `params.html` companion; it rides
+ *  the payload as `has_params_ui` and never enters the island or content hash. */
+export function motifToPayload(
+  manifest: Manifest,
+  html: string,
+  status: string,
+  hasParamsUi = false,
+): Record<string, unknown> {
   const content_hash = motifContentHash(manifest, html)
-  return { ...manifest, html, status, content_hash }
+  return { ...manifest, html, status, content_hash, has_params_ui: hasParamsUi }
 }
 
 /** UI catalog: builtins, then installed, then drafts (id-unique; a draft whose id
  *  is already published/built-in is skipped — published wins).
- *  A draft with a recorded Update target carries `target_id`. */
+ *  A draft with a recorded Update target carries `target_id`.
+ *  Params-page presence is re-stat'd per call (published-then-draft for user
+ *  Motifs, mirroring `store.readFile`), so the watcher's catalog refresh is all
+ *  it takes for a hand-authored `params.html` to appear or vanish. */
 export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
-  for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin'))
+  for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin', b.hasParamsUi))
   for (const manifest of store.listManifests()) {
     // list_manifests already confirmed the island parsed; re-read html for the
     // payload. readHtml may return null on a TOCTOU (file vanished) — blank card
     // rather than failing the whole list.
     const html = store.readHtml(manifest.id) ?? ''
-    out.push(motifToPayload(manifest, html, 'installed'))
+    out.push(motifToPayload(manifest, html, 'installed', store.hasFile(manifest.id, PARAMS_PAGE_FILE)))
   }
   const seen = new Set(out.map((e) => e.id as string))
   for (const draft of store.listDrafts()) {
     const draftId = draft.manifest.id
     if (seen.has(draftId)) continue
-    const entry = motifToPayload(draft.manifest, draft.html, 'draft')
+    const entry = motifToPayload(draft.manifest, draft.html, 'draft', store.hasFile(draftId, PARAMS_PAGE_FILE))
     const target = store.readDraftTarget(draftId)
     if (target) entry.target_id = target
     out.push(entry)

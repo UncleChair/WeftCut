@@ -1165,6 +1165,22 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* A Motif's own params page. Height is author-declared (clamped host-side) and
+   set inline; the panel column already scrolls, so a tall page just extends it.
+   Transparent background: the page paints its own surface from the theme
+   tokens it receives at init, and a host fill would show at its edges. */
+.motif-params-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color-scheme: dark;
+}
+.motif-params-frame:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-control);
+}
 .kf-diamond-row { position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none; }
 .kf-diamond { position: absolute; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); background: #fff; border: 1px solid rgba(0,0,0,0.5); }
 .kf-diamond.is-selected { background: var(--keyframe); box-shadow: 0 0 0 1.5px var(--ring); }
