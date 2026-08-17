@@ -350,7 +350,7 @@ Adding more locales is a strict addition — drop a resource file under
 
 - [Data model](data-model.md) — what the actor stores and emits.
 - [Render](render.md) — PixiJS + WebCodecs renderer architecture.
-- [Motifs](motifs.md) — parameterized web overlays captured via the DevTools Protocol: authoring contract, capture harness, raster cache.
+- [Motifs](motifs.md) — parameterized web overlays captured via the DevTools Protocol: authoring contract, parameter UI, capture harness, raster cache.
 - [Preview](preview.md) — interactive preview surface.
 - [Export](export.md) — export orchestration + final mux.
 - [Audio](audio.md) — conform cache, envelope contract, preview + export mixers.

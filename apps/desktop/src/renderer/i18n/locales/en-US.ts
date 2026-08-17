@@ -1317,7 +1317,7 @@ const enUS = {
     // fetch settles.
     loading: "Loading history…",
     // Eviction header. Non-interactive: those snapshots are gone, so there is
-    // nothing to jump to (spec decision 12).
+    // nothing to jump to.
     evicted_one: "{{count}} earlier step is out of range",
     evicted_other: "{{count}} earlier steps are out of range",
     jump_hint: "Jump to this state",
@@ -1338,11 +1338,11 @@ const enUS = {
     list_separator: ", ",
     // Aggregate counting: `Split layer ×2, Added marker ×4`.
     aggregate_item: "{{label}} ×{{count}}",
-    // ── Checkpoints (own section above the stack, spec decision 9) ──────────
+    // ── Checkpoints (own section above the stack) ────────────────────────────
     checkpoints_title: "Checkpoints",
     // Load-bearing, not chrome: checkpoints are absent from serialize.ts /
     // persistence.ts and `replace_state` clears them, so a user reading them as
-    // durable saves loses work. Persistence is issue #14.
+    // durable saves loses work.
     checkpoints_note: "This session only — checkpoints are not saved with the project.",
     checkpoints_empty:
       "No checkpoints yet. Create one before a risky edit to keep a named way back.",

@@ -268,7 +268,7 @@ Markers + composition:
   is never locked.
 
 Catalog:
-- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (the Motif they update). Inspect `props_schema` before calling `add_motif`. Drafts are placeable immediately for preview.
+- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, has_params_ui, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (the Motif they update); `has_params_ui` reports whether the Motif ships its own parameter page (see [motifs.md](motifs.md) "Parameter UI") — a draft without one gets the generated fallback form, which is the normal agent path. Inspect `props_schema` before calling `add_motif`. Drafts are placeable immediately for preview.
 
 Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `get_motif_source { id }` → `{ manifest, html }` — any built-in, installed, or draft.

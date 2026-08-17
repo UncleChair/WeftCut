@@ -296,7 +296,7 @@ describe("hostile and malformed traffic", () => {
     expect(overlayTicks).toBe(0);
   });
 
-  it("parseParamsPageMessage accepts only the five known shapes", () => {
+  it("parseParamsPageMessage accepts only the three page→host shapes", () => {
     expect(parseParamsPageMessage({ type: "motif:preview", props: {} })).toEqual({
       type: "preview",
       props: {},
