@@ -1687,9 +1687,9 @@ export async function reportAudioMeter(report: {
 
 /// Discriminated union mirroring `PropSpec` in `src/shared/motifs/catalog.ts`
 /// (which `render/motifs/catalog.ts` re-exports). The picker and the property
-/// panel switch on `type` to render the right input. A new prop type must be
-/// added here, in the shared catalog, AND in both form generators (MotifPicker
-/// `PropField` + PropertyPanel `MotifPropField`).
+/// panel both render through the one shared form generator (`MotifPropField`,
+/// renderer/properties/MotifPropFields.tsx). A new prop type must be added in
+/// three places: here, in the shared catalog, AND in that generator.
 /// `enum` renders as a dropdown; `string.multiline` renders as a textarea.
 export type PropSpec =
   | { type: "string"; default: string; max_length?: number; multiline?: boolean }

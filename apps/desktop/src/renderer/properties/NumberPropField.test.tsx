@@ -2,7 +2,7 @@
 import { afterEach, describe, it, expect } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NumberPropField } from "./PropertyPanel";
+import { NumberPropField } from "./MotifPropFields";
 
 afterEach(cleanup);
 

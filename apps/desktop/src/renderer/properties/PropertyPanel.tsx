@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
   AUDIO_UNITS_ORDER,
@@ -46,10 +45,12 @@ import { ScaleFields } from "./ScaleFields";
 // font, Text color, Motif props) commits scalars through `updateLayerParams`.
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
-import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
+import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
 import { useProjectStore, useProjectSummary } from "../state/projectStore";
 import { useSelectedLayerIds, useSelectedTransitionId } from "../state/selectionStore";
 import { TransitionFields } from "./TransitionFields";
+import { Field } from "./Field";
+import { MotifPropField } from "./MotifPropFields";
 import { PropSection } from "./PropSection";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 import { findPanelLayer } from "../panels/panelLayer";
@@ -66,10 +67,6 @@ export interface AttributePanelProps {
 }
 
 const COMMIT_DEBOUNCE_MS = 250;
-
-function toRgb(value: string): string {
-  return value.length >= 7 ? value.slice(0, 7) : value;
-}
 
 export function AttributePanel({
   tracks,
@@ -856,10 +853,12 @@ function MotifFields({
               propKey={key}
               spec={spec}
               value={v.props[key]}
-              onCommit={(next) => commitProp(key, next)}
-              onCommitDebounced={(next) =>
-                debouncedCommit({ kind: "Motif", props: { [key]: next } })
-              }
+              commit={{
+                mode: "commit",
+                onCommit: (next) => commitProp(key, next),
+                onCommitDebounced: (next) =>
+                  debouncedCommit({ kind: "Motif", props: { [key]: next } }),
+              }}
             />
           ))}
         </PropSection>
@@ -1141,241 +1140,6 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
   );
 }
 
-/// One editable motif prop, switched on `PropSpec.type`. Mirrors the motif
-/// picker's `PropField`, but commits each change field-wise via `onCommit`.
-/// The string/number variants delegate to dedicated sub-components so each can
-/// hold the local-state hooks at the top of its body (rules-of-hooks; the
-/// color variant needs no local state).
-/// Props colors are plain hex strings (e.g. `#ff3366`), NOT `Rgba` — handled
-/// as strings, not via the `rgbaToHex` / `hexToRgba` helpers.
-function MotifPropField({
-  propKey,
-  spec,
-  value,
-  onCommit,
-  onCommitDebounced,
-}: {
-  propKey: string;
-  spec: PropSpec;
-  value: unknown;
-  /// Immediate commit — used by string/number which fire once, on blur.
-  onCommit: (next: unknown) => void;
-  /// Debounced commit — used by the color field, whose `<input type="color">`
-  /// fires `onChange` continuously while the OS color dialog is dragged. Each
-  /// commit triggers a CDP re-capture (~80-100ms, serialized), so an undebounced
-  /// drag floods the capture queue and stutters the preview.
-  onCommitDebounced: (next: unknown) => void;
-}) {
-  const { t } = useTranslation();
-  const label = t(`property_panel.props.${propKey}`, { defaultValue: propKey });
-
-  switch (spec.type) {
-    case "string":
-      return (
-        <StringPropField label={label} spec={spec} value={value} onCommit={onCommit} />
-      );
-    case "color":
-      return (
-        <ColorPropField
-          label={label}
-          spec={spec}
-          value={value}
-          onCommit={onCommitDebounced}
-        />
-      );
-    case "number":
-      return (
-        <NumberPropField label={label} spec={spec} value={value} onCommit={onCommit} />
-      );
-    case "enum":
-      return (
-        <EnumPropField label={label} spec={spec} value={value} onCommit={onCommit} />
-      );
-    default: {
-      // Exhaustiveness: a new PropSpec variant makes this a compile error until
-      // MotifPropField renders it.
-      const _exhaustive: never = spec;
-      return _exhaustive;
-    }
-  }
-}
-
-/// Enum prop → dropdown. Commits immediately (a discrete pick = one re-capture),
-/// so it takes the undebounced `onCommit` like string/number.
-function EnumPropField({
-  label,
-  spec,
-  value,
-  onCommit,
-}: {
-  label: string;
-  spec: Extract<PropSpec, { type: "enum" }>;
-  value: unknown;
-  onCommit: (next: unknown) => void;
-}) {
-  return (
-    <Field label={label}>
-      <AppSelect
-        value={typeof value === "string" ? value : spec.default}
-        ariaLabel={label}
-        onValueChange={(v) => onCommit(v)}
-        options={spec.options.map((o) => ({ value: o, label: o }))}
-      />
-    </Field>
-  );
-}
-
-function ColorPropField({
-  label,
-  spec,
-  value,
-  onCommit,
-}: {
-  label: string;
-  spec: Extract<PropSpec, { type: "color" }>;
-  value: unknown;
-  /// Debounced commit (see MotifPropField).
-  onCommit: (next: unknown) => void;
-}) {
-  // Local state drives the swatch so it tracks the drag live; the actual commit
-  // (and the CDP re-capture it triggers) is debounced by the caller. `<input
-  // type="color">` only edits the 6-char RGB triplet — show the leading 7 chars
-  // but commit the raw value it returns. (Trailing alpha in a default like
-  // `#000000cc` is dropped on first pick — same tradeoff as the picker.)
-  const [color, setColor] = useState(
-    () => toRgb(typeof value === "string" ? value : spec.default),
-  );
-  useEffect(() => {
-    setColor(toRgb(typeof value === "string" ? value : spec.default));
-  }, [value, spec.default]);
-  return (
-    <Field label={label}>
-      <AppColorField
-        value={color}
-        ariaLabel={label}
-        onValueChange={(v) => {
-          setColor(v);
-          onCommit(v);
-        }}
-      />
-    </Field>
-  );
-}
-
-export function StringPropField({
-  label,
-  spec,
-  value,
-  onCommit,
-}: {
-  label: string;
-  spec: Extract<PropSpec, { type: "string" }>;
-  value: unknown;
-  onCommit: (next: unknown) => void;
-}) {
-  const pristine = typeof value === "string" ? value : spec.default;
-  const [text, setText] = useState(pristine);
-  useEffect(() => {
-    setText(typeof value === "string" ? value : spec.default);
-  }, [value, spec.default]);
-  // Escape = discard (ADR 0041). Set BEFORE the release blur so the single
-  // onBlur commit path stands down — the same shape `AppTimecodeField` uses.
-  const cancelling = useRef(false);
-  const cancel = () => {
-    cancelling.current = true;
-    setText(pristine);
-  };
-  const commitOnBlur = () => {
-    if (cancelling.current) {
-      cancelling.current = false;
-      return;
-    }
-    onCommit(text);
-  };
-  return (
-    <Field label={label}>
-      {spec.multiline ? (
-        // Multi-line strings (a text block split on \n) need a textarea. Enter
-        // inserts a newline (don't blur-commit on it); commit on blur only.
-        <textarea
-          className="app-input"
-          rows={3}
-          value={text}
-          aria-label={label}
-          maxLength={spec.max_length}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commitOnBlur}
-          onKeyDown={(e) => {
-            if (e.key !== "Escape") return;
-            e.preventDefault();
-            cancel();
-          }}
-        />
-      ) : (
-        <AppInput
-          value={text}
-          ariaLabel={label}
-          maxLength={spec.max_length}
-          onValueChange={setText}
-          onBlur={commitOnBlur}
-          onCancel={cancel}
-          // Enter = commit safeguard: blur the field so the single onBlur path
-          // commits (no separate commit call → no double undo entry).
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              e.currentTarget.blur();
-            }
-          }}
-        />
-      )}
-    </Field>
-  );
-}
-
-export function NumberPropField({
-  label,
-  spec,
-  value,
-  onCommit,
-}: {
-  label: string;
-  spec: Extract<PropSpec, { type: "number" }>;
-  value: unknown;
-  onCommit: (next: unknown) => void;
-}) {
-  const [num, setNum] = useState<number>(
-    typeof value === "number" ? value : spec.default,
-  );
-  // Don't resync from props while editing — the debounced auto-commit's
-  // round-trip would otherwise clobber an in-progress edit (see AppNumberField
-  // onFocus/onBlur). Resync resumes once focus leaves.
-  const focused = useRef(false);
-  useEffect(() => {
-    if (focused.current) return;
-    setNum(typeof value === "number" ? value : spec.default);
-  }, [value, spec.default]);
-  return (
-    <Field label={label}>
-      <AppNumberField
-        value={num}
-        ariaLabel={label}
-        {...(spec.min !== undefined ? { min: spec.min } : {})}
-        {...(spec.max !== undefined ? { max: spec.max } : {})}
-        // Step heuristic copied from the motif picker: small ranges
-        // (≤10 wide) get a 0.1 step, everything else 1.
-        step={
-          spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10 ? 0.1 : 1
-        }
-        onValueChange={setNum}
-        onCommit={(v) => onCommit(v)}
-        onFocus={() => { focused.current = true; }}
-        onBlur={() => { focused.current = false; }}
-      />
-    </Field>
-  );
-}
-
 function ColorFields({
   layer,
   v,
@@ -1525,64 +1289,6 @@ function AudioAdvancedFields({
         />
       </Field>
     </>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  /// Optional explanatory text. Rendered as a `?` icon next to the
-  /// label; hovering / keyboard-focusing the icon shows the hint in
-  /// a popover. Use for non-obvious field semantics — e.g. half-open
-  /// interval boundaries — where the label alone doesn't tell the
-  /// whole story.
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="prop-field">
-      <span className="prop-field-label">
-        {label}
-        {hint ? (
-          <Tooltip.Root>
-            <Tooltip.Trigger
-              className="prop-field-hint"
-              // Keep a span (not the default button): a button inside
-              // this <label> would steal the label's input activation.
-              render={<span tabIndex={0} />}
-              aria-label={hint}
-              // Stop clicks on the icon from also focusing the label's
-              // input — the user clicked the hint, not the value.
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            >
-              ?
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              {/* end-aligned below the icon ≈ the old right-anchored
-                  bubble; the Positioner flips on collisions, which the
-                  hand-rolled CSS bubble never could. */}
-              <Tooltip.Positioner
-                side="bottom"
-                align="end"
-                sideOffset={4}
-                className="app-popup-positioner"
-              >
-                <Tooltip.Popup className="prop-field-hint-bubble">
-                  {hint}
-                </Tooltip.Popup>
-              </Tooltip.Positioner>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        ) : null}
-      </span>
-      <div className="prop-field-control">{children}</div>
-    </label>
   );
 }
 

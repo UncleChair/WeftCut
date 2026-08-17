@@ -4,11 +4,9 @@ import { FolderInputIcon, PlusIcon } from "lucide-react";
 import { listen } from "@/bridge/events";
 import { open as openDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
-import { AppColorField } from "../components/AppColorField";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
-import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +20,7 @@ import {
   type TrackSummary,
 } from "../ipc";
 import { trackDisplayName } from "../lib/trackName";
+import { MotifPropField } from "../properties/MotifPropFields";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
 import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
 import { newDraftSource } from "../render/motifs/newDraftSource";
@@ -420,12 +419,12 @@ function MotifForm({
         <p className="settings-status">{t("motif_picker.no_props")}</p>
       ) : (
         propKeys.map((key) => (
-          <PropField
+          <MotifPropField
             key={key}
             propKey={key}
             spec={motif.props_schema[key]!}
             value={propValues[key]}
-            onChange={(v) => setProp(key, v)}
+            commit={{ mode: "buffer", onChange: (v) => setProp(key, v) }}
           />
         ))
       )}
@@ -622,114 +621,3 @@ function MotifCardThumbnail({ motif }: { motif: MotifSummary }) {
   return <MotifPreview motif={motif} props={defaults} maxWidth={240} />;
 }
 
-function PropField({
-  propKey,
-  spec,
-  value,
-  onChange,
-}: {
-  propKey: string;
-  spec: PropSpec;
-  value: unknown;
-  onChange: (v: unknown) => void;
-}) {
-  switch (spec.type) {
-    case "string":
-      return (
-        <label className="motif-picker-field motif-picker-field--code">
-          <span>{propKey}</span>
-          {spec.multiline ? (
-            // Multi-line strings (e.g. a text block split on \n) need a
-            // textarea; the single-line AppInput can't hold newlines.
-            <textarea
-              className="app-input"
-              rows={3}
-              value={typeof value === "string" ? value : ""}
-              maxLength={spec.max_length}
-              aria-label={propKey}
-              onChange={(e) => onChange(e.target.value)}
-            />
-          ) : (
-            <AppInput
-              value={typeof value === "string" ? value : ""}
-              maxLength={spec.max_length}
-              ariaLabel={propKey}
-              onValueChange={(v) => onChange(v)}
-            />
-          )}
-        </label>
-      );
-    case "color":
-      return (
-        <div className="motif-picker-field motif-picker-field--code">
-          <span>{propKey}</span>
-          <ColorInput
-            value={typeof value === "string" ? value : spec.default}
-            ariaLabel={propKey}
-            onChange={onChange}
-          />
-        </div>
-      );
-    case "number":
-      return (
-        <div className="motif-picker-field motif-picker-field--code">
-          <span>{propKey}</span>
-          <AppNumberField
-            value={typeof value === "number" ? value : spec.default}
-            step={
-              // Step heuristic: percent-style 0..100 → 1; small ranges (0..4) → 0.1
-              spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10
-                ? 0.1
-                : 1
-            }
-            ariaLabel={propKey}
-            onValueChange={(v) => onChange(v)}
-            {...(spec.min !== undefined ? { min: spec.min } : {})}
-            {...(spec.max !== undefined ? { max: spec.max } : {})}
-          />
-        </div>
-      );
-    case "enum":
-      return (
-        <label className="motif-picker-field motif-picker-field--code">
-          <span>{propKey}</span>
-          <AppSelect
-            value={typeof value === "string" ? value : spec.default}
-            ariaLabel={propKey}
-            onValueChange={(v) => onChange(v)}
-            options={spec.options.map((o) => ({ value: o, label: o }))}
-          />
-        </label>
-      );
-    default: {
-      // Exhaustiveness: a new PropSpec variant makes this a compile error until
-      // PropField renders it.
-      const _exhaustive: never = spec;
-      return _exhaustive;
-    }
-  }
-}
-
-/// Color input that preserves any trailing alpha bits in the original default
-/// even though `<input type="color">` only edits the RGB triplet. This keeps
-/// a motif's translucent default (e.g. `#000000cc`) intact unless the user
-/// changes the color — at which point alpha is lost.
-function ColorInput({
-  value,
-  ariaLabel,
-  onChange,
-}: {
-  value: string;
-  ariaLabel: string;
-  onChange: (v: string) => void;
-}) {
-  // `<input type="color">` returns 6-char hex. Show 6 chars to the picker;
-  // the form value carries whatever the original default had.
-  const rgb = value.length >= 7 ? value.slice(0, 7) : value;
-  return (
-    <span className="motif-picker-color">
-      <AppColorField value={rgb} ariaLabel={ariaLabel} onValueChange={onChange} />
-      <code>{value}</code>
-    </span>
-  );
-}
