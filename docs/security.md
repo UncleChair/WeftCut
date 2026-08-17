@@ -15,8 +15,14 @@ The editor UI is first-party code that loads no remote content. Its CSP is injec
 into the packaged `index.html` at build time (`electron.vite.config.ts`); the dev
 server is left untouched, because HMR needs inline + eval + websockets.
 
-- `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, **`frame-src 'none'`** —
-  no embedding, no `<base>` hijack, no iframes.
+- `default-src 'self'`, `object-src 'none'`, `base-uri 'self'` — no `<base>` hijack, no
+  plugins.
+- **`frame-src motif:`** — the only embeddable context is a Motif's own parameter page
+  (see [`motifs.md`](motifs.md)), framed by the property panel with
+  `sandbox="allow-scripts"` and no `allow-same-origin`. `'self'` is deliberately absent:
+  the renderer frames none of its own documents, so the app bundle stays unembeddable in
+  itself. The grant widens what may be *framed*; what the framed page may *reach* is
+  still bounded by the `motif:` CSP below.
 - `script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:`. WASM (the eval leaf,
   mediabunny) needs the narrow `wasm-unsafe-eval` compile grant. `'unsafe-eval'` is
   granted for PixiJS's `new Function` shader/uniform codegen: the no-eval

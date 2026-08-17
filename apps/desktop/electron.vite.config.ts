@@ -34,7 +34,13 @@ const CSP = [
   "child-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
-  "frame-src 'none'",
+  // The ONE embeddable context: a Motif's own `params.html`, framed by the
+  // property panel with `sandbox="allow-scripts"` and no `allow-same-origin`.
+  // `'self'` is deliberately absent — the renderer frames no document of its
+  // own, so the app bundle stays unembeddable in itself. `motif:` documents
+  // carry their own `default-src 'none'` CSP on top of this grant, so the grant
+  // widens what may be FRAMED, not what the framed page may reach.
+  'frame-src motif:',
 ].join('; ')
 
 function cspMeta(): Plugin {
