@@ -53,8 +53,11 @@ Supporting decisions:
   unmodified at full precision (ADR 0022; never `clear(true)` a live
   `FilterSystem`). A fidelity tier (`f16-verified` vs `precision-reduced`),
   classified by a GL-parity gate, labels filters whose own shader bands.
-- **A preview-LOD toggle** (`preview_effects_enabled` AppSetting, default on)
-  lets preview skip filters while scrubbing; export is always full quality.
+- **A preview-effects escape hatch** (`preview_effects_enabled` AppSetting,
+  default on) lets preview skip filters; export ignores it and is always full
+  quality. It is a global bypass rather than a scrub-triggered one — the
+  Compositor reads it once per composite in preview mode, and nothing consults
+  `Compositor.scrubbing`.
 - **`'unsafe-eval'` is granted in the packaged renderer CSP** (and the
   `pixi.js/unsafe-eval` no-eval polyfill dropped). The polyfill renders every
   *filtered* object EMPTY on the **WebGPU** backend — and both the preview
@@ -77,12 +80,20 @@ Supporting decisions:
   gated by the parity gate before it is advertised as `f16-verified`.
 - Granting `'unsafe-eval'` is an accepted, documented security trade made to
   keep the WebGPU backend.
-- **Deferred:** more filters; `ParamValue` / animated color; surfacing the
-  `preview_effects_enabled` LOD toggle in the UI (the inspector effect editor
-  itself ships); a full filtered-10-bit-export e2e; a linear/HDR working
-  space. `Speed` is time remapping, not a filter, and is out of
-  `layer.effects`. Tracked in the release-target issues — the toggle UI and
-  the basic colour-correction catalog in v1, the rest post-v1.
+- **`preview_effects_enabled` stays an AppSetting / MCP escape hatch — no UI
+  control is surfaced for it.** A global effects bypass is not how editors
+  answer effect cost: the established answer is caching or pre-rendering, and
+  where a global bypass does exist it reads as an A/B comparison tool. WeftCut
+  already serves that need at the granularity that matters, because every
+  effect carries its own `enabled` toggle in the inspector — so a second,
+  coarser switch would buy a comparison the inspector already makes while
+  putting a preview-wide "not what you will export" mode one click away.
+  Caching the preview is the real answer to effect cost, and it is post-v1.
+- **Deferred:** more filters; `ParamValue` / animated color; a full
+  filtered-10-bit-export e2e; a linear/HDR working space; a preview cache /
+  background render. `Speed` is time remapping, not a filter, and is out of
+  `layer.effects`. Tracked in the release-target issues — the basic
+  colour-correction catalog in v1, the rest post-v1.
 
 ## References
 

@@ -8,10 +8,11 @@
 // Run from any directory:
 //   node apps/desktop/e2e/effects-f16-parity/run.mjs
 //
-// Or from apps/desktop:
+// Or from apps/desktop/e2e (where the script is declared):
 //   npm run gate:effects-f16-parity
 //
-// Override the Electron binary path:
+// No environment variables are needed — it resolves the repo's own Electron.
+// Override that only for a checkout that keeps Electron elsewhere:
 //   ELECTRON_BIN=/path/to/electron node run.mjs
 //
 // What it checks:
@@ -23,22 +24,37 @@
 //                 → gradient preserves ~1024 distinct values (full precision)
 
 import { execFileSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(__dirname, "..", "..", "..", "..");
 
-// Absolute default for the repo's own Electron binary; override with
-// ELECTRON_BIN when running from another checkout.
-const DEFAULT_ELECTRON =
-  "C:/Users/jonny/Desktop/learning/videtor/node_modules/electron/dist/electron.exe";
-const ELECTRON_BIN = process.env.ELECTRON_BIN ?? DEFAULT_ELECTRON;
+// The repo's own Electron, resolved platform-appropriately; override with
+// ELECTRON_BIN when running from a checkout that keeps Electron elsewhere.
+//
+// `electron/path.txt` is the package's own record of the executable's name
+// inside `dist/`, so reading it is what makes this correct on macOS — there the
+// binary is `Electron.app/Contents/MacOS/Electron`, not a bare `electron`.
+// Deliberately NOT `import("electron")`, whose module-evaluation side effect is
+// to *download* a missing binary: this gate's missing-binary contract is a
+// clean BLOCKED exit, not a network fetch.
+function repoElectron() {
+  const dir = path.join(REPO, "node_modules", "electron");
+  const nameFile = path.join(dir, "path.txt");
+  const name = existsSync(nameFile)
+    ? readFileSync(nameFile, "utf8").trim()
+    : process.platform === "win32" ? "electron.exe" : "electron";
+  return path.join(dir, "dist", name);
+}
+
+const ELECTRON_BIN = process.env.ELECTRON_BIN ?? repoElectron();
 
 if (!existsSync(ELECTRON_BIN)) {
   console.error(
     `[f16-parity] BLOCKED: Electron binary not found at ${ELECTRON_BIN}\n` +
-    `  Set ELECTRON_BIN env var to the correct path and retry.`,
+    `  Run \`npm install\` at the repo root, or set ELECTRON_BIN env var to the correct path and retry.`,
   );
   process.exit(2);
 }
