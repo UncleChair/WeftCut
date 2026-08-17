@@ -47,6 +47,13 @@ extraResources:
   # the only stable option on AppImage); this one is just the ride-along.
   - from: out/cli
     to: cli
+  # The agent skill folder (assembled by scripts/build-skills.mjs from the repo's
+  # skills/ tree + the docs it points at). Refreshed into <userData>/skills/ at
+  # startup; the user copies THAT into their agent's own skills directory, so this
+  # one is only the ride-along.
+  - from: out/skills
+    to: skills
+    filter: ["**/*"]
   # GPL ffmpeg/ffprobe sidecar binaries + their compliance materials
   # (manifest.json + SOURCE-OFFER.txt, staged by fetch-ffmpeg.mjs). The GPLv3
   # license text rides from the repo-tracked copy below; after-pack-licensing.mjs

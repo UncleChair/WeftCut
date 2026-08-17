@@ -80,12 +80,26 @@ function buildHttpSnippet(client: ClientId, url: string, token: string): string 
   return JSON.stringify({ mcpServers: { weftcut: server } }, null, 2);
 }
 
+/// Instruction that installs the shipped agent skill, addressed to the agent
+/// rather than to the user — hence untranslated. The separator is inferred from
+/// the parent path instead of normalised: the renderer has no `path`, and the
+/// folder is shown to the user verbatim as the main process reported it.
+function buildSkillPrompt(skillsDir: string): string {
+  const sep = skillsDir.includes("\\") ? "\\" : "/";
+  return (
+    `Install the WeftCut skill: copy the folder "${skillsDir}${sep}weftcut" ` +
+    `into your agent's skills directory (for Claude Code: ~/.claude/skills/weftcut), ` +
+    `overwriting any previous copy. Re-copy after WeftCut updates.`
+  );
+}
+
 /// MCP connection info for external agents. Two connection paths: the stdio
 /// shim (primary — survives app restarts, port changes, token rotations, and
 /// the app being closed) and HTTP-direct (advanced — for clients without
 /// stdio support). Until the shim is installed (dev before build:cli,
 /// shim_path = null) the HTTP path renders as primary, which is also the
-/// pre-shim layout. Lives in the Settings "Agent" tab; like the other panes
+/// pre-shim layout. Also hands out the shipped agent skill folder, when one is
+/// staged. Lives in the Settings "Agent" tab; like the other panes
 /// it stays mounted across tab switches, so the poll below runs once.
 export function AgentSection() {
   const { t } = useTranslation();
@@ -95,6 +109,7 @@ export function AgentSection() {
   const [stdioCopied, setStdioCopied] = useState(false);
   const [httpCopied, setHttpCopied] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [skillCopied, setSkillCopied] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [httpOpen, setHttpOpen] = useState(false);
 
@@ -185,6 +200,17 @@ export function AgentSection() {
       await navigator.clipboard.writeText(prompt);
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
+    } catch (e) {
+      console.warn("clipboard copy failed:", e);
+    }
+  };
+
+  const copySkillPrompt = async () => {
+    if (!info?.skills_dir) return;
+    try {
+      await navigator.clipboard.writeText(buildSkillPrompt(info.skills_dir));
+      setSkillCopied(true);
+      window.setTimeout(() => setSkillCopied(false), 1500);
     } catch (e) {
       console.warn("clipboard copy failed:", e);
     }
@@ -320,6 +346,21 @@ export function AgentSection() {
           </Button>
         </div>
       </section>
+
+      {info.skills_dir && (
+        <section className="settings-section">
+          <h3>{t("connect.skill_heading")}</h3>
+          <p className="settings-blurb">{t("connect.skill_blurb")}</p>
+          <div className="settings-key-input-row">
+            <Button size="sm" onClick={() => void copySkillPrompt()}>
+              {skillCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+              {skillCopied
+                ? t("connect.skill_copied")
+                : t("connect.copy_skill_prompt")}
+            </Button>
+          </div>
+        </section>
+      )}
 
       <section className="settings-section">
         <h3>{t("connect.manual_heading")}</h3>

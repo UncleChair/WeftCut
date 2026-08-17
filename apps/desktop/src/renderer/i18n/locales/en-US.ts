@@ -744,6 +744,11 @@ const enUS = {
     prompt_blurb:
       "For agents that support MCP: copy the prompt and paste it into the chat — the agent configures itself.",
     manual_heading: "Or prove you're human",
+    skill_heading: "Teach your agent WeftCut",
+    skill_blurb:
+      "WeftCut ships an agent skill — session etiquette plus the Motif authoring contract — for Claude-style clients. Copy the prompt and paste it into the chat; the agent installs the folder itself. The shipped copy refreshes with every app update, so repeat this after upgrading.",
+    copy_skill_prompt: "Copy install prompt",
+    skill_copied: "Prompt copied!",
     agent_prompt: [
       "Configure the WeftCut MCP server for me. Make the configuration change directly; do not just describe the steps.",
       "",

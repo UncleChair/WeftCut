@@ -729,11 +729,23 @@ app.whenReady().then(async () => {
     isPackaged: app.isPackaged,
     userDataDir: app.getPath('userData'),
   })
+  // Refresh <userData>/skills/ from the bundle so the folder the Settings panel
+  // points the user at always matches this app version. Unlike the shim, nothing
+  // in the app reads it — it exists to be copied into an agent client's own
+  // skills directory.
+  const { installSkills } = await import('./mcp/skillsInstall.js')
+  const skillsDir = installSkills({
+    resourcesSkills: path.join(process.resourcesPath, 'skills'),
+    devSkills: path.join(import.meta.dirname, '../skills'),
+    isPackaged: app.isPackaged,
+    userDataDir: app.getPath('userData'),
+  })
   const stdioInfo = () => ({
     exe_path: process.execPath,
     appimage: process.env.APPIMAGE ?? null,
     user_data: app.getPath('userData'),
     shim_path: shimPath,
+    skills_dir: skillsDir,
   })
   if (!app.isPackaged && shimPath) {
     console.log(

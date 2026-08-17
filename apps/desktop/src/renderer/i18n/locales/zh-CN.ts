@@ -697,6 +697,11 @@ const zhCN: Resources = {
     prompt_heading: "交给 Agent 配置",
     prompt_blurb: "适用于支持 MCP 的 Agent 客户端：复制提示词粘贴到对话中，即可让它自动完成配置。",
     manual_heading: "或证明你是人类",
+    skill_heading: "让 Agent 学会 WeftCut",
+    skill_blurb:
+      "WeftCut 自带一份 agent skill（会话规范 + Motif 编写契约），适用于 Claude 系客户端。复制提示词粘贴到对话中，Agent 会自行安装该文件夹。随应用更新自带副本也会刷新，升级后请再执行一次。",
+    copy_skill_prompt: "复制安装提示词",
+    skill_copied: "提示词已复制！",
     agent_prompt: [
       "请为我配置 WeftCut MCP 服务，直接完成配置修改，不要只告诉我操作步骤。",
       "",

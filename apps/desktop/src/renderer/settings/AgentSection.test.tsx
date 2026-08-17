@@ -6,7 +6,8 @@
 // (shim_path set) the stdio config is the primary snippet — no token in it —
 // and HTTP-direct moves behind an "advanced" disclosure; without it (dev
 // before build:cli) the HTTP snippet renders as primary, token masked until
-// revealed, copy always carrying the real token.
+// revealed, copy always carrying the real token. The shipped agent skill gets
+// its own block, present only once a skill folder is staged (skills_dir set).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -28,6 +29,7 @@ import { AgentSection } from "./AgentSection";
 const INFO = {
   url: "http://127.0.0.1:4711/mcp",
   bearer_token: "secret-token",
+  skills_dir: null,
 };
 
 const INFO_SHIM = {
@@ -36,6 +38,7 @@ const INFO_SHIM = {
   appimage: null,
   user_data: "C:\\ud",
   shim_path: "C:\\ud\\cli\\weftcut-mcp.cjs",
+  skills_dir: "C:\\ud\\skills",
 };
 
 const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
@@ -129,6 +132,17 @@ describe("AgentSection", () => {
     await userEvent.click(reveal);
     expect(await snippetText()).toContain(INFO.bearer_token);
   });
+
+  it("hides the skill block while no skill folder is staged", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    expect(
+      screen.queryByRole("heading", { name: "Teach your agent WeftCut" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Copy install prompt" }),
+    ).toBeNull();
+  });
 });
 
 describe("AgentSection with the stdio shim installed", () => {
@@ -168,6 +182,19 @@ describe("AgentSection with the stdio shim installed", () => {
     expect(prompt).toContain(INFO_SHIM.exe_path);
     expect(prompt).toContain(`WEFTCUT_USERDATA=${INFO_SHIM.user_data}`);
     expect(prompt).not.toContain(INFO.bearer_token);
+  });
+
+  it("offers the staged skill folder as a paste-ready install prompt", async () => {
+    render(<AgentSection />);
+    expect(
+      await screen.findByRole("heading", { name: "Teach your agent WeftCut" }),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy install prompt" }),
+    );
+    const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain(`"${INFO_SHIM.skills_dir}\\weftcut"`);
+    expect(prompt).toContain("~/.claude/skills/weftcut");
   });
 
   it("HTTP direct moves behind the advanced disclosure, token still masked", async () => {

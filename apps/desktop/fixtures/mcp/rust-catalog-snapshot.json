@@ -401,7 +401,7 @@
     {
       "uri": "project://history",
       "name": "History",
-      "description": "Recent operations and named checkpoints (no snapshots).",
+      "description": "Recent operations and named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`; absolute indices are the only ones `jump_to` accepts. `evicted` > 0 means the oldest entries were dropped for good.",
       "mimeType": "application/json"
     },
     {

@@ -1407,6 +1407,10 @@ export interface McpInfoView {
   /// build:cli has produced the bundle (the panel then falls back to
   /// HTTP-direct as the primary path).
   shim_path: string | null;
+  /// <userData>/skills once installed — the folder the user copies into their
+  /// agent client's skills directory. null in dev before build:skills has
+  /// staged the bundle (the panel then hides the skill section entirely).
+  skills_dir: string | null;
 }
 
 /// Returns the live MCP server connection details, or `null` if the server is

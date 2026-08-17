@@ -445,7 +445,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_HISTORY,
         name: "History",
-        description: "Recent operations and named checkpoints (no snapshots).",
+        description: "Recent operations and named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`; absolute indices are the only ones `jump_to` accepts. `evicted` > 0 means the oldest entries were dropped for good.",
     },
     ResourceDescriptor {
         uri: URI_COMPILED,
@@ -477,6 +477,22 @@ pub(super) fn static_resources() -> Vec<ResourceDef> {
 mod stateless_tests {
     use super::*;
     use crate::napi_backend::Backend;
+
+    /// The advertised `project://history` description must teach the window
+    /// semantics (`window_start`, `evicted`, absolute `jump_to` indices):
+    /// several MCP clients surface only `resources/list` to the model, so a
+    /// semantic that lives nowhere else is a semantic agents never see.
+    #[test]
+    fn history_description_carries_window_semantics() {
+        let defs = static_resources();
+        let d = defs.iter().find(|r| r.uri == URI_HISTORY).unwrap();
+        for needle in ["window_start", "evicted", "jump_to"] {
+            assert!(
+                d.description.contains(needle),
+                "project://history description lost `{needle}`"
+            );
+        }
+    }
 
     /// project://compiled computes the audio mix plan from the INJECTED
     /// project, not a mirror. A blank project has no audio layers, so the plan

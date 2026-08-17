@@ -86,6 +86,19 @@ The app's **Connect agent** panel (Settings → Agent):
   rotatable in place), and the same per-client snippets in URL + header form.
   For clients that cannot spawn stdio servers; breaks whenever the app is
   closed and goes stale when the port or token changes.
+- **The agent skill** — the app ships a Claude-format skill that teaches a
+  connected agent session etiquette, the orchestration patterns, and the Motif
+  authoring contract (the things no single tool description can carry; per-tool
+  facts stay in the tool descriptions). Sources are repo-root `skills/weftcut/`
+  plus a verbatim copy of [`motif-authoring.md`](motif-authoring.md), staged to
+  `out/skills` by `scripts/build-skills.mjs` (a `build` step), shipped as an
+  extraResource, and refreshed to `<userData>/skills/` at every startup — the
+  shim's stable-path pattern. The panel shows a copyable install prompt that
+  points the user's agent at that copy (for Claude Code:
+  `~/.claude/skills/weftcut`). Every tool / resource / prompt name the skill
+  sources reference is pinned to the advertised catalog by
+  `mcp.skill-conformance.test.ts`, so a rename fails CI until the prose is
+  updated.
 - Renders "starting…" while the server is still binding its port; polls
   `get_mcp_info` until the bind completes. Until the shim bundle exists (dev
   before `build:cli`), the HTTP path renders as primary.
