@@ -1,0 +1,370 @@
+/* Nearby (peek) Panel — the A/B-roll context list and the At-playhead
+   restack gesture (ADR 0044). One home for the panel chrome, rows, filter
+   chips and the reorder presentation; the ordering semantics live in peek.ts
+   and usePointerReorder. The panel's only mount is DockWorkspace's
+   NearbyDockPanel, so it owns the full Dockview content region outright. */
+
+.right-panel-peek {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.right-panel-peek-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.right-panel-peek-window {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.right-panel-peek-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.right-panel-peek-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  transition: padding-bottom var(--transition-base);
+}
+
+.right-panel-peek-list li {
+  margin: 0;
+  padding: 0;
+  /* Anchors the slot-line pseudo-elements; lets a parted row glide. */
+  position: relative;
+  transition: transform var(--transition-base);
+}
+
+/* Row wraps the reveal button and the explicit Go To affordance side by side. */
+.peek-item-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.peek-item-row .peek-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.peek-item {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  padding: 6px 12px;
+  cursor: pointer;
+  font: inherit;
+  transition: background var(--transition-fast);
+}
+
+.peek-item:hover {
+  background: var(--hover-neutral);
+}
+
+/* Full-bleed rows: the ring is drawn inward, the outer variant would clip
+   against the panel edges. */
+.peek-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.peek-item.is-selected {
+  background: var(--selection-bg);
+}
+
+.peek-item.is-live {
+  background: color-mix(in srgb, var(--destructive) 8%, transparent);
+}
+
+.peek-item.is-live.is-selected {
+  background: color-mix(in srgb, var(--destructive) 22%, transparent);
+}
+
+.peek-thumb {
+  width: 32px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.peek-thumb-fallback {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted-foreground);
+}
+
+.peek-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.peek-label {
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.peek-sublabel {
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.peek-times {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+}
+
+.peek-offset.is-live {
+  color: var(--destructive);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.peek-duration {
+  color: var(--muted-foreground);
+}
+
+.peek-goto {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.peek-item-row:hover .peek-goto,
+.peek-goto:focus-visible {
+  opacity: 1;
+}
+
+.peek-goto:hover {
+  color: var(--foreground);
+}
+
+.peek-goto:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.peek-filter {
+  display: flex;
+  gap: 4px;
+  padding: 2px 12px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.peek-filter-chip {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.peek-filter-chip:hover {
+  background: var(--hover-neutral);
+  color: var(--foreground);
+}
+
+.peek-filter-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.peek-filter-chip.is-active {
+  background: var(--selection-bg);
+  color: var(--foreground);
+  border-color: transparent;
+}
+
+.peek-section-header {
+  padding: 5px 12px 1px;
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+
+.peek-filter-empty,
+.peek-stack-empty {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+}
+
+/* Self-explaining empty / Show All state. */
+.peek-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.peek-rename-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 12px;
+  font: inherit;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--ring);
+  border-radius: var(--radius-control);
+  outline: none;
+}
+
+/* ── At-playhead restack presentation (ADR 0044 decision 6) ──────────────
+   One visual vocabulary for the whole gesture: the grabbed row lifts and
+   follows the pointer, rows at/past the active gap part 8px downward to
+   open a slot, and the slot carries a --selection line. The effect chain
+   still draws the older 2px-line-only vocabulary until it migrates. */
+
+.peek-grip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0 0 6px;
+  color: var(--color-slate-600);
+  cursor: grab;
+  touch-action: none;
+  transition: color var(--transition-fast);
+}
+
+.peek-item-row:hover .peek-grip {
+  color: var(--muted-foreground);
+}
+
+.peek-stack--reordering .peek-grip {
+  cursor: grabbing;
+}
+
+.peek-stack--reordering,
+.peek-stack--reordering * {
+  user-select: none;
+}
+
+/* Mid-gesture the pointer is a positioning tool: rows under the floating
+   row must not light up or sprout the Go To affordance. Selection / LIVE
+   tints keep their steady-state rules. */
+.peek-stack--reordering .peek-item:not(.is-selected):not(.is-live):hover {
+  background: transparent;
+}
+
+.peek-stack--reordering .peek-item-row:hover .peek-goto {
+  opacity: 0;
+}
+
+/* The grabbed row: lifted onto the raised surface and following the pointer.
+   --peek-drag-y is written imperatively by the panel per frame; transform is
+   deliberately NOT in the transition list — the follow must be instant. */
+.peek-row--dragging {
+  z-index: 2;
+  transform: translateY(var(--peek-drag-y, 0px));
+  background: var(--surface-raised);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  box-shadow: var(--shadow-menu);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+/* Rows at/past the active gap part to open the slot… */
+.peek-row--parted {
+  transform: translateY(8px);
+}
+
+/* …and the list opens matching bottom room, so the parted rows (or the
+   end-gap's slot line) never overhang the section that follows. */
+.peek-stack--parting .right-panel-peek-list {
+  padding-bottom: 12px;
+}
+
+/* The slot line — --selection (the one true accent), same rationale as the
+   effect chain's. --drop-before rows are themselves parted, so their line
+   sits centered in the slot they opened; the end gap draws in the list's
+   opened bottom padding. */
+.peek-row--drop-before::before,
+.peek-row--drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--selection);
+  pointer-events: none;
+  animation: peek-slot-line-in 120ms ease-out;
+}
+
+.peek-row--drop-before::before {
+  top: -5px;
+}
+
+.peek-row--drop-after::after {
+  bottom: -6px;
+}
+
+@keyframes peek-slot-line-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .right-panel-peek-list,
+  .right-panel-peek-list li,
+  .peek-row--dragging,
+  .peek-filter-chip,
+  .peek-grip {
+    transition: none;
+  }
+
+  .peek-row--drop-before::before,
+  .peek-row--drop-after::after {
+    animation: none;
+  }
+}

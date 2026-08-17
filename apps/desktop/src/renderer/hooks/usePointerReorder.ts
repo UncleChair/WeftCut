@@ -26,6 +26,13 @@ export interface PointerReorderOptions {
   /// own gap is a silent no-op, matching the indicator). The consumer decides
   /// what one thing to fire.
   onDrop: (drop: ReorderDrag) => void;
+  /// Optional per-frame report of the dragged row's pointer-follow offset in
+  /// px: pointer travel since the grab plus any edge auto-scroll, so a
+  /// translateY(offset) keeps the row under the finger even while the host
+  /// scrolls. Fired once at pointerdown (0), then on every pointermove and
+  /// auto-scroll step; never after the gesture ends. Presentation stays with
+  /// the consumer — this hook never touches an element's style.
+  onDragFrame?: ((offsetY: number) => void) | undefined;
 }
 
 export interface PointerReorder {
@@ -91,6 +98,9 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
   };
   const rowsRef = useRef<(HTMLElement | null)[]>([]);
   const containerRef = useRef<HTMLElement | null>(null);
+  // Grab-point clientY, the onDragFrame baseline. Written at startDrag, read
+  // by the per-gesture listeners below.
+  const startYRef = useRef(0);
 
   useEffect(() => {
     if (!drag) return;
@@ -115,6 +125,13 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
     // Edge auto-scroll: a rAF pump so holding the pointer at the host edge
     // keeps scrolling, instead of advancing one step per pointermove event.
     const host = scrollHostOf(containerRef.current);
+    // The follow offset folds the host's scroll travel in, so the dragged
+    // row stays under a stationary pointer while auto-scroll moves the list.
+    const startScrollTop = host?.scrollTop ?? 0;
+    const emitFrame = (clientY: number) =>
+      opts.onDragFrame?.(
+        clientY - startYRef.current + ((host?.scrollTop ?? 0) - startScrollTop),
+      );
     let speed = 0;
     let lastY = 0;
     let raf = 0;
@@ -123,7 +140,10 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
       if (!host || speed === 0 || !dragRef.current) return;
       const before = host.scrollTop;
       host.scrollTop += speed;
-      if (host.scrollTop !== before) applyGap(lastY);
+      if (host.scrollTop !== before) {
+        applyGap(lastY);
+        emitFrame(lastY);
+      }
       raf = requestAnimationFrame(pump);
     };
     const updateAutoScroll = (clientY: number) => {
@@ -138,6 +158,7 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
 
     const onMove = (e: PointerEvent) => {
       applyGap(e.clientY);
+      emitFrame(e.clientY);
       updateAutoScroll(e.clientY);
     };
     const onUp = () => {
@@ -185,6 +206,8 @@ export function usePointerReorder(opts: PointerReorderOptions): PointerReorder {
     } catch {
       // Not every embedder supports capture; window listeners still own the gesture.
     }
+    startYRef.current = e.clientY;
+    opts.onDragFrame?.(0); // reset the consumer's follow before the first move
     setDragState({ id, fromIndex: index, gap: index });
   };
 

@@ -13,6 +13,7 @@
 @import "./styles/editor.css";
 @import "./styles/startup.css";
 @import "./styles/preview.css";
+@import "./styles/nearby.css";
 @import "./styles/perf.css";
 @import "./styles/agent.css";
 @import "./styles/settings.css";

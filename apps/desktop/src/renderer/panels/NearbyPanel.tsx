@@ -28,6 +28,7 @@ import {
 
 import { formatTimecode } from "../frames";
 import { usePointerReorder } from "../hooks/usePointerReorder";
+import { useReorderSettle } from "../hooks/useReorderSettle";
 import { type TrackSummary } from "../ipc";
 import { layerDisplayName } from "../lib/layerName";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
@@ -115,10 +116,23 @@ export function NearbyPanel({
   const [frozen, setFrozen] = useState<PeekSections | null>(null);
   const gestureRowsRef = useRef<PeekItem[]>([]);
 
+  // Gesture presentation (the semantics above stay in the hook): the grabbed
+  // row follows the pointer through --peek-drag-y — written imperatively per
+  // frame on the stack section so the follow never rides the render loop —
+  // and the drop lands through useReorderSettle, which holds the row at its
+  // release position until the async restack's new order renders, then
+  // glides it into the slot.
+  const stackSectionRef = useRef<HTMLElement | null>(null);
+  const rowEls = useRef(new Map<string, HTMLLIElement>());
+  const settle = useReorderSettle((id) => rowEls.current.get(id) ?? null);
+
   const reorder = usePointerReorder({
     // Read per render. A pointerdown can only start on the displayed rows,
     // which are the live ones whenever no gesture is armed.
     rowIds: live.atPlayheadVisual.map((row) => row.layer.id),
+    onDragFrame: (offsetY) => {
+      stackSectionRef.current?.style.setProperty("--peek-drag-y", `${offsetY}px`);
+    },
     onDrop: ({ fromIndex, gap }) => {
       // Resolve against the pointerdown snapshot — the same rows the user
       // grabbed and has been looking at all gesture long.
@@ -126,6 +140,11 @@ export function NearbyPanel({
       const target = restackTargetForGap(rows, fromIndex, gap);
       const mover = rows[fromIndex];
       if (!target || !mover) return;
+      // Measured now, while the row still sits at its pointer-follow
+      // position — the drag class (and its transform) is gone by the
+      // post-drop render.
+      const el = rowEls.current.get(mover.layer.id);
+      if (el) settle.arm(mover.layer.id, el);
       onRestack?.(mover.layer.id, target.anchorId, target.position);
     },
   });
@@ -136,6 +155,7 @@ export function NearbyPanel({
 
   const startRestackDrag = (index: number, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
+    settle.cancel(); // a re-grab mid-glide must start from clean styles
     gestureRowsRef.current = visualRows;
     setFrozen(sections);
     reorder.startDrag(index, e);
@@ -188,12 +208,18 @@ export function NearbyPanel({
   const renderRow = (item: PeekItem, stackIndex?: number) => {
     const draggable =
       stackIndex !== undefined && stackIndex < visualRows.length;
+    const dragging = draggable && reorder.drag?.id === item.layer.id;
+    const gap = reorder.indicatorGap;
     const rowClassName = draggable
       ? [
-          reorder.drag?.id === item.layer.id ? "peek-row--dragging" : "",
-          reorder.indicatorGap === stackIndex ? "peek-row--drop-before" : "",
-          reorder.indicatorGap === visualRows.length &&
-          stackIndex === visualRows.length - 1
+          dragging ? "peek-row--dragging" : "",
+          // Rows at/past the active gap part downward to open the slot; the
+          // dragged row never parts — its transform is the pointer follow.
+          !dragging && gap !== null && stackIndex >= gap
+            ? "peek-row--parted"
+            : "",
+          gap === stackIndex ? "peek-row--drop-before" : "",
+          gap === visualRows.length && stackIndex === visualRows.length - 1
             ? "peek-row--drop-after"
             : "",
         ]
@@ -218,7 +244,13 @@ export function NearbyPanel({
         }
         rowClassName={rowClassName === "" ? undefined : rowClassName}
         rowRef={
-          draggable ? (el) => reorder.setRowEl(stackIndex, el) : undefined
+          draggable
+            ? (el) => {
+                reorder.setRowEl(stackIndex, el);
+                if (el) rowEls.current.set(item.layer.id, el);
+                else rowEls.current.delete(item.layer.id);
+              }
+            : undefined
         }
         onGripPointerDown={
           draggable && onRestack
@@ -293,12 +325,19 @@ export function NearbyPanel({
                 a section to hide. The container ref anchors the reorder
                 gesture's edge auto-scroll. */}
             <section
-              ref={reorder.containerRef}
-              className={
-                reorder.drag
-                  ? "peek-section peek-stack--reordering"
-                  : "peek-section"
-              }
+              ref={(el) => {
+                reorder.containerRef.current = el;
+                stackSectionRef.current = el;
+              }}
+              className={[
+                "peek-section",
+                reorder.drag ? "peek-stack--reordering" : "",
+                // An active (non-noop) gap: the list opens bottom room for
+                // the parted rows' slot.
+                reorder.indicatorGap !== null ? "peek-stack--parting" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               aria-label={t("peek.section_at_playhead")}
             >
               <div className="peek-section-header">
@@ -349,10 +388,7 @@ export function NearbyPanel({
 function Explainer({ title, message }: { title: string; message: string }) {
   const { t } = useTranslation();
   return (
-    <section
-      className="right-panel-peek right-panel-peek--empty"
-      aria-label={t("peek.section_label")}
-    >
+    <section className="right-panel-peek" aria-label={t("peek.section_label")}>
       <header className="right-panel-peek-header">
         <span>{title}</span>
       </header>

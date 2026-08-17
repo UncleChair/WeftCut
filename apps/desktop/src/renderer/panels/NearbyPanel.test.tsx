@@ -421,6 +421,43 @@ describe("NearbyPanel drag restack", () => {
     }
   });
 
+  it("opens the slot: rows past the gap part, the section flags parting, and the drag follows via --peek-drag-y", () => {
+    renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Wash"), {
+      button: 0,
+      clientX: 8,
+      clientY: 50,
+    });
+    const section = screen.getByRole("region", { name: "At playhead" });
+    // The follow offset resets at grab, before any move.
+    expect(section.style.getPropertyValue("--peek-drag-y")).toBe("0px");
+
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 5 });
+    const rows = stackRows();
+    expect(section.className).toContain("peek-stack--parting");
+    // Gap 0: Logo parts to open the slot; the dragged Wash never parts —
+    // its transform is the pointer follow.
+    expect(rows[0]!.className).toContain("peek-row--parted");
+    expect(rows[1]!.className).toContain("peek-row--dragging");
+    expect(rows[1]!.className).not.toContain("peek-row--parted");
+    expect(section.style.getPropertyValue("--peek-drag-y")).toBe("-45px");
+  });
+
+  it("a no-op gap opens no slot: no parting flag, no parted rows", () => {
+    const { container } = renderStack();
+    fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
+      button: 0,
+      clientX: 8,
+      clientY: 10,
+    });
+    // y=30 is the gap right below the dragged row — a no-op drop.
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 30 });
+    const section = screen.getByRole("region", { name: "At playhead" });
+    expect(section.className).toContain("peek-stack--reordering");
+    expect(section.className).not.toContain("peek-stack--parting");
+    expect(container.querySelector(".peek-row--parted")).toBeNull();
+  });
+
   it("dragging the bottom visual row above the top targets 'above' the top row", () => {
     const { onRestack } = renderStack();
     fireEvent.pointerDown(screen.getByLabelText("Drag to restack Wash"), {
