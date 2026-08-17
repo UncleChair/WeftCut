@@ -7,8 +7,13 @@
 // fidelity field documents whether the filter operates correctly at float16
 // precision ("f16-verified") or loses range ("precision-reduced").
 
-import { BlurFilter, type Filter } from "pixi.js";
+import { BlurFilter, ColorMatrixFilter, type Filter } from "pixi.js";
 import { ChromaKeyFilter, type ChromaParamName } from "./filters/ChromaKeyFilter";
+import {
+  writeBrightness,
+  writeContrast,
+  writeSaturation,
+} from "./filters/colorMatrices";
 
 export interface EffectParamSpec {
   default: number;
@@ -44,6 +49,38 @@ export interface EffectDescriptor {
   /// (docs/features.md#color-picker-eyedropper). Names must
   /// exist in `params`.
   colorGroups?: Array<{ params: [string, string, string] }>;
+}
+
+/// The three colour-matrix entries are one shape: a stock ColorMatrixFilter
+/// used as a shader shell, one scalar `amount` on the shared calibration
+/// ([-100, 100], step 1, neutral at 0), and a writer that fills the filter's
+/// 4×5 matrix from that amount.
+///
+/// `filter.matrix` is read, never assigned: the GETTER hands back the live
+/// `uColorMatrix` array, while the SETTER would swap the uniform reference on
+/// every frame. `uAlpha` is left at the constructor's 1 — at 0 the fragment
+/// early-returns the untouched colour, so a matrix that appears to do nothing
+/// is more likely that than a maths bug.
+function colorMatrixEffect(
+  kind: string,
+  write: (out: number[], amount: number) => void,
+): EffectDescriptor {
+  return {
+    kind,
+    nameI18nKey: `effects.${kind}.name`,
+    category: "color",
+    create: () => new ColorMatrixFilter(),
+    params: {
+      amount: {
+        default: 0,
+        range: [-100, 100],
+        step: 1,
+        apply: (f, v) => write((f as ColorMatrixFilter).matrix, v),
+      },
+    },
+    fidelity: "f16-verified",
+    colorspace: "display-gamma",
+  };
 }
 
 const REGISTRY: Record<string, EffectDescriptor> = {
@@ -94,6 +131,9 @@ const REGISTRY: Record<string, EffectDescriptor> = {
     fidelity: "f16-verified",
     colorspace: "display-gamma",
   },
+  brightness: colorMatrixEffect("brightness", writeBrightness),
+  contrast: colorMatrixEffect("contrast", writeContrast),
+  saturation: colorMatrixEffect("saturation", writeSaturation),
 };
 
 export function getDescriptor(kind: string): EffectDescriptor | null {

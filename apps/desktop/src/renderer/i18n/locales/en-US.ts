@@ -1067,6 +1067,21 @@ const enUS = {
         viewMatte: "View matte",
       },
     },
+    brightness: {
+      name: "Brightness",
+      desc: "Exposure gain — black stays black",
+      params: { amount: "Amount" },
+    },
+    contrast: {
+      name: "Contrast",
+      desc: "Snap around mid gray",
+      params: { amount: "Amount" },
+    },
+    saturation: {
+      name: "Saturation",
+      desc: "Color intensity, down to gray",
+      params: { amount: "Amount" },
+    },
   },
   property_panel: {
     heading: "Properties",

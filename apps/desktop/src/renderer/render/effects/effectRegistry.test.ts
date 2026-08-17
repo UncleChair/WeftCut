@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { BlurFilter } from "pixi.js";
+import { BlurFilter, ColorMatrixFilter } from "pixi.js";
 import { getDescriptor } from "./effectRegistry";
 import { ChromaKeyFilter } from "./filters/ChromaKeyFilter";
+import { writeBrightness, writeContrast, writeSaturation } from "./filters/colorMatrices";
 
 import { listEffects } from "./effectRegistry";
 
@@ -67,5 +68,80 @@ describe("chromakey", () => {
   it("declares the key color as an eyedropper color group", () => {
     const d = getDescriptor("chromakey")!;
     expect(d.colorGroups).toEqual([{ params: ["keyR", "keyG", "keyB"] }]);
+  });
+});
+
+describe("the colour-matrix trio", () => {
+  // kind → the writer it must be wired to. The pairing is the thing worth
+  // pinning: all three descriptors are the same shape, so a copy-paste that
+  // hands contrast the brightness writer type-checks and renders.
+  const TRIO = {
+    brightness: writeBrightness,
+    contrast: writeContrast,
+    saturation: writeSaturation,
+  } as const;
+
+  const expected = (write: (out: number[], v: number) => void, v: number): number[] => {
+    const m = new Array<number>(20).fill(NaN);
+    write(m, v);
+    return m;
+  };
+
+  for (const [kind, write] of Object.entries(TRIO)) {
+    it(`${kind} builds a ColorMatrixFilter on the shared calibration`, () => {
+      const d = getDescriptor(kind)!;
+      expect(d.kind).toBe(kind);
+      expect(d.category).toBe("color");
+      expect(d.fidelity).toBe("f16-verified");
+      expect(d.colorspace).toBe("display-gamma");
+      expect(d.nameI18nKey).toBe(`effects.${kind}.name`);
+      expect(d.colorGroups).toBeUndefined();
+      expect(Object.keys(d.params)).toEqual(["amount"]);
+      expect(d.params.amount!.default).toBe(0);
+      expect(d.params.amount!.range).toEqual([-100, 100]);
+      expect(d.params.amount!.step).toBe(1);
+      expect(d.create()).toBeInstanceOf(ColorMatrixFilter);
+    });
+
+    it(`${kind} writes its own matrix into the live uniform array, in place`, () => {
+      const d = getDescriptor(kind)!;
+      const f = d.create() as ColorMatrixFilter;
+      const live = f.matrix;
+      d.params.amount!.apply(f, -40);
+      // Same array object — the setter (which swaps the uniform reference on
+      // every frame) must never be reached.
+      expect(f.matrix).toBe(live);
+      expect([...f.matrix]).toEqual(expected(write, -40));
+      // uAlpha at 0 makes the fragment early-return the untouched colour.
+      expect(f.alpha).toBe(1);
+    });
+
+    it(`${kind} at amount 0 leaves the identity matrix`, () => {
+      const d = getDescriptor(kind)!;
+      const f = d.create() as ColorMatrixFilter;
+      d.params.amount!.apply(f, 0);
+      expect([...f.matrix]).toEqual([
+        1, 0, 0, 0, 0,
+        0, 1, 0, 0, 0,
+        0, 0, 1, 0, 0,
+        0, 0, 0, 1, 0,
+      ]);
+    });
+  }
+
+  it("saturation is the Rec.709 entry — the one pixi's own helper gets wrong", () => {
+    const d = getDescriptor("saturation")!;
+    const f = d.create() as ColorMatrixFilter;
+    d.params.amount!.apply(f, -100);
+    expect(f.matrix[0]).toBeCloseTo(0.2126, 6);
+    expect(f.matrix[1]).toBeCloseTo(0.7152, 6);
+    expect(f.matrix[2]).toBeCloseTo(0.0722, 6);
+  });
+
+  it("all three are in the catalog under Color", () => {
+    const byKind = new Map(listEffects().map((d) => [d.kind, d]));
+    for (const kind of Object.keys(TRIO)) {
+      expect(byKind.get(kind)?.category, kind).toBe("color");
+    }
   });
 });

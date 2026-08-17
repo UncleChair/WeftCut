@@ -33,7 +33,7 @@
         try {
           const PIXI = require("pixi.js");
           const { autoDetectRenderer, RenderTexture, Sprite, Mesh, MeshGeometry,
-            Shader, BlurFilter, TexturePool, Container } = PIXI;
+            Shader, BlurFilter, ColorMatrixFilter, TexturePool, Container } = PIXI;
 
           // Pool-bump: must happen before autoDetectRenderer so the FilterSystem
           // never sees an empty-pool miss that materialises as bgra8unorm.
@@ -63,7 +63,21 @@
               gl.readPixels(0, y, W, 1, gl.RGBA, gl.HALF_FLOAT, buf);
               for (let i = 0; i < W; i++) reds.push(halfToFloat(buf[i * 4]));
             }
-            return { label, distinct: new Set(reds.map((v) => Math.round(v * 100000))).size, glError: gl.getError() };
+            // `distinct` alone cannot tell a filter that ran from a filter that
+            // silently did nothing — a colour matrix that never reached the GPU
+            // (or a uAlpha of 0, which makes the fragment early-return the
+            // untouched colour) passes the banding assertions unchanged. So
+            // also report the value at the quarter point, where the source ramp
+            // reads 0.25: brightness at amount -40 must land near 0.15 and
+            // contrast near 0.35. Reported, not asserted — run.mjs still gates
+            // on `distinct`; this is the evidence a phase records about itself.
+            const q1 = reds[W >> 2];
+            return {
+              label,
+              distinct: new Set(reds.map((v) => Math.round(v * 100000))).size,
+              atQuarter: Math.round(q1 * 100000) / 100000,
+              glError: gl.getError(),
+            };
           }
 
           // Build a 1024-step [0,1] gradient in an rgba16float source texture.
@@ -140,6 +154,60 @@ void main(){ finalColor=vec4(vUV.x,vUV.x,vUV.x,1.0); }`;
           chromaStage.addChild(chromaSp);
           renderer.render({ container: chromaStage, target: chromaRT });
           phase("chroma", () => readRed(chromaRT, "chroma-passthrough"));
+
+          // The colour trio (brightness / contrast / saturation), each a stock
+          // ColorMatrixFilter driven by a NON-NEUTRAL amount of -40. A gain
+          // BELOW 1 is deliberate: above 1 the ramp would run past 1.0 and the
+          // 8-bit intermediate would clamp it, which looks like banding for the
+          // wrong reason.
+          //
+          // The matrices are spelled out here rather than loaded from
+          // colorMatrices.ts the way the chroma sources are: that module is
+          // ordinary annotated TypeScript (the shader sources are
+          // plain-JS-by-contract because they are string constants), and what
+          // this phase measures is the POOL the filter's output lands in, not
+          // whether the matrix is right. Matrix correctness — the Rec.709
+          // saturation included — is owned by colorMatrices.test.ts, which runs
+          // in CI where this gate cannot.
+          const colorMatrixPhase = (name, matrix) => {
+            const f = new ColorMatrixFilter();
+            const live = f.matrix; // getter: the live uniform array (never the setter)
+            for (let i = 0; i < 20; i++) live[i] = matrix[i];
+            const rt = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+            const st = new Container();
+            const spr = new Sprite(srcRT);
+            spr.filters = [f];
+            st.addChild(spr);
+            renderer.render({ container: st, target: rt });
+            phase(name, () => readRed(rt, `${name}-amount-minus40`));
+          };
+
+          // amount -40 → g = 0.6, a plain diagonal gain.
+          colorMatrixPhase("brightness", [
+            0.6, 0, 0, 0, 0,
+            0, 0.6, 0, 0, 0,
+            0, 0, 0.6, 0, 0,
+            0, 0, 0, 1, 0,
+          ]);
+          // amount -40 → c = 0.6 pivoted at 0.5, offset 0.5*(1-c) = 0.2.
+          colorMatrixPhase("contrast", [
+            0.6, 0, 0, 0, 0.2,
+            0, 0.6, 0, 0, 0.2,
+            0, 0, 0.6, 0, 0.2,
+            0, 0, 0, 1, 0,
+          ]);
+          // amount -40 → s = 0.6, k = 0.4 on Rec.709 weights. Note this one is
+          // value-preserving on THIS source by construction: the gradient is
+          // neutral grey and the luma weights sum to 1, so the phase reads like
+          // the chroma pass-through above. That is the honest reading — a
+          // desaturation cannot move a grey ramp, and the gate's job here is
+          // the pool, not the grade.
+          colorMatrixPhase("saturation", [
+            0.68504, 0.28608, 0.02888, 0, 0,
+            0.08504, 0.88608, 0.02888, 0, 0,
+            0.08504, 0.28608, 0.62888, 0, 0,
+            0, 0, 0, 1, 0,
+          ]);
 
           ipcRenderer.send("gate-result", out);
         } catch (err) {

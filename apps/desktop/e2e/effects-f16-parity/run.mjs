@@ -15,12 +15,12 @@
 // Override that only for a checkout that keeps Electron elsewhere:
 //   ELECTRON_BIN=/path/to/electron node run.mjs
 //
-// What it checks:
-//   default-pool: BlurFilter and the chromakey pass-through through an
-//                 8-bit / f16 pool intermediate
+// What it checks — every catalog filter gets a phase, each driven by a
+// non-neutral parameter (the colour trio at amount -40, a gain below 1 so
+// nothing clips):
+//   default-pool: each filter through an 8-bit pool intermediate
 //                 → gradient collapses to ~256 distinct values (banding)
-//   f16-pool:     BlurFilter and the chromakey pass-through through an
-//                 rgba16float pool intermediate
+//   f16-pool:     each filter through an rgba16float pool intermediate
 //                 → gradient preserves ~1024 distinct values (full precision)
 
 import { execFileSync } from "child_process";
@@ -87,7 +87,9 @@ const f16Result = runCondition(true);
 const DEFAULT_THRESHOLD = 260;
 const F16_THRESHOLD = 900;
 
-for (const filterPhase of ["blur", "chroma"]) {
+// One phase per catalog filter — a filter is not labelled `f16-verified` in
+// effectRegistry.ts before its phase has passed here.
+for (const filterPhase of ["blur", "chroma", "brightness", "contrast", "saturation"]) {
   const distinctDefault = defaultResult.phases?.[filterPhase]?.distinct ?? -1;
   if (distinctDefault <= DEFAULT_THRESHOLD && distinctDefault > 0) {
     console.log(`[f16-parity] PASS default-pool ${filterPhase}: distinct=${distinctDefault} <= ${DEFAULT_THRESHOLD} (bands as expected)`);

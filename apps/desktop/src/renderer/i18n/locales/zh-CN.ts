@@ -1009,6 +1009,21 @@ const zhCN: Resources = {
         viewMatte: "查看遮罩",
       },
     },
+    brightness: {
+      name: "亮度",
+      desc: "曝光增益，黑场不浮",
+      params: { amount: "数量" },
+    },
+    contrast: {
+      name: "对比度",
+      desc: "以中灰为轴调整反差",
+      params: { amount: "数量" },
+    },
+    saturation: {
+      name: "饱和度",
+      desc: "色彩浓度，可降至灰度",
+      params: { amount: "数量" },
+    },
   },
   property_panel: {
     heading: "属性",

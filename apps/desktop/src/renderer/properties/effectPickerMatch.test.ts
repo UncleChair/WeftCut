@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { filterEffects, groupEffects, type EffectPickItem } from "./effectPickerMatch";
+import { listEffects } from "../render/effects/effectRegistry";
+import en from "../i18n/locales/en-US";
+import zh from "../i18n/locales/zh-CN";
 
 const blur: EffectPickItem = {
   kind: "blur",
@@ -72,5 +75,48 @@ describe("groupEffects", () => {
 
   it("an empty result set produces no groups", () => {
     expect(groupEffects([])).toEqual([]);
+  });
+});
+
+// The fixtures above prove the matcher; these prove the catalog the app
+// actually ships is reachable through it. Data-driven off `listEffects()`, so
+// a new entry whose label nobody can type turns this red the day it lands.
+describe("the shipped catalog", () => {
+  const at = (loc: unknown, dotted: string): string =>
+    dotted.split(".").reduce<any>((acc, k) => acc?.[k], loc) as string;
+
+  /// Picker rows built the way `useCatalogItems` builds them — catalog entry
+  /// plus the locale's own strings.
+  const rowsIn = (loc: unknown): EffectPickItem[] =>
+    listEffects().map((d) => ({
+      kind: d.kind,
+      label: at(loc, d.nameI18nKey),
+      desc: at(loc, `effects.${d.kind}.desc`),
+      category: d.category,
+      categoryLabel: at(loc, `effects.category.${d.category}`),
+    }));
+
+  for (const [locale, loc] of Object.entries({ "en-US": en, "zh-CN": zh })) {
+    it(`every entry is findable by the name it shows in ${locale}`, () => {
+      const rows = rowsIn(loc);
+      for (const row of rows) {
+        expect(filterEffects(row.label, rows)[0]?.kind, `${locale} "${row.label}"`)
+          .toBe(row.kind);
+      }
+    });
+  }
+
+  it("typing an English name prefix reaches the colour trio", () => {
+    const rows = rowsIn(en);
+    for (const [query, kind] of [["bright", "brightness"], ["contr", "contrast"], ["satur", "saturation"]]) {
+      expect(filterEffects(query!, rows)[0]?.kind, query).toBe(kind);
+    }
+  });
+
+  it("groups the trio under Color, in registration order", () => {
+    const groups = groupEffects(rowsIn(en));
+    const color = groups.find((g) => g.category === "color")!;
+    expect(color.label).toBe("Color");
+    expect(color.items.map((i) => i.kind)).toEqual(["brightness", "contrast", "saturation"]);
   });
 });
