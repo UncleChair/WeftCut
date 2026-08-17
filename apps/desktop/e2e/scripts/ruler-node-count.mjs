@@ -36,6 +36,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { electronBinPath } from '../lib/electron-bin.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, '../..');
 const MAIN = path.join(DESKTOP, 'out', 'main', 'index.js');
@@ -72,10 +74,7 @@ if (!fs.existsSync(MAIN)) {
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-rulergate-'));
 const projectParent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-rulergate-proj-'));
-const ELECTRON_EXE = path.join(
-  DESKTOP, '..', '..', 'node_modules', 'electron', 'dist',
-  process.platform === 'win32' ? 'electron.exe' : 'electron',
-);
+const ELECTRON_EXE = electronBinPath();
 
 const { _electron } = await import('@playwright/test');
 const app = await _electron.launch({

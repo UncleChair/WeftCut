@@ -49,15 +49,13 @@ import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { benchFixturePath } from "./gen-decode-bench-fixtures.mjs";
+import { electronBinPath } from "../lib/electron-bin.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, "../..");
 const MAIN = path.join(DESKTOP, "out", "main", "index.js");
 const RESULTS_DIR = path.join(DESKTOP, "e2e", "bench-results");
-const ELECTRON_EXE = path.join(
-  DESKTOP, "..", "..", "node_modules", "electron", "dist",
-  process.platform === "win32" ? "electron.exe" : "electron",
-);
+const ELECTRON_EXE = electronBinPath();
 
 const log = (m) => console.log(`[playback-perf] ${m}`);
 

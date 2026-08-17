@@ -35,6 +35,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { electronBinPath } from '../lib/electron-bin.mjs';
+
 const THRESHOLD_MB = 30;
 const PLAY_SECONDS = 90;
 
@@ -47,8 +49,7 @@ if (!['text', 'transitions'].includes(SCENARIO)) {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, '../..');
 const REPO = path.resolve(DESKTOP, '../..');
-const ELECTRON_EXE = path.join(REPO, 'node_modules', 'electron', 'dist',
-  process.platform === 'win32' ? 'electron.exe' : 'electron');
+const ELECTRON_EXE = electronBinPath();
 
 const log = (m) => console.log(`[memory-ratchet] ${m}`);
 

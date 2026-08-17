@@ -170,7 +170,9 @@ tier however long it takes.
 electron/            Playwright specs (*.spec.ts) — the live suite
 electron/helpers/    driver.ts: launchApp / newProject / dragDockTab / driveExport / waitForHook
 lib/                 analyzer + comparison: analyze.mjs (media_conformance),
-                     compare-determinism.mjs, image-ssim.mjs
+                     compare-determinism.mjs, image-ssim.mjs; plus
+                     electron-bin.mjs — where the repo's Electron binary is,
+                     for the gates below that launch it directly
 fixtures/            generate.mjs + generate-fixtures.mjs (real test media via ffmpeg);
                      media/ is generated, gitignored
 scripts/             standalone color diagnostics (color-*.mjs) — invoke
