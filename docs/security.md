@@ -62,6 +62,16 @@ offscreen capture window, and its security rests on **two orthogonal axes**:
   request** — no fetch/XHR/WebSocket, no remote `<script>`, no beacon, no iframe. It is
   fully offline. This bounds what a Motif can *reach*.
 
+  A Motif's **parameter page** (`params.html`, the one document the app frames rather
+  than captures) is served with exactly one delta: `script-src` and `style-src`
+  additionally allow the `motif:` scheme, so a parameter UI may split into companion
+  `.js`/`.css` files instead of cramming everything inline — a render document is one
+  self-contained file by construction, a parameter UI is not. Everything else,
+  including `default-src 'none'` and therefore the absent `connect-src`, is identical:
+  the page is offline too. `'self'` is used in neither CSP, because the page is framed
+  with `sandbox="allow-scripts"` and no `allow-same-origin`, so its origin is opaque
+  and `'self'` would match nothing.
+
 **The two axes are not redundant.** The sandbox does not restrict the network, so a
 sandboxed-but-unconfined Motif could still read whatever it can reach and exfiltrate it;
 the CSP is what closes that. Conversely, the CSP would not stop a renderer exploit from

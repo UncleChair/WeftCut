@@ -196,3 +196,40 @@ The placement verdict meaning *no track can take this, so make one* — the four
 collision, so a selection that would overlap itself on the one new track still
 refuses.
 _Avoid_: auto-create, insert track, overflow
+
+## Motifs
+
+**Motif**:
+A parameterized, time-varying overlay authored as a real web page — a manifest
+island plus `index.html`, served over the `motif:` scheme and captured frame by
+frame while the harness owns the clock (ADR 0017). Built-in, user-authored and
+agent-authored Motifs are the same kind of document on the same render path;
+placed, one is a `Motif` layer whose props are its entire instance state.
+_Avoid_: template (that was the SVG predecessor), overlay, animation preset
+
+**Props schema (data plane)**:
+A Motif's `props_schema` — the four typed variants (string, color, number, enum)
+its parameters may take. It is the *data* contract and nothing else: validation,
+defaults, lenient migration, persistence, undo and agent drafting all read it,
+and it carries no presentation — no label, order, grouping or widget hint.
+Frozen: a control the vocabulary lacks comes from a params page, never from a
+fifth variant (ADR 0045).
+_Avoid_: prop types, control schema, param spec (that is one entry in it)
+
+**Params page (UI plane)**:
+The optional `params.html` a Motif ships beside its `index.html` to own its whole
+props section of the property panel — labels, order, grouping, conditional rows.
+The file's presence is the only enablement; there is no manifest field. It runs
+in a sandboxed, offline `motif:` frame on an opaque origin and speaks five
+postMessage verbs with the host (init, propsChanged, preview, commit, resize):
+preview overlays the canvas only, and one commit is one undo entry however many
+keys it carries (ADR 0045).
+_Avoid_: params UI, custom panel, plugin UI, settings page
+
+**Fallback form**:
+The props form the host generates from a `props_schema` when the Motif ships no
+params page — one row per prop in the manifest's key order, bare keys title-cased and
+deliberately unlocalized, one key committed per gesture. The default path rather
+than a degraded one: an agent draft or a plain Motif stays editable with zero
+author effort, and the form is frozen at the four variants alongside the schema.
+_Avoid_: generated panel, default form, auto form, generic props form

@@ -50,7 +50,8 @@ Everything else (capture, cache, export) is mechanism around this contract.
 
 ## Boundaries
 
-- **In scope:** the authoring contract a Motif must satisfy, the capture harness
+- **In scope:** the authoring contract a Motif must satisfy, its parameter UI (the
+  generated fallback form and a Motif's own `params.html`), the capture harness
   that turns it into bitmaps, the raster cache and its escalation levers, and how
   the compositor and export read Motif frames.
 - **Out of scope:** adding/validating Motif layers ([`data-model.md`](data-model.md)),
@@ -140,10 +141,13 @@ learnable rule is *don't accumulate state via timers; express it as `f(t)`*.
   so there is no resolution code in the Motif and no blur on scale-up.
 - **`default_duration_s`** — the initial placed-layer length.
 - **`props_schema`** — typed props (`string` with optional `max_length`, `color` as
-  `#rrggbb[aa]`, `number` with optional `min`/`max`), each with a `default`. Props
-  are validated (unknown keys reject, missing keys fall back to defaults) and
-  canonicalized into a stable key order, so identical inputs produce identical bytes
-  and identical cache keys.
+  `#rrggbb[aa]`, `number` with optional `min`/`max`, `enum` over `options`), each with
+  a `default`. Props are validated (unknown keys reject, missing keys fall back to
+  defaults) and canonicalized into a stable key order, so identical inputs produce
+  identical bytes and identical cache keys. The four variants are the *data* contract
+  — validation, defaults, persistence, undo, agent drafting — and they carry no
+  presentation fields; the controls the user sees are the subject of
+  [Parameter UI](#parameter-ui).
 - **`settle_rafs`** — how many real browser frames the harness waits after a seek
   before capturing (clamped to `{0,1,2}`, default `2`). CSS/DOM-only Motifs can set
   `1` to shave a frame; canvas/WebGL Motifs want `2`.
@@ -186,6 +190,143 @@ never invalidates cached frames.
 - **Size & resolution:** lay out within `manifest.size`; the harness chooses the
   capture resolution. Layer transform and opacity are applied by the Pixi sprite at
   composite time, never captured.
+
+## Parameter UI
+
+The property panel gets a Motif's controls one of two ways, and a single file on
+disk decides which.
+
+**The generated fallback form is the default.** With no parameter page, the host
+builds the form from `props_schema`: one row per prop, switched on its type —
+text input (a textarea when `multiline`), color swatch, number field with
+steppers, dropdown for `enum` — one flat list in the manifest's own key order
+(only the props *values* object is canonicalized alphabetically; the schema keeps
+its authored order), labelled with the prop key title-cased (`bg_color` →
+"Bg Color"). Those
+labels are deliberately **not** localized: user- and agent-authored Motifs carry
+arbitrary on-disk keys, so there is nothing the host could register in advance.
+Each row commits one key per gesture (the color swatch debounced, because a drag
+through the OS color dialog would otherwise flood the serialized capture queue).
+The same generator serves the picker's props form, so the two surfaces cannot
+drift.
+
+**A `params.html` takes the surface over.** A Motif that ships one owns its whole
+props section — labels, order, grouping, conditional rows, and whatever controls
+the author can write — and the host stops generating anything for it. The schema
+keeps every other job it had.
+
+### Enablement is presence
+
+A `params.html` next to `index.html` in the Motif's directory is the entire
+switch. There is no manifest field, so a Motif's UI can change without touching
+its data contract: the catalog payload carries `has_params_ui`, which the main
+process derives by stat'ing the file (built-ins once at boot — their assets are
+packaged read-only; user Motifs on every catalog listing, published copy first
+then draft), and it never enters the manifest island, the content hash, or
+manifest validation. Dropping the file in — or deleting it — switches the panel
+on the next catalog refresh, which the Motif directory watcher already triggers
+on any file change. Of the built-ins, `text-fx` ships a page; `countdown` and
+`lower-third` deliberately stay on the fallback form.
+
+### Where the page runs
+
+The panel frames `motif://<id>/params.html?v=<catalog revision>` with
+`sandbox="allow-scripts"` and **no** `allow-same-origin`. The `?v=` is the
+runtime catalog's revision, which the watcher bumps on any Motif file change, so
+editing the page on disk reloads the panel instead of serving a cached copy. Four
+consequences an author designs around:
+
+- **The origin is opaque.** `localStorage`, `sessionStorage`, `document.cookie`
+  and `indexedDB` *throw* on access. `event.origin` on an inbound message reads
+  `"null"`, so window identity is the only check worth making — which is exactly
+  what the host side does.
+- **There is no network.** The params CSP keeps `default-src 'none'` with no
+  `connect-src`, so fetch/XHR/WebSocket/EventSource are denied, the same as for a
+  render document. Assets are relative URLs (they resolve to `motif://<id>/…`) or
+  `data:` URIs.
+- **Companion files are allowed.** The params CSP differs from the render
+  document's by exactly two sources: `script-src` and `style-src` additionally
+  allow the `motif:` scheme, so a page may split into `.js`/`.css` files beside it
+  rather than cramming everything inline. Inline script and style still work, so a
+  single self-contained file is fine too. `'self'` appears in neither CSP — on an
+  opaque origin it would match nothing.
+- **The app frames nothing else.** The renderer's own CSP grants `frame-src
+  motif:` and no `'self'`, so a Motif's parameter page is the only embeddable
+  context in the app. Full CSP rationale: [`security.md`](security.md).
+
+The frame is transparent and the page paints its own surfaces from the theme
+tokens it receives, so it reads as part of the panel rather than as a foreign
+form.
+
+### The protocol
+
+Five verbs over `postMessage`, all `motif:`-prefixed so a page can ignore the
+unrelated traffic any embedder eventually produces.
+
+| Verb | Direction | Payload | When |
+|---|---|---|---|
+| `motif:init` | host → page | `{ motifId, layerId, props, schema, locale, themeTokens }` | once per loaded document, on the frame's `load` |
+| `motif:propsChanged` | host → page | `{ props }` | the layer's props changed from *outside* this page (undo/redo, an agent edit, another surface) |
+| `motif:preview` | page → host | `{ props }` (a patch) | mid-gesture |
+| `motif:commit` | page → host | `{ props }` (a patch) | gesture end |
+| `motif:resize` | page → host | `{ height }` (px) | whenever the page's content height changes |
+
+`init.props` are the layer's committed props, leniently canonicalized, so a page
+never has to reason about a stale stored value; `schema` is the manifest's
+`props_schema` verbatim; `locale` is the app's active locale string; `themeTokens`
+is a curated map of the app's CSS custom properties (surfaces, text, accent,
+border, radius, font) — the page-facing subset, small on purpose so it can stay
+stable.
+
+**Nothing the page sends is believed.** The sender must be the frame's own
+window, every payload is shape-checked before a field is read, keys the manifest
+does not declare are dropped, and surviving values are lenient-canonicalized
+against the current manifest — an invalid value degrades to its schema default.
+Anything unrecognized is ignored silently. A page therefore cannot corrupt a
+project, but a page that sends sloppy values watches them snap back, so send
+well-formed ones (`#rrggbb` / `#rrggbbaa`, numbers inside `min`/`max`, enum
+options that exist).
+
+### The gesture model
+
+- **`preview` never touches project state.** The patch lands in a per-layer
+  overlay that the render path merges at its canonicalization choke point, so it
+  reaches both the rasterized frame and the frame cache key — and nothing else: no
+  backend command, no history entry, nothing in the project file. Only the
+  on-screen sprite reads it; the prewarmer, the disk baker, bake status and the
+  export bake all describe committed props, so a live gesture can never write a
+  transient frame to disk or move a bake progress bar.
+- **Previews are throttled, so send freely.** The first patch of a gesture applies
+  immediately and the rest coalesce into one update per 250 ms, matching the
+  capture cost behind them (~80–100 ms per frame, serialized). Re-sending a value
+  that has not changed costs no recapture.
+- **`commit` is one history entry, however many keys it carries.** The whole patch
+  rides a single `update_layer_params`, so coupled values (a preset landing three
+  colors at once) are atomic and one undo takes all of them back. The overlay's
+  committed keys are cleared only once the mutation settles — clearing eagerly
+  would show the pre-commit frame for the length of the round-trip.
+- **A page's own commit is not echoed back.** `propsChanged` fires for genuinely
+  external changes only, so a page can repaint optimistically on its own edit
+  without fighting a redundant update. An undo *does* arrive as `propsChanged`,
+  which is what keeps a page's controls from showing stale values.
+- **`resize` is advisory.** The host clamps the declared height to `[80, 1200]` px
+  and sits at 240 until the page says otherwise, so a page can neither collapse to
+  an invisible strip nor take the panel column hostage.
+- **Teardown drops the gesture.** Selecting another layer, swapping the Motif, or a
+  watcher-driven reload disposes the host: pending previews are discarded and the
+  canvas returns to committed props rather than stranding on a half-finished drag.
+
+### The reference page
+
+`src/shared/motifs/builtin/text-fx/params.html` is the worked example and the
+copy-paste template: a single self-contained document that groups its 13 props
+into hand-ordered sections, switches its labels bilingually off `init.locale`
+(the host never registers a Motif's strings — a page that cares about language
+carries its own), skins itself from `themeTokens` with literal fallbacks for the
+frame before the first message lands, shows rows only when they matter
+(`type_speed` for the typewriter effect, `loop` for color-shift), composes an
+RGB picker plus an alpha slider into `#rrggbbaa`, and offers preset swatches that
+land three coupled colors in one commit.
 
 ## Determinism: owning the clock
 
@@ -415,6 +556,12 @@ top of it:
 - **Id-namespace isolation** — minted ids can never shadow a built-in (`countdown`,
   `lower-third`) or the reserved `drafts/` segment; the manifest's own `id`/`version` are
   ignored (app-assigned).
+- **The parameter page is sandboxed separately** — a Motif's `params.html` runs
+  *inside* the editor window, so it gets its own boundary: an `allow-scripts` iframe
+  with no `allow-same-origin` (an opaque origin, no reach into the app's DOM), the
+  offline params CSP, and a host seam that authenticates by window identity and
+  validates every payload against the manifest before it can touch a layer. See
+  [Parameter UI](#parameter-ui) and [`security.md`](security.md).
 
 Residual accepted risk: a renderer-level Chromium exploit is out of our control (mitigated by
 the isolated, offline host with no preload / Node integration); a determinism-violating Motif
