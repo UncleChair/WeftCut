@@ -1734,8 +1734,9 @@ export interface MotifSummary {
   /// switch — additive catalog metadata, NOT a `props_schema` / `PropSpec`
   /// change (the data plane above is frozen).
   has_params_ui?: boolean;
-  /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
-  /// picker can render fields in a deterministic order without sorting.
+  /// Keyed by prop name, in the manifest's authored key order (the TS payload
+  /// spreads the manifest as-is) — the fallback form renders rows in this
+  /// order. Only the props VALUES object is canonicalized alphabetically.
   props_schema: Record<string, PropSpec>;
 }
 

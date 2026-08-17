@@ -1061,7 +1061,7 @@ const zhCN: Resources = {
     motif_install: "安装",
     motif_delete: "删除",
     motif_delete_confirm: '删除 Motif "{{id}}"？时间轴上引用它的图层将失去内容。',
-    motif_status: { draft: "草稿", installed: "已安装" },
+    motif_status: { builtin: "内置", draft: "草稿", installed: "已安装" },
     motif_edit: "编辑",
     motif_edit_fork: "复制并编辑",
     motif_update: "更新",

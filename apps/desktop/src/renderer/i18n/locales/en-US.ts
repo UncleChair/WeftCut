@@ -1119,7 +1119,7 @@ const enUS = {
     motif_install: "Install",
     motif_delete: "Delete",
     motif_delete_confirm: 'Delete Motif "{{id}}"? Placed layers will lose their content.',
-    motif_status: { draft: "Draft", installed: "Installed" },
+    motif_status: { builtin: "Builtin", draft: "Draft", installed: "Installed" },
     motif_edit: "Edit",
     motif_edit_fork: "Duplicate & edit",
     motif_update: "Update",

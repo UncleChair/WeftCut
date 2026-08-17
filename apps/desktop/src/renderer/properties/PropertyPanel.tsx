@@ -966,7 +966,7 @@ function MotifLifecycleRow({
     return (
       <div className="prop-motif-lifecycle">
         <span className="motif-card-status status-builtin">
-          {t("property_panel.motif_status.builtin", { defaultValue: "builtin" })}
+          {t("property_panel.motif_status.builtin")}
         </span>
         <Button size="sm" disabled={busy} onClick={edit}>{t("property_panel.motif_edit_fork")}</Button>
         {err && <p className="settings-error">{err}</p>}

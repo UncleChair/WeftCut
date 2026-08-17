@@ -1,5 +1,5 @@
 {
-  "comment": "Cross-language PropSpec parity golden. BOTH the Rust validator (native/src/motifs/catalog.rs `propspec_parity_golden`) and the TS render path (propSpecGolden.test.ts) assert against this file. Every PropSpec variant must appear here; adding a variant on one side without the other makes one of the two tests fail. Each `valid`/`invalid` sample must differ from `spec.default` so the TS lenient-fallback check can tell kept-from-replaced.",
+  "comment": "PropSpec behaviour golden for the TS render path. Its one consumer is propSpecGolden.test.ts, which asserts per variant that the declared default self-validates, that `valid` samples survive canonicalizePropsLenient, and that `invalid` ones fall back to the default (the cross-language Rust validator this file was once shared with no longer exists — the catalog is TS-only). Every PropSpec variant must appear here. Each `valid`/`invalid` sample must differ from `spec.default` so the lenient-fallback check can tell kept-from-replaced.",
   "variants": [
     {
       "type": "string",
