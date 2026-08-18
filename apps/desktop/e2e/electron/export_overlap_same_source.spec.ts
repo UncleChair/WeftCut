@@ -42,12 +42,12 @@ async function placeSameSourceClips(page: Page, extras: number[]): Promise<void>
   if (!r.ok) throw new Error('placing clips failed: ' + r.error)
 }
 
-async function runTimelineExport(page: Page, output: string): Promise<{ totalFrames: number; totalDispatched: number }> {
+async function runTimelineExport(page: Page, output: string): Promise<{ totalFrames: number; totalDispatched: number; sources: unknown[] }> {
   rmSync(output, { force: true })
   const r = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline' })
   if (!r.done.ok) throw new Error('exportTimeline failed: ' + r.done.error)
   const perf = (await page.evaluate(() => (window as any).__weftcutExportPerf ?? null)) as
-    | { totalFrames: number; totalDispatched: number }
+    | { totalFrames: number; totalDispatched: number; sources: unknown[] }
     | null
   if (!perf) throw new Error('export settled but __weftcutExportPerf is missing')
   return perf
@@ -61,7 +61,6 @@ function assertIdentityAligned(report: any): void {
 }
 
 test.describe('same-source overlapping clips export (Electron)', () => {
-  let baselineDispatched: number | null = null
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
 
   test('baseline: a single clip exports clean (dispatch reference)', async () => {
@@ -73,7 +72,6 @@ test.describe('same-source overlapping clips export (Electron)', () => {
       await placeSameSourceClips(page, [])
       const perf = await runTimelineExport(page, out)
       expect(perf.totalFrames, '6s @ 30fps = 180 frames').toBe(180)
-      baselineDispatched = perf.totalDispatched
       const report = analyze({ output: out, source: SOURCE, samples: [30, 90, 170], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(report)
     } finally {
@@ -92,9 +90,24 @@ test.describe('same-source overlapping clips export (Electron)', () => {
       expect(perf.totalFrames).toBe(180)
       const report = analyze({ output: out, source: SOURCE, samples: [30, 90, 170], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(report)
-      if (baselineDispatched == null) throw new Error('baseline dispatch reference missing')
-      const ceiling = Math.ceil(baselineDispatched * 1.25)
-      expect(perf.totalDispatched, `stacked must merge same-source ranges (<= ${ceiling})`).toBeLessThanOrEqual(ceiling)
+      // Merging fails two ways, so it is gated two ways. ONE decode pipeline:
+      // same-phase clips of one source must group onto a single handle. Plus a
+      // dispatch budget on that shared handle, because per-clip decodeRange
+      // calls can pay for the identical range twice without adding a handle.
+      //
+      // The budget is anchored to totalFrames, not to a single clip's measured
+      // dispatch. This fixture's GOPs align with the export's chunk size, so a
+      // healthy run dispatches exactly 1:1 — but a starved runner re-seeks and
+      // re-decodes whole GOPs, and a ceiling relative to another measurement
+      // compares two noisy numbers, where one stray re-seek reads as a merge
+      // regression. Either way of failing to merge costs 2x frames, so the
+      // ceiling sits above the re-seek waste and below that.
+      expect(perf.sources, 'same-phase clips must share ONE decode pipeline').toHaveLength(1)
+      const ceiling = Math.floor(perf.totalFrames * 1.75)
+      expect(
+        perf.totalDispatched,
+        `stacked must merge same-source ranges (${perf.totalDispatched} packets for ${perf.totalFrames} frames, <= ${ceiling})`,
+      ).toBeLessThanOrEqual(ceiling)
     } finally {
       await app.close()
     }
