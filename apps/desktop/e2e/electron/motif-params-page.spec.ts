@@ -71,12 +71,12 @@ const paramsFrame = (page: Page) =>
 /// the panel legitimately shows the fallback form. Then the page itself must
 /// have received `init`, which the committed font_size on its slider proves.
 ///
-/// LAST gate, and the load-bearing one for every pointer gesture below: the page
-/// declares its height via `motif:resize` and the host applies it to the frame,
-/// which grows from the default 240px and reflows the panel column. A click
-/// aimed across that reflow computes its point before the scroll and dispatches
-/// it after — it silently lands on nothing. Waiting until the frame is exactly
-/// as tall as the page says settles the layout with no arbitrary delay.
+/// LAST gate, and what every pointer gesture below stands on: the page declares
+/// its height via `motif:resize` and the host applies it to the frame, which grows
+/// from the default 240px and reflows the panel column. Waiting until the frame is
+/// exactly as tall as the page says settles that reflow with no arbitrary delay,
+/// and it is also what leaves the page unable to scroll inside its own frame —
+/// `clickInParams` reads frame-local rects and needs no scroll term.
 async function openParamsPage(page: Page, fontSize: number): Promise<FrameLocator> {
   await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
   await expect(paramsFrame(page)).toHaveCount(1, { timeout: 30_000 })
@@ -99,35 +99,67 @@ async function openParamsPage(page: Page, fontSize: number): Promise<FrameLocato
 
 /// Click a control inside the params page.
 ///
-/// NOT a bare `locator.click()`: the params page is taller than the Attribute
-/// Panel's scroll viewport, and the page is an OUT-OF-PROCESS iframe, so
-/// Playwright's own scroll-into-view has to cross the process boundary with an
-/// async IPC. A click issued straight after it computes its point from the
-/// pre-scroll layout and lands on nothing — silently, because the hit-target
-/// check runs against the frame's own (correct) coordinates. Scrolling the
-/// panel's scroller from the main frame is synchronous, and polling the target's
-/// resulting page-coordinate box is the gate that makes the click deterministic.
+/// NOT `locator.click()`, and not its page-coordinate box either: the page is an
+/// OUT-OF-PROCESS iframe, and nothing Playwright derives ACROSS that boundary is
+/// dependable. Both halves of that were measured on macOS CI, where the same
+/// click either landed on nothing (the page never saw it) or never satisfied its
+/// hit-target check — and a click that keeps retrying that check burns the whole
+/// TEST timeout and reports a bare "Test timeout of Nms exceeded." with no call
+/// log, so it reads as a wedged app rather than a missed click.
+///
+/// So the point comes from two SAME-frame measurements instead: the iframe's own
+/// box in the host document, plus the target's rect measured inside the frame. No
+/// frame-scroll term is needed — `openParamsPage` has already gated frame height
+/// against page height, so the page cannot scroll under its own frame. The panel's
+/// scroller is driven from the host document, where it is synchronous.
+///
+/// The load-bearing gate is the hover: a moved pointer lands `:hover` on the
+/// target only once the browser ROUTES it into the frame's renderer, which is the
+/// same routing the press takes. So the gate waits on the thing that was actually
+/// failing, whatever the cause — the leading suspect is the browser's hit-test
+/// geometry lagging the host's `scrollTop` write, which neither document's own
+/// layout can be polled for.
+///
+/// The gate polls a STAGE name rather than a boolean so a stall says which half
+/// gave out: 'measuring' (no frame box yet), 'scrolling' (the control is still
+/// outside the panel's viewport), or 'unrouted' (the pointer is over the control
+/// and the frame still doesn't see it).
 async function clickInParams(page: Page, target: Locator): Promise<void> {
   const scroller = dockPanel(page, 'attribute').locator('.weft-dock-panel-scroll')
   await expect
     .poll(
       async () => {
-        const box = await target.boundingBox()
+        const frameBox = await paramsFrame(page).boundingBox()
         const view = await scroller.boundingBox()
-        if (!box || !view) return false
-        if (box.y >= view.y && box.y + box.height <= view.y + view.height) return true
-        await scroller.evaluate(
-          (el, d) => {
-            el.scrollTop += d
+        if (!frameBox || !view) return 'measuring'
+        const local = await target.evaluate(
+          (el) => {
+            const r = el.getBoundingClientRect()
+            return { x: r.x, y: r.y, width: r.width, height: r.height }
           },
-          box.y - (view.y + view.height / 2 - box.height / 2),
+          undefined,
+          { timeout: 5_000 },
         )
-        return false
+        const x = frameBox.x + local.x + local.width / 2
+        const y = frameBox.y + local.y + local.height / 2
+        if (y - local.height / 2 < view.y || y + local.height / 2 > view.y + view.height) {
+          await scroller.evaluate((el, d) => {
+            el.scrollTop += d
+          }, y - (view.y + view.height / 2))
+          return 'scrolling'
+        }
+        await page.mouse.move(x, y)
+        const hovered = await target.evaluate((el) => el.matches(':hover'), undefined, {
+          timeout: 5_000,
+        })
+        return hovered ? 'routed' : 'unrouted'
       },
-      { timeout: 10_000 },
+      { timeout: 20_000 },
     )
-    .toBe(true)
-  await target.click()
+    .toBe('routed')
+  // Press where the hover just proved the pointer is.
+  await page.mouse.down()
+  await page.mouse.up()
 }
 
 test('text-fx params page: an enum pick commits; a preview drag alone does not', async () => {
