@@ -77,6 +77,9 @@ interface NativePerf {
   totalFrames: number
   totalDispatched: number
   nativeHandles: number
+  /// One entry per export-pool handle; its LENGTH is the decode-pipeline count
+  /// the stacked gate asserts on.
+  sources: unknown[]
 }
 
 async function bootProject(page: Page, prefix: string): Promise<void> {
@@ -173,10 +176,6 @@ function assertIdentityAligned(report: any, floor = SSIM_FLOOR): void {
 }
 
 test.describe('native export decode wedge gates (Electron)', () => {
-  // Dispatch reference recorded by the baseline test, consumed by the stacked
-  // overlap test (workers: 1 — file order is execution order).
-  let baselineDispatched: number | null = null
-
   test.skip(
     process.env.WEFTCUT_DECODE_E2E !== '1',
     'native export wedge gates are local-only (need the native-decode component + a VITE_WEFTCUT_E2E=1 build); set WEFTCUT_DECODE_E2E=1 to run',
@@ -186,7 +185,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
 
   // Gate (a): the plain single-clip shape — proves the native session decodes
   // the whole file frame-exact before the wedge shapes stack on top.
-  test('baseline: a single native ProRes clip exports clean (dispatch reference)', async () => {
+  test('baseline: a single native ProRes clip exports clean', async () => {
     test.setTimeout(420_000)
     const OUT_BASELINE = path.join(tmpDir('weftcut-e2e-nw-out-'), 'baseline.mp4')
     const { app, page } = await launchApp()
@@ -201,7 +200,6 @@ test.describe('native export decode wedge gates (Electron)', () => {
       const perf = await readPerf(page)
       expect(perf.nativeHandles, 'native path must engage (decode-engine resolver routing?)').toBeGreaterThanOrEqual(1)
       expect(perf.totalFrames, '10s @ 30fps ProRes = 300 frames').toBe(300)
-      baselineDispatched = perf.totalDispatched
       const report = analyze({ output: OUT_BASELINE, source: PRORES, samples: [30, 150, 290], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(report)
       expect(report.pass).toBe(true)
@@ -227,12 +225,17 @@ test.describe('native export decode wedge gates (Electron)', () => {
       const report = analyze({ output: OUT_STACKED, source: PRORES, samples: [30, 150, 290], ssimMin: SSIM_FLOOR })
       assertIdentityAligned(report)
       expect(report.pass).toBe(true)
-      // A filtered/sharded run without the baseline gate has no reference —
-      // skip the ceiling rather than fail vacuously (the wedge assertions
-      // above already ran).
-      test.skip(baselineDispatched == null, 'baseline dispatch reference missing (baseline gate did not run)')
-      const ceiling = Math.ceil((baselineDispatched as number) * 1.25)
-      expect(perf.totalDispatched, `stacked same-phase clips share one native session (<= ${ceiling})`).toBeLessThanOrEqual(ceiling)
+      // Both anchors are structural, for the reasons its H.264 twin
+      // (export_overlap_same_source.spec.ts) spells out: the handle count is
+      // exact, and the dispatch budget is taken against totalFrames rather than
+      // another measured export, so re-seek waste cannot read as a merge
+      // regression. Either way of failing to share the session costs 2x frames.
+      expect(perf.sources, 'same-phase clips must share ONE native session').toHaveLength(1)
+      const ceiling = Math.floor(perf.totalFrames * 1.75)
+      expect(
+        perf.totalDispatched,
+        `stacked same-phase clips share one native session (${perf.totalDispatched} packets for ${perf.totalFrames} frames, <= ${ceiling})`,
+      ).toBeLessThanOrEqual(ceiling)
     } finally {
       await app.close()
     }

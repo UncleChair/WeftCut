@@ -63,7 +63,7 @@ function assertIdentityAligned(report: any): void {
 test.describe('same-source overlapping clips export (Electron)', () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
 
-  test('baseline: a single clip exports clean (dispatch reference)', async () => {
+  test('baseline: a single clip exports clean', async () => {
     test.setTimeout(220000)
     const { app, page } = await launchApp()
     try {
