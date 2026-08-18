@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
-import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, setMotifStore, shutdownCaptureHost } from './motif/capture.js'
 import { UserMotifStore } from './motif/store.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
@@ -1684,6 +1684,9 @@ app.on('window-all-closed', () => {
 let quitFlushed = false
 app.on('before-quit', (event) => {
   motifWatcher?.close(); motifWatcher = null
+  // Before Electron starts closing windows: a capture that outlives them rebuilds
+  // the offscreen host and wedges the quit (see shutdownCaptureHost).
+  shutdownCaptureHost()
   // Flush the debounced Workspace-layout write synchronously — an arrangement
   // change made inside the debounce window would otherwise be dropped on quit.
   workspaceStore?.flush()

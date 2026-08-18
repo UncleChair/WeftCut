@@ -93,6 +93,23 @@ function teardownHost(): void {
   }
 }
 
+/// Latched by `shutdownCaptureHost` — a capture that wakes up afterwards must not
+/// build a window. See there for why.
+let shuttingDown = false
+
+/// Retire the host for the rest of the process's life; the app's `before-quit`
+/// calls this.
+///
+/// The latch is the load-bearing half, not the teardown. Quitting closes every
+/// window ASYNCHRONOUSLY, and a capture still queued on `chain` resumes inside
+/// that gap: it finds `host` null and rebuilds it, so Electron's window list
+/// never empties, `will-quit` never fires, and the process runs forever. Tearing
+/// the host down without also refusing later captures re-opens that race.
+export function shutdownCaptureHost(): void {
+  shuttingDown = true
+  teardownHost()
+}
+
 async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
   if (!host) host = await buildHost()
   // Reuse only when BOTH id and content version match (the ?v= cache-buster).
@@ -124,6 +141,8 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
 }
 
 async function doCapture(a: CaptureArgs): Promise<string> {
+  // Refuse rather than resurrect — see shutdownCaptureHost.
+  if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
   let h: Host
   try {
     h = await ensureHost(a.motifId, a.contentHash)
