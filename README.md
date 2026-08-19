@@ -24,6 +24,12 @@ do — it is also a complete editor for humans.
 lower third live, trimming the B-roll, then undoing — every edit lands in the UI
 in real time.</em></p>
 
+For a longer run, an agent can put the editor into **agent mode**: the UI folds
+down to preview, scrub and a record of what the agent is doing, and every batch
+boundary it checkpoints is one click away from being restored.
+
+![Agent mode — the record panel while an agent works](docs/assets/agent-mode.png)
+
 ## Features
 
 - **Agent-native editing** — a built-in MCP server (streamable HTTP) exposes
