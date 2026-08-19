@@ -11,7 +11,7 @@ import { setRuntimeSource, captureMotifFrameB64, setMotifStore, shutdownCaptureH
 import { UserMotifStore } from './motif/store.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
-import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry } from './windows.js'
+import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
@@ -251,6 +251,11 @@ async function createWindow(): Promise<BrowserWindow> {
     win.webContents.send('evt:window:maximize-changed', { isMaximized: win.isMaximized() })
   win.on('maximize', sendMaximizeState)
   win.on('unmaximize', sendMaximizeState)
+
+  // The titlebar ✕ (window:close IPC), Alt+F4 and the taskbar all land here, and
+  // this — not `window-all-closed` below — is what quits. Wrapped, not passed by
+  // reference: an emitter argument would occupy the injected `platform` param.
+  win.on('closed', () => quitIfLastUserWindowClosed())
 
   // Forward the fullscreen state so the renderer can drop its self-drawn window
   // edge (base.css .app-window-fullscreen) while the window owns the screen.
@@ -1670,6 +1675,9 @@ app.whenReady().then(async () => {
   })
 })
 
+// Backstop for a window opened outside createWindow/createSecondary. The real
+// quit decision is quitIfLastUserWindowClosed (windows.ts), which explains why
+// this event cannot be trusted; a double quit is absorbed by quitFlushed below.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

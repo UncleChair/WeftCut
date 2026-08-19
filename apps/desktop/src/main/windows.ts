@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { BrowserWindow, screen, shell } from 'electron'
+import { app, BrowserWindow, screen, shell } from 'electron'
 import { secondaryWindowConfig, type SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
 import { isPageZoomShortcut, matchDevKeyAction } from './inputPolicy.js'
@@ -15,6 +15,42 @@ import {
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
+
+/// Windows serving the app rather than the user — today only the offscreen Motif
+/// capture host (motif/capture.ts).
+const internalWindows = new WeakSet<BrowserWindow>()
+
+/// Hide `win` from the quit decision. Must run in the SAME tick as the
+/// constructor: a user window closing during the internal window's async setup
+/// would otherwise see it as one of their own.
+export function markInternalWindow(win: BrowserWindow): void {
+  internalWindows.add(win)
+}
+
+/// The windows a user can actually see and close.
+export function userFacingWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !internalWindows.has(w))
+}
+
+/// Quit once the last window the USER can see has closed — wired to the `closed`
+/// event of every user-facing window.
+///
+/// LANDMINE: `window-all-closed` cannot carry this decision. The offscreen capture
+/// host is a listed BrowserWindow, so once a Motif has been rendered that event
+/// never fires again, and the `before-quit` teardown that destroys the host is
+/// reachable only through app.quit() — host and process each waiting on the other,
+/// leaving a live app with no window. See docs/notes/electron-chromium-behavior.md.
+///
+/// The closing window is already out of getAllWindows() when its own `closed`
+/// fires, so an empty list here means it was the last one.
+export function quitIfLastUserWindowClosed(
+  platform: NodeJS.Platform = process.platform,
+): void {
+  // macOS keeps a windowless app resident (index.ts re-creates one on `activate`).
+  if (platform === 'darwin') return
+  if (userFacingWindows().length > 0) return
+  app.quit()
+}
 
 // Lock down navigation + window creation on a window. The renderer only ever
 // loads local content (the dev server in dev, file:// in prod), so: deny every
@@ -193,6 +229,9 @@ export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
   win.on('closed', () => {
     wins.delete(label)
     broadcastEvent(BrowserWindow.getAllWindows(), WIN_CLOSED_EVENT, { label })
+    // This may be the last window the user had — e.g. the Performance Monitor
+    // outliving the editor.
+    quitIfLastUserWindowClosed()
   })
   // Pass the caller's renderer-relative url straight through (e.g. '/?perfHud=1').
   const rel = opts?.url ?? '/'

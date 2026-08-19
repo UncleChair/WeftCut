@@ -4,12 +4,28 @@
 // "normal" bounds — persisting that overwrites a good restore-down size and
 // made the stored rect differ between the first and later launches (the
 // window-geometry drift e2e failure on the mac CI leg).
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
-import { rememberGeometry } from './windows'
+import { markInternalWindow, quitIfLastUserWindowClosed, rememberGeometry, userFacingWindows } from './windows'
 import type { Rect, WindowGeometry, WindowGeometryStore } from './windowGeometry'
 
-vi.mock('electron', () => ({ BrowserWindow: class {}, screen: {}, shell: {} }))
+// The window list and app.quit() are all the quit gate touches. vi.hoisted
+// because the factory runs during the import phase, ahead of a plain `const`.
+const { listed, quits } = vi.hoisted(() => ({
+  listed: [] as unknown[],
+  quits: [] as number[],
+}))
+
+vi.mock('electron', () => ({
+  app: { quit: () => void quits.push(1) },
+  BrowserWindow: class {
+    static getAllWindows(): unknown[] {
+      return listed
+    }
+  },
+  screen: {},
+  shell: {},
+}))
 
 function fakeWin(initial: Rect) {
   const handlers = new Map<string, () => void>()
@@ -74,5 +90,59 @@ describe('rememberGeometry — maximized capture', () => {
     state.normalBounds = { x: 0, y: 0, width: 1024, height: 677 }
     fire('move')
     expect(last()).toEqual({ bounds: ZOOMED, maximized: true, fullScreen: false })
+  })
+})
+
+// The offscreen Motif capture host is a listed BrowserWindow, so a quit decision
+// made on the raw window count leaves the app running with nothing on screen.
+describe('quitIfLastUserWindowClosed', () => {
+  const win = (): BrowserWindow => ({ isDestroyed: () => false }) as unknown as BrowserWindow
+
+  beforeEach(() => {
+    listed.length = 0
+    quits.length = 0
+  })
+
+  it('ignores an internal window when deciding who is left', () => {
+    const editor = win()
+    const captureHost = win()
+    markInternalWindow(captureHost)
+    listed.push(editor, captureHost)
+
+    expect(userFacingWindows()).toEqual([editor])
+  })
+
+  it('quits when only the offscreen capture host is still listed', () => {
+    const captureHost = win()
+    markInternalWindow(captureHost)
+    listed.push(captureHost) // the editor's `closed` already removed it from the list
+
+    quitIfLastUserWindowClosed('win32')
+    expect(quits).toHaveLength(1)
+  })
+
+  it('stays alive while any user-facing window remains', () => {
+    const captureHost = win()
+    markInternalWindow(captureHost)
+    listed.push(win(), captureHost) // e.g. the Performance Monitor outliving the editor
+
+    quitIfLastUserWindowClosed('win32')
+    expect(quits).toHaveLength(0)
+  })
+
+  it('leaves a windowless app resident on macOS', () => {
+    const captureHost = win()
+    markInternalWindow(captureHost)
+    listed.push(captureHost)
+
+    quitIfLastUserWindowClosed('darwin')
+    expect(quits).toHaveLength(0)
+  })
+
+  it('skips a destroyed window still in the list', () => {
+    listed.push({ isDestroyed: () => true } as unknown as BrowserWindow)
+
+    quitIfLastUserWindowClosed('win32')
+    expect(quits).toHaveLength(1)
   })
 })

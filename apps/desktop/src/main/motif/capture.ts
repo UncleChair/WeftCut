@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { hardenWindow } from '../windows'
+import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import type { UserMotifStore } from './store.js'
 
@@ -63,6 +63,11 @@ async function buildHost(): Promise<Host> {
     // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
     webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   })
+  // `offscreen: true` is a paint target, not a lifecycle class: unmarked, this
+  // window votes in the quit decision and the app stops quitting when the editor
+  // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
+  // same-tick contract.
+  markInternalWindow(win)
   // Navigation lockdown for the untrusted Motif page: deny every `window.open`
   // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
   // browser) and block any page-initiated navigation off the app's content. The

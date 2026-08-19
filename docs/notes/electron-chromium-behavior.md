@@ -159,6 +159,25 @@ With a project open, on macOS:
    copy/paste.
 4. **`Cmd+,`** on the startup screen and in the editor → Settings opens.
 
+## An offscreen window is a full citizen of the window list
+
+Probed on Electron 42.4.1 with a two-window harness (one visible, one
+`webPreferences: { offscreen: true }`): `getAllWindows()` returns **both**, `includes()` the
+offscreen one is **true**, and closing the visible window does **not** emit
+`window-all-closed`. `offscreen: true` selects a paint target, not a lifecycle class.
+
+Implication: the failure this causes is a closed loop, not a missed teardown. The handler that
+destroys WeftCut's Motif capture host runs on `before-quit`, which is reached only through
+`app.quit()`, which off macOS was called only from `window-all-closed` — so the host held the
+process open and the process was the only thing that would have closed the host, leaving a
+live app with no window on screen. The quit decision therefore rides the **user-facing**
+window count (`main/windows.ts`), with `window-all-closed` demoted to a backstop;
+`e2e/electron/app-quit.spec.ts` gates it.
+
+Rule: a window the user cannot see or close must be declared internal in the same tick as its
+constructor — before the first `await` of its setup, or a user window closing during that
+setup still counts it as one of their own.
+
 ## Not re-probed (kept as known Blink behavior)
 
 These WebCodecs behaviors live in the same Blink core WebView2 used, so they were carried forward without re-probing: Hi10P software-decodes but needs `flush()`; a lone IDR frame parks in the decoder's reorder buffer until `flush()`; held `VideoFrame`s pin the ~13-slot hardware decoder pool (ADR 0004); `VideoEncoder` ignores `VideoFrame.colorSpace` and tags color by resolution.
