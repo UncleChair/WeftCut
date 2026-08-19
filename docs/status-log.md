@@ -46,6 +46,14 @@ A `LogBus` actor (`native/src/logs/bus.rs`) owns the system.
   errors are visible only via `tracing` stderr. The `LogBus` is built
   by the workspace-open path and torn down by the workspace-close
   path, mirroring the rest of the workspace-scoped state.
+- **MCP is the exception, on the producer side.** The MCP host binds at
+  `app.whenReady()`, so its `listening` row could never be recorded at
+  all. Rows that producer emits with no bus to land in go into a bounded
+  FIFO (**50 entries**, oldest dropped — `src/main/deferredLog.ts`) and
+  replay in order, exactly once, when `commitWorkspace` installs the bus.
+  This is a *producer* buffer: `LogBus`, `Clear` and `log_list` semantics
+  are unchanged, and an app that never opens a workspace still never
+  grows a log.
 
 ### Backend surface
 
@@ -101,7 +109,7 @@ Notes:
 | Long-running MCP compute (transcribe_clip, synthesize_speech, detect_silences, describe_clip) | `Mcp` | `Info`/`Error` | No producer of their own: the generic MCP-tool decorator below covers them like any other tool. Their compute is what usually crosses the 250 ms threshold, so they are the ops that actually get a `Started` row — and crossing it is what lifts a read-route tool to `Info`. |
 | Preview rebuild | `Job` | `Debug` | Fires on every commit — hidden by default. |
 | MCP tool calls (and `tools/list`, `resources/*`, `prompts/*`) | `Mcp` | `Info` mutations, `Debug` quick reads, `Error` on failure | One `withLog` decorator on each of `buildMcpServer`'s six request handlers, so a newly added tool is logged with nothing to remember; the level is derived from `routeMcpTool`, never a per-tool list. Settling inside 250 ms → one entry, no `op_id`; still running at 250 ms → `Started` then `Ok`/`Err` under one `op_id` (the three-state shape Shortcuts use). An op slow enough to need a `Started` logs at `Info` whatever its route — the threshold is the test of whether the user is waiting on it. An op that crosses a workspace switch drops its `op_id`: `install` replaces the bus, so the pair cannot span it. `details` carries `{ tool, args, duration_ms, client_info }` plus `error` on failure; strings over 512 bytes are elided to `{ omitted, bytes, sha256_8 }` in TS, before the payload reaches the 4 KB cap that would otherwise discard the whole object. No return value. `source = Agent { client: "mcp" }` means "arrived over the MCP transport"; the real client identity is `details.client_info`. |
-| MCP server lifecycle | `Mcp` | `Info` | `source = System`. Connect/disconnect/bind events. |
+| MCP server lifecycle | `Mcp` | `Info` bind and connect, `Debug` disconnect, `Warn` rejections, `Info` rotation | `source = System`, except the token rotation — `User`, the one lifecycle event a person causes. Six rows: the host bound to its loopback port; a client connected, named from `Server.getClientVersion()`; a client disconnected at `Debug`, because reconnects are routine and would flood the default filter at `Info`; a request rejected for a bad bearer, carrying `{ method, user_agent }` and never the header value; a request rejected by the DNS-rebinding guard; and the bearer token rotated, recording neither the retired token nor its replacement. The host-rejection row is reachable only through `transport.onerror`: the SDK enforces `allowedHosts` inside the transport and writes its own 403, so our middleware never sees a rejection. That hook is a superset, so every other transport fault lands in a distinct `MCP transport error` row rather than being mislabelled as a rejected Host. And because the transport is built only after the bearer gate passes, an unauthenticated probe produces the unauthorized row, never the host one. |
 | Project mutations | `Project` | `Info` | `source = User` or `Agent { client }` depending on origin. Replaces `ActivityPanel`'s feed. |
 | Load-time media relink | `Project` | `Info` healed / `Warn` missing | `source = System`. `details.kind = "Relink"`. Emitted after the workspace commit, never during the heal — the commit rotates the per-workspace bus. |
 | Load-time grid repair | `Project` | `Warn` | `source = System`. `details.kind = "GridRepair"` with one row per moved field. `Warn` because the repair rewrites the user's timeline. Same post-commit timing rule as relink. |

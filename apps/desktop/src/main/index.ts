@@ -17,6 +17,8 @@ import { shouldClearApplicationMenu } from './inputPolicy.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
 import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
+import { createDeferredLog } from './deferredLog.js'
+import type { McpLogEntryInput } from './mcp/withLog.js'
 import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
@@ -601,6 +603,18 @@ app.whenReady().then(async () => {
     wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
   } catch { /* no workspace at cold boot */ }
 
+  // Holds MCP LogBus rows produced before a workspace exists — chiefly the host's
+  // `listening` row, emitted at app.whenReady(). See ./deferredLog.ts.
+  const deferredLog = createDeferredLog()
+
+  /** Direct LogBus emit. NOT the ts-actor-host `emitLog` seam: its type carries
+   *  no op_id/op_state, which is why the content-download producer invokes
+   *  log_emit directly too (`.scratch/mcp-logbus/spec.md`). Swallows — a logging
+   *  failure must never fail the call that produced the row. */
+  const emitLogEntry = (entry: McpLogEntryInput): void => {
+    try { void backend!.invoke('log_emit', JSON.stringify({ input: entry })).catch(() => {}) } catch { /* no bus */ }
+  }
+
   // Wrap napiFacade.commitWorkspace to also refresh wsCache as a side effect —
   // the orchestrator calls it before replaceState, so by the time any post-open
   // handler runs, wsCache already holds the new path.
@@ -609,6 +623,10 @@ app.whenReady().then(async () => {
     commitWorkspace: async (p: string) => {
       await napiFacade.commitWorkspace(p)
       wsCache = p
+      // Replay AFTER wsCache is set, so every replayed row takes the direct path
+      // and cannot re-queue itself, and after the commit resolves, because that
+      // is the call that installs this workspace's LogBus.
+      deferredLog.flush(emitLogEntry)
     },
   }
 
@@ -723,14 +741,22 @@ app.whenReady().then(async () => {
       const cfg = vlmConfig.get()
       return { config: toVlmBackendSnapshot(cfg, loadAllKeys().openai ?? null), preferred: cfg.preferred_engine }
     },
-    // Every MCP request → a LogBus row (docs/status-log.md § Producers).
-    // Emitted through backend.invoke directly, as the content-download producer
-    // does and for the same reason — the ts-actor-host emitLog seam has no
-    // op_id/op_state. Swallowed on failure: pre-workspace there IS no bus, and
-    // a logging problem must never fail an MCP call.
+    // Every MCP request and transport lifecycle event → a LogBus row
+    // (docs/status-log.md § Producers).
     log: {
       emit: (entry) => {
-        try { void backend!.invoke('log_emit', JSON.stringify({ input: entry })).catch(() => {}) } catch { /* no bus yet */ }
+        // No workspace means no LogBus: Rust `log_emit` is a silent no-op
+        // without one (`native/src/logs/bus.rs`), and the host's own `listening`
+        // row is emitted before any workspace can exist. Queue instead; the
+        // commitWorkspace wrapper above replays. `wsCache` mirrors the very slot
+        // `commit_workspace` sets alongside `log_slot.install`, so it is a sound
+        // proxy for "a bus exists" — and were they ever to diverge the cost is
+        // one dropped row, the behaviour before this queue, not a regression.
+        if (wsCache === null) {
+          deferredLog.push(entry)
+          return
+        }
+        emitLogEntry(entry)
       },
       currentWorkspace: () => wsCache,
     },
