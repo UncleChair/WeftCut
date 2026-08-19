@@ -44,6 +44,27 @@ export interface McpLogDeps {
   emit: (entry: McpLogEntryInput) => void
   /** Current workspace dir, or null pre-workspace. Identity check only. */
   currentWorkspace: () => string | null
+  /** Open a commit-collection window for one `tools/call`, or return null when
+   *  the tool's route cannot be observed safely. `server.ts` owns that test and
+   *  the actor behind it — this file knows only the window's shape. */
+  observe?: (tool: string) => McpCommitWindow | null
+}
+
+/** One request's open commit-collection window. */
+export interface McpCommitWindow {
+  /** Stop collecting and fold what was collected into the row, or null when the
+   *  call committed nothing. Called exactly once, synchronously — see `withLog`. */
+  close: () => McpRowSummary | null
+}
+
+/** What an observed mutation contributes to its row: the change summary the
+ *  history panel renders, the history label key that translates it (absent for a
+ *  commit that never reached history), and how many commits the call made. */
+export interface McpRowSummary {
+  message: string
+  i18n_key?: string
+  i18n_args?: unknown
+  commits: number
 }
 
 /** Deps for a server built without logging — `buildMcpServer` defaults to these
@@ -115,9 +136,10 @@ function levelFor(method: McpLoggedMethod, tool: string, failed: boolean, slow: 
   return slow ? 'info' : 'debug'
 }
 
-/** The row's user-facing line. For `tools/call` this is the tool name; issue 02
- *  replaces it with the change summary the history panel renders, at which
- *  point `details.tool` is what stays stable for filtering. */
+/** The row's mechanical line, used when nothing better is available: a read, a
+ *  refusal, a no-op, or any route `observe` declines. An attributed mutation
+ *  carries its change summary instead, which is why `details.tool` — not the
+ *  message — is what stays stable for filtering. */
 function messageFor(method: McpLoggedMethod, tool: string, params: Record<string, unknown>): string {
   switch (method) {
     case 'tools/call':
@@ -165,7 +187,10 @@ type RequestLike = { params?: unknown }
  *
  *  `clientInfo` is a thunk because `Server.getClientVersion()` is `undefined`
  *  until `initialize` completes; the key is omitted rather than written as
- *  `undefined`. */
+ *  `undefined`.
+ *
+ *  `deps.observe` is what turns `MCP: add_motif` into `Added layer` — see the
+ *  window below for the timing that makes it safe. */
 export function withLog<Req extends RequestLike, Res>(
   method: McpLoggedMethod,
   handler: (req: Req, extra: unknown) => Res | Promise<Res>,
@@ -178,8 +203,11 @@ export function withLog<Req extends RequestLike, Res>(
     // non-tool methods the method *is* what was invoked, so it holds that.
     const tool = method === 'tools/call' ? String(params.name ?? '') : method
     const args = method === 'tools/call' ? params.arguments ?? {} : params
-    const message = messageFor(method, tool, params)
+    const toolMessage = messageFor(method, tool, params)
     const startedAt = Date.now()
+
+    /** The change this call committed, once the window has closed over it. */
+    let summary: McpRowSummary | null = null
 
     const details = (error?: { code?: number; message: string }): Record<string, unknown> => {
       const client = clientInfo()
@@ -187,9 +215,55 @@ export function withLog<Req extends RequestLike, Res>(
         tool,
         args: elideLarge(args),
         duration_ms: Date.now() - startedAt,
+        // Only written when it adds something: `message` is the LAST commit's
+        // summary, so a count above 1 is what says the row stands for more.
+        ...(summary !== null && summary.commits > 1 ? { commits: summary.commits } : {}),
         ...(client ? { client_info: client } : {}),
         ...(error ? { error } : {}),
       }
+    }
+
+    /** The row's user-facing half: the change summary and the history label key
+     *  that translates it once attributed, the mechanical tool line otherwise. */
+    const rowText = (): Pick<McpLogEntryInput, 'message' | 'i18n_key' | 'i18n_args'> => {
+      if (summary === null) return { message: toolMessage }
+      return {
+        message: summary.message,
+        ...(summary.i18n_key !== undefined ? { i18n_key: summary.i18n_key } : {}),
+        ...(summary.i18n_args !== undefined ? { i18n_args: summary.i18n_args } : {}),
+      }
+    }
+
+    // The commit-collection window, opened before the handler and closed before
+    // the first `await`. `handleCallTool` reaches the `'ts'` route's synchronous
+    // `mcpCall` with no `await` ahead of it, and an async body runs
+    // synchronously up to its first `await` — so the whole route, commits
+    // included, happens inside `handler(…)`'s synchronous prefix, and no
+    // concurrent call can commit while the window is open.
+    // LANDMINE: an `await` inserted before that `mcpCall` moves the commit
+    // outside the window — mutation rows silently fall back to the tool name,
+    // and a window held open across the await would start collecting OTHER
+    // calls' commits. withLog.test.ts's window-integrity cases fail either way.
+    let commitWindow: McpCommitWindow | null = null
+    if (method === 'tools/call') {
+      // Neither half of the seam may fail the call — same rule as `safeEmit`.
+      try { commitWindow = deps.observe?.(tool) ?? null }
+      catch (err) { console.error('[mcp] commit window open failed', err) }
+    }
+    let windowClosed = false
+    /** Idempotent: the row is folded once, whatever calls this. */
+    const closeWindow = (): void => {
+      if (commitWindow === null || windowClosed) return
+      windowClosed = true
+      try { summary = commitWindow.close() }
+      catch (err) { console.error('[mcp] commit window close failed', err) }
+    }
+
+    /** The handler's synchronous prefix, bracketed by the window. `finally`, so a
+     *  handler that throws synchronously cannot leak the subscription. */
+    const runInWindow = (): Res | Promise<Res> => {
+      try { return handler(req, extra) }
+      finally { closeWindow() }
     }
 
     let settled = false
@@ -203,7 +277,7 @@ export function withLog<Req extends RequestLike, Res>(
         level: levelFor(method, tool, false, true),
         category: { kind: 'Mcp' },
         source: MCP_SOURCE,
-        message,
+        ...rowText(),
         op_id: opId,
         op_state: { state: 'Started' },
         details: details(),
@@ -218,18 +292,23 @@ export function withLog<Req extends RequestLike, Res>(
       // standalone entry saying so instead.
       const crossed = opId !== null && deps.currentWorkspace() !== workspaceAtStart
       const groupId = crossed ? null : opId
+      // An annotated message is no longer whatever the label key renders to, so
+      // the key goes with it rather than contradicting the line beside it.
+      const text: Pick<McpLogEntryInput, 'message' | 'i18n_key' | 'i18n_args'> = crossed
+        ? { message: `${rowText().message} (crossed a workspace switch)` }
+        : rowText()
       safeEmit(deps, {
         level: levelFor(method, tool, failed, opId !== null),
         category: { kind: 'Mcp' },
         source: MCP_SOURCE,
-        message: crossed ? `${message} (crossed a workspace switch)` : message,
+        ...text,
         ...(groupId ? { op_id: groupId, op_state: { state: failed ? 'Err' as const : 'Ok' as const } } : {}),
         details: details(failed ? errorDetail(err) : undefined),
       })
     }
 
     try {
-      const out = await handler(req, extra)
+      const out = await runInWindow()
       settled = true
       finish(false, null)
       return out

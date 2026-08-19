@@ -10,13 +10,15 @@ import {
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { withLog, elideLarge, type McpLogDeps, type McpLogEntryInput } from './withLog'
-import { buildMcpServer, handleCallTool } from './server'
+import { buildMcpServer, handleCallTool, mcpCommitObserver } from './server'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands'
 import { MOTIF_TOOL_DEFS } from './motifToolDefs'
 import { HYBRID_TOOLS, MOTIF_TOOLS } from './mutationTools'
 import { createActor } from '../state/actor'
+import { HISTORY_SUMMARY } from '../state/history-labels'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
+import { BUILTIN_MANIFESTS } from '../../shared/motifs/catalog'
 
 // preview_motif_draft's route ends in a real CDP frame capture, which has no
 // business running in a unit test. Stubbed so the tool still crosses the funnel
@@ -54,14 +56,16 @@ function detailsOf(entry: McpLogEntryInput): Record<string, unknown> {
 
 /** A TS host over a real (empty) actor with every compute stubbed to reject:
  *  the coverage sweep only needs each tool to REACH its route, and a rejection
- *  proves instrumentation exactly as well as a success. */
-function tsHostStub() {
+ *  proves instrumentation exactly as well as a success. `compute` overrides the
+ *  arms a test needs to SUCCEED through — the hybrid cases, whose point is a
+ *  commit landing while another call is in flight. */
+function tsHostStub(compute: Record<string, unknown> = {}) {
   const idGen = uuidV7Gen()
   const actor = createActor({ initial: blankProject(idGen, 'log'), idGen, clock: () => '<TS>' })
   const reject = vi.fn(async () => { throw new Error('compute stub') })
   const hybridDeps = {
     actor,
-    compute: { probeMedia: reject, hashMediaSource: reject, parseSubtitles: reject, synthesizeSpeechCompute: reject, analyzeShots: reject },
+    compute: { probeMedia: reject, hashMediaSource: reject, parseSubtitles: reject, synthesizeSpeechCompute: reject, analyzeShots: reject, ...compute },
     enqueueDerivatives: vi.fn(async () => {}),
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,
@@ -98,6 +102,20 @@ function decoratedCallTool(deps: McpLogDeps, backend = fakeBackend()) {
     await handler({ params: { name, arguments: args } }, undefined).catch(() => { /* the Err branch is a valid outcome here */ })
   }
 }
+
+/** The `tools/call` handler a real session registers — production wiring, so the
+ *  `observe` seam under test is `buildMcpServer`'s own and not a copy. Returns
+ *  the pending promise so a caller can leave two calls in flight. */
+function sessionCallTool(deps: McpLogDeps, ts: ReturnType<typeof tsHostStub>) {
+  const registered = spyRegistrations()
+  buildMcpServer(fakeBackend(), { log: deps, getTsHost: () => ts })
+  const handler = registered.get(CallToolRequestSchema)!
+  return (name: string, args: Record<string, unknown> = {}) =>
+    handler({ params: { name, arguments: args } }, undefined).catch(() => { /* the Err branch is a valid outcome here */ })
+}
+
+/** Opaque black — `add_color_layer`'s one required non-time arg. */
+const BLACK = { r: 0, g: 0, b: 0, a: 1 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
@@ -302,12 +320,177 @@ describe('oversized args are elided before the payload leaves TS', () => {
   })
 })
 
+describe('a mutation row reads the way the history panel does', () => {
+  it('carries the change summary and the label key that translates it', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    const call = sessionCallTool(deps, ts)
+    const track = ts.actor.snapshot().tracks[0].id
+    await call('add_color_layer', { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 })
+
+    // Asserted against the panel's OWN read, not an English literal: the row has
+    // to track the label table rather than hold a second copy of it.
+    const op = ts.actor.historyView(1).ops[0]
+    expect(entries[0].message).toBe(op.summary)
+    expect(entries[0].i18n_key).toBe(op.label_key)
+    expect(entries[0].level).toBe('info')
+    // The tool name survives in details — it is what a filter keys on once the
+    // message stops being mechanical.
+    expect(detailsOf(entries[0]).tool).toBe('add_color_layer')
+    // One commit needs no count; the message already stands for it.
+    expect('commits' in detailsOf(entries[0])).toBe(false)
+  })
+
+  it('a templated summary carries its interpolation values too', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    await sessionCallTool(deps, ts)('set_role_gain', { role: 'music', gain_db: -3 })
+    expect(entries[0].i18n_key).toBe('history.audio.set_role_gain')
+    expect(entries[0].i18n_args).toEqual({ role: 'music' })
+  })
+
+  it('a call that commits twice names the last change and counts them', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    // add_motif with no track_id spawns the track, then the layer: two commits
+    // under one call, and the layer is what the agent asked for.
+    await sessionCallTool(deps, ts)('add_motif', { motif_id: [...BUILTIN_MANIFESTS.keys()][0], t_start_us: 0 })
+    expect(entries[0].message).toBe(HISTORY_SUMMARY.layerAdd.text)
+    expect(entries[0].i18n_key).toBe(HISTORY_SUMMARY.layerAdd.key)
+    expect(detailsOf(entries[0]).commits).toBe(2)
+    expect(detailsOf(entries[0]).tool).toBe('add_motif')
+  })
+
+  it('a commit that never reached history keeps its summary and no key', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    const call = sessionCallTool(deps, ts)
+    const track = ts.actor.snapshot().tracks[0].id
+    await call('add_color_layer', { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 })
+    await call('undo')
+    // undo broadcasts an unrecorded ChangeEvent: real user-facing text, but no
+    // history entry to read a key off — and the op_id match is what stops it
+    // borrowing the key of the entry still sitting on top of the stack.
+    expect(entries[1].message).toBe('Undo')
+    expect(entries[1].i18n_key).toBeUndefined()
+  })
+
+  it('a call that commits nothing keeps the mechanical line', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    const call = sessionCallTool(deps, ts)
+    await call('add_color_layer', {}) // refused before any commit
+    await call('list_checkpoints') // a read that happens to route 'ts'
+    expect(entries.map((e) => [e.level, e.message])).toEqual([
+      ['error', 'MCP: add_color_layer'],
+      ['info', 'MCP: list_checkpoints'],
+    ])
+  })
+})
+
+describe('the commit window is closed before the first await', () => {
+  it('a commit that lands after an await is not attributed', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    const observed: McpLogDeps = { ...deps, observe: mcpCommitObserver(() => ts) }
+    const track = ts.actor.snapshot().tracks[0].id
+    // Stands in for the shape the landmine in withLog.ts warns about: the 'ts'
+    // route's commit moved behind an await. The window has closed by then, so
+    // the row falls back — this test is what fails if that ever happens for real.
+    const late = withLog('tools/call', async (req: { params: { name: string; arguments: Record<string, unknown> } }) => {
+      await Promise.resolve()
+      return handleCallTool(fakeBackend(), () => ts, req.params.name, req.params.arguments)
+    }, observed)
+    await late({ params: { name: 'add_color_layer', arguments: { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 } } }, undefined)
+
+    expect(ts.actor.historyView(1).ops[0].label_key).toBe(HISTORY_SUMMARY.layerAdd.key) // the commit did happen
+    expect(entries[0].message).toBe('MCP: add_color_layer')
+    expect(entries[0].i18n_key).toBeUndefined()
+  })
+
+  it('two interleaved calls never claim each other\'s commit', async () => {
+    const { entries, deps } = collector()
+    const ts = tsHostStub()
+    const observed: McpLogDeps = { ...deps, observe: mcpCommitObserver(() => ts) }
+    const track = ts.actor.snapshot().tracks[0].id
+    let release = (): void => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const route = (req: { params: { name: string; arguments: Record<string, unknown> } }) =>
+      handleCallTool(fakeBackend(), () => ts, req.params.name, req.params.arguments)
+    // `slow` commits after `quick` has come and gone, so the only way a row can
+    // name the wrong change is a window left open across an await.
+    const slow = withLog('tools/call', async (req: { params: { name: string; arguments: Record<string, unknown> } }) => { await gate; return route(req) }, observed)
+    const quick = withLog('tools/call', route, observed)
+
+    const pending = slow({ params: { name: 'add_track', arguments: {} } }, undefined)
+    await quick({ params: { name: 'add_color_layer', arguments: { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 } } }, undefined)
+    release()
+    await pending
+
+    expect(entries.map((e) => [detailsOf(e).tool, e.message])).toEqual([
+      ['add_color_layer', HISTORY_SUMMARY.layerAdd.text],
+      ['add_track', 'MCP: add_track'],
+    ])
+  })
+})
+
+describe('hybrids keep the mechanical line — a wrong attribution is worse', () => {
+  it('two overlapping hybrid commits stay with their own tools', async () => {
+    const { entries, deps } = collector()
+    let release = (): void => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const parsed = JSON.stringify({ cues: [{ start_us: 0, end_us: 1_000_000, text: 'hi' }], simplified: false })
+    // Both calls park on ONE gate, so their commits really do land while the
+    // other call is still in flight.
+    const ts = tsHostStub({ parseSubtitles: async () => { await gate; return parsed } })
+    const call = sessionCallTool(deps, ts)
+
+    const both = Promise.all([
+      call('apply_subtitles', { body: '1\n00:00:00,000 --> 00:00:01,000\nhi\n' }),
+      call('import_media', { path: 'C:/media/captions.srt' }),
+    ])
+    release()
+    await both
+
+    // Two caption tracks were committed with both calls in flight...
+    expect(ts.actor.historyView(2).ops.map((o: { label_key: string }) => o.label_key))
+      .toEqual([HISTORY_SUMMARY.trackAddCaption.key, HISTORY_SUMMARY.trackAddCaption.key])
+    // ...and neither row borrowed one. Keyed by tool rather than by arrival: the
+    // two settle one microtask apart and the order is not the property here.
+    expect(entries).toHaveLength(2)
+    const rows = new Map(entries.map((e) => [detailsOf(e).tool as string, e]))
+    for (const tool of ['apply_subtitles', 'import_media']) {
+      expect(rows.get(tool)!.message, tool).toBe(`MCP: ${tool}`)
+      expect(rows.get(tool)!.i18n_key, tool).toBeUndefined()
+    }
+  })
+})
+
 describe('logging can never break a call', () => {
   it('a throwing emit still returns the tool result', async () => {
     const boom: McpLogDeps = { emit: () => { throw new Error('no bus') }, currentWorkspace: () => null }
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const out = await withLog('tools/call', async () => ({ ok: true }), boom)({ params: { name: 'ping', arguments: {} } }, undefined)
     expect(out).toEqual({ ok: true })
+    expect(errors).toHaveBeenCalled()
+  })
+
+  it('a handler that throws synchronously closes the window instead of leaking it', async () => {
+    const { deps } = collector()
+    let closes = 0
+    const observed: McpLogDeps = { ...deps, observe: () => ({ close: () => { closes++; return null } }) }
+    const sync = withLog('tools/call', () => { throw new Error('sync boom') }, observed)
+    await expect(sync({ params: { name: 'add_track', arguments: {} } }, undefined)).rejects.toThrow('sync boom')
+    expect(closes).toBe(1)
+  })
+
+  it('a throwing observe seam leaves the call and its row intact', async () => {
+    const { entries, deps } = collector()
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const observed: McpLogDeps = { ...deps, observe: () => { throw new Error('no actor') } }
+    const out = await withLog('tools/call', async () => ({ ok: true }), observed)({ params: { name: 'add_track', arguments: {} } }, undefined)
+    expect(out).toEqual({ ok: true })
+    expect(entries[0].message).toBe('MCP: add_track')
     expect(errors).toHaveBeenCalled()
   })
 })

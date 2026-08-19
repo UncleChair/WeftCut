@@ -18,10 +18,11 @@ import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
 import { serveProjectResource, buildResourceInjection } from '../state/resource-views.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
+import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
-import { withLog, NO_MCP_LOG, type McpLogDeps } from './withLog.js'
+import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -160,6 +161,57 @@ export async function handleReadResource(
   return unwrap(await backend.mcpReadResource(uri)) as ServerResult
 }
 
+/** Collect the `ChangeEvent`s one MCP call commits, so its log row can carry the
+ *  change summary the history panel renders instead of the mechanical tool name.
+ *  The window is opened and closed by `withLog`, which owns the timing that makes
+ *  it exclusive.
+ *
+ *  `close()` unsubscribes FIRST, so a throw while folding the row still ends the
+ *  collection. Several commits fold to the LAST summary plus a count: the row is
+ *  one line, and the last change is the one the call ended on.
+ *
+ *  The label key is read back out of history rather than widened onto
+ *  `ChangeEvent`, which would ripple through `mapChangeEvent` into the renderer
+ *  bridge for no gain. Matched by `op_id`, never by position: a commit that never
+ *  reaches history — `undo`, `restore_checkpoint` and the rest of
+ *  `broadcastUnrecorded` — must not borrow the key of whatever sits on top of the
+ *  stack. Those legitimately have no key and carry their summary text alone. */
+function openCommitWindow(actor: ActorHandle): McpCommitWindow {
+  const collected: ChangeEvent[] = []
+  const stopCollecting = actor.subscribe((e) => { collected.push(e) })
+  return {
+    close: () => {
+      stopCollecting()
+      const last = collected[collected.length - 1]
+      if (last === undefined) return null
+      const recorded = actor.historyView(1).ops.find((o) => o.op_id === last.op_id)
+      const row: McpRowSummary = { message: last.summary, commits: collected.length }
+      if (recorded?.label_key !== undefined) row.i18n_key = recorded.label_key
+      if (recorded?.label_args !== undefined) row.i18n_args = recorded.label_args
+      return row
+    },
+  }
+}
+
+/** `withLog`'s `observe` seam for one session: which tools' commits may be
+ *  attributed to their call, and the actor to watch for them.
+ *
+ *  Only the `'ts'` route qualifies, and by ROUTE rather than by tool name: it is
+ *  the only route that commits inside `handleCallTool`'s synchronous prefix. The
+ *  `async` hybrids are excluded because two overlapping ones would each see the
+ *  other's commit, and a row attributed to the wrong tool is worse than a
+ *  mechanical one. Exported for the gate, which drives the same predicate the
+ *  session does rather than a copy of it. */
+export function mcpCommitObserver(getTsHost: () => TsActorHost | null): (tool: string) => McpCommitWindow | null {
+  return (tool: string) => {
+    if (routeMcpTool(tool) !== 'ts') return null
+    // No host and even a 'ts' tool is forwarded to the backend, where there is
+    // no actor to watch.
+    const tsHost = getTsHost()
+    return tsHost ? openCommitWindow(tsHost.actor) : null
+  }
+}
+
 /** The injectable seams of one MCP session. An options bag rather than trailing
  *  positionals: `log` is the fourth and every one of them is optional, and each
  *  omitted seam must keep the behaviour it had before it existed. */
@@ -168,15 +220,23 @@ export interface McpServerOptions {
   getPreferredEngine?: () => string | null
   getVlm?: VlmProvider
   /** LogBus emit + workspace identity for the six request handlers. Omitted →
-   *  no rows at all, which is what a `buildMcpServer` without a bus wants. */
-  log?: McpLogDeps
+   *  no rows at all, which is what a `buildMcpServer` without a bus wants.
+   *
+   *  `observe` is not the caller's to set — the session builds it below from its
+   *  own routing table and actor — so it is typed out rather than left as a knob
+   *  that would be accepted and silently overwritten. */
+  log?: Omit<McpLogDeps, 'observe'>
 }
 
 export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): Server {
   const getTsHost = opts.getTsHost ?? (() => null)
   const getPreferredEngine = opts.getPreferredEngine ?? (() => null)
   const getVlm = opts.getVlm ?? NO_VLM
-  const log = opts.log ?? NO_MCP_LOG
+  // `observe` is the session's to supply, not the caller's: it is the one log
+  // seam that needs the routing table and the actor. An un-instrumented build
+  // gets no window at all — nothing would read it, and the subscribe/unsubscribe
+  // per call would be pure churn.
+  const log: McpLogDeps = opts.log ? { ...opts.log, observe: mcpCommitObserver(getTsHost) } : NO_MCP_LOG
   const server = new Server(
     { name: 'weftcut', version: '0.1.0' },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
