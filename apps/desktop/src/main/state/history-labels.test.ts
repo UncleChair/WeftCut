@@ -7,8 +7,9 @@ import { ENTITY_LABEL_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, removedMediaS
 import type { EntityRef } from './history'
 import { blankProject, type Layer, type MediaItem, type Project } from './model'
 import { seededGen } from './ids'
-import { colorParams } from './mutations/add'
+import { colorParams, textParamsDefault } from './mutations/add'
 import { videoClipParams } from './mutations/media'
+import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
 
 /** Dotted leaf keys of a locale subtree, e.g. `history.layer.add`. */
 function leafKeys(obj: Record<string, unknown>, prefix: string): string[] {
@@ -114,6 +115,28 @@ describe('resolveEntityLabels', () => {
   it('emits the kind KEY for a media-less layer (blank label counts as absent)', () => {
     const p = layer(fresh(), mkLayer('L1', '  ', colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 9)))
     expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ label_key: 'kinds.color' }])
+  })
+  // Text is the one kind with a rung BELOW media and above the kind: nothing
+  // writes a caption's label, so `kinds.text` would name every cue in an
+  // imported .srt identically. It travels as `text`, not a key — the renderer
+  // has nothing to translate in the user's own words — and it arrives collapsed
+  // to one line, because a history row is one line.
+  it('names an unlabelled Text layer by its content, collapsed to one line', () => {
+    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault('first line\nsecond line')))
+    expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ text: 'first line second line' }])
+  })
+  it('still reaches the kind KEY when the Text layer has no words yet', () => {
+    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault('   ')))
+    expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ label_key: 'kinds.text' }])
+  })
+  // Both sides call shared/textSnippet at shared TEXT_NAME_MAX, so equal
+  // strings hold by construction. What this pins is that THIS side still routes
+  // through it: a local `slice(0, 64)` here would pass every case above and
+  // still hand one caption two names.
+  it('caps a pasted paragraph through the shared rule, not a local slice', () => {
+    const long = 'x'.repeat(500)
+    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault(long)))
+    expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ text: textSnippet(long, TEXT_NAME_MAX) }])
   })
   // The track rungs are renderer/lib/trackName.ts's, so a history row names a
   // lane exactly as its header does — role first, then the 1-based slot in the

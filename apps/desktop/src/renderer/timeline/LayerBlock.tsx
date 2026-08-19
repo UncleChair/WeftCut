@@ -8,6 +8,7 @@ import {
   Sparkles,
   Type,
 } from "lucide-react";
+import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
 import { layerDisplayName } from "../lib/layerName";
 import { AppInput } from "../components/AppInput";
@@ -617,7 +618,19 @@ export function LayerBlock({
         if (layer.locked || trackLocked) return;
         onContextMenu(e, layer.id, layer.kind, layer.enabled);
       }}
-      title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
+      title={[
+        `${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`,
+        // The chip is where a Text layer's words live now, and the chip
+        // truncates: to 12 characters on a narrow block, to 240px of ellipsis on
+        // a wide one, and to nothing at all once the layer has been renamed. The
+        // tooltip is the one place the line itself stays readable without
+        // opening the inspector.
+        layer.params.kind === "Text"
+          ? textSnippet(layer.params.content, TEXT_NAME_MAX)
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")}
     >
       <TimelineVisualPreview
         layer={layer}

@@ -1,4 +1,5 @@
 // apps/desktop/src/main/state/history-labels.ts
+import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
 import type { EntityRef } from './history'
 import type { Layer, Project, Uuid } from './model'
 import { mediaLabel, TRACK_ROLE_WIRE } from './summary'
@@ -148,8 +149,9 @@ export const ENTITY_LABEL_KEYS: readonly string[] = [
 
 /** The one name a layer is shown under — the main-side twin of
  *  renderer/lib/layerName.ts `layerDisplayName`: own label (blank counts as
- *  absent), else its media's label, else its kind. Never the uuid, so a history
- *  row cannot name a clip differently from the clip itself. */
+ *  absent), else its media's label, else a Text layer's own words, else its
+ *  kind. Never the uuid, so a history row cannot name a clip differently from
+ *  the clip itself. */
 function layerLabel(p: Project, l: Layer): EntityLabel {
   const own = l.label?.trim()
   if (own) return { text: own }
@@ -159,6 +161,14 @@ function layerLabel(p: Project, l: Layer): EntityLabel {
     const item = p.media_pool[l.params.media]
     const media = (item ? mediaLabel(item) : l.params.media).trim()
     if (media) return { text: media }
+  }
+  // Real text, so it travels as `text` and not as a key: unlike the kind rung
+  // there is nothing here for the renderer to translate. `textSnippet` is
+  // imported rather than reimplemented — this rung and the renderer's must
+  // collapse and truncate identically or a caption gets two names.
+  if (l.params.kind === 'Text') {
+    const content = textSnippet(l.params.content, TEXT_NAME_MAX)
+    if (content) return { text: content }
   }
   return kindKey(l.params.kind)
 }

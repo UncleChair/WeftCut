@@ -1829,6 +1829,59 @@ describe("Timeline clip label fallback", () => {
     const { getByText } = renderTimeline({ tracks: [trackWith(noName)] });
     expect(getByText("Video")).toBeTruthy();
   });
+
+  const textLayerParams: Extract<LayerSummary["params"], { kind: "Text" }> = {
+    kind: "Text",
+    content: "Once upon a time",
+    font_family: "Inter",
+    font_size_px: 48,
+    weight: 400,
+    italic: false,
+    align: "Center",
+    anchor_x: staticNum(0.5),
+    anchor_y: staticNum(0.5),
+    color: { mode: "Static", value: { r: 255, g: 255, b: 255, a: 255 } },
+    x: staticNum(0),
+    y: staticNum(0),
+    scale_x: staticNum(1),
+    scale_y: staticNum(1),
+    scale_linked: true,
+    rotation_deg: staticNum(0),
+    opacity: staticNum(1),
+    outline: null,
+    shadow: null,
+  };
+  const unnamedText: LayerSummary = {
+    ...tinyVideoLayer,
+    id: "text-unnamed",
+    label: null,
+    kind: "Text",
+    t_end_us: 2_000_000,
+    params: textLayerParams,
+  };
+
+  // The regression this exists for: a Text block used to carry TWO strings —
+  // the preview drew the content, the chip drew the kind word "Text" — on the
+  // same baseline, at the same 10px, from the same 8px inset, separated only by
+  // the chip's fade-to-transparent scrim. Asserting the block's WHOLE text
+  // content is what pins it; `getByText(content)` alone passed even then,
+  // because the content was present either way.
+  it("an unnamed text layer draws exactly one string: its own words", () => {
+    const { getByText } = renderTimeline({ tracks: [trackWith(unnamedText)] });
+    const block = getByText("Once upon a time").closest(".timeline-layer");
+    expect(block?.textContent).toBe("Once upon a time");
+  });
+
+  it("a renamed text layer shows the name, and keeps the words in the tooltip", () => {
+    const named: LayerSummary = { ...unnamedText, id: "text-named", label: "Opening title" };
+    const { getByText, queryByText } = renderTimeline({ tracks: [trackWith(named)] });
+    expect(getByText("Opening title")).toBeTruthy();
+    // The words are gone from the surface — the tooltip is the one place they
+    // survive, which is why LayerBlock appends them to `title` for Text.
+    expect(queryByText("Once upon a time")).toBeNull();
+    const block = getByText("Opening title").closest(".timeline-layer");
+    expect(block?.getAttribute("title")).toContain("Once upon a time");
+  });
 });
 
 /// Integration cover for the follow wiring — the unit tests

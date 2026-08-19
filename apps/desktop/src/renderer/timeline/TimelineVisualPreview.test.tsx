@@ -95,6 +95,39 @@ const colorLayer: LayerSummary = {
   effects: [],
 };
 
+const textLayer: LayerSummary = {
+  id: "text-1",
+  label: null,
+  t_start_us: 0,
+  t_end_us: 2_000_000,
+  kind: "Text",
+  color_hint: "#b17bc1",
+  enabled: true,
+  locked: false,
+  params: {
+    kind: "Text",
+    content: "Once upon a time",
+    font_family: "Inter",
+    font_size_px: 48,
+    weight: 400,
+    italic: false,
+    align: "Center",
+    anchor_x: staticNum(0.5),
+    anchor_y: staticNum(0.5),
+    color: { mode: "Static", value: { r: 255, g: 255, b: 255, a: 255 } },
+    x: staticNum(0),
+    y: staticNum(0),
+    scale_x: staticNum(1),
+    scale_y: staticNum(1),
+    scale_linked: true,
+    rotation_deg: staticNum(0),
+    opacity: staticNum(1),
+    outline: null,
+    shadow: null,
+  },
+  effects: [],
+};
+
 describe("TimelineVisualPreview", () => {
   let observerCallback: IntersectionObserverCallback | null = null;
   let observedElement: Element | null = null;
@@ -267,5 +300,26 @@ describe("TimelineVisualPreview", () => {
     // 0.004 — distinct from 0 and from a 0-1-channel misread (1.0), which is
     // all this test needs to pin.
     expect(fill.getAttribute("style")).toContain("rgba(10, 20, 30, 0.004)");
+  });
+
+  // The one preview that must draw NO glyphs. Every other kind previews into
+  // the image channel (filmstrip, waveform, photo, swatch) with the block's
+  // name chip layered over it; a Text preview would draw into the chip's own
+  // channel at the same 10px, the same centred baseline and the same left
+  // inset, which is two strings on one line. LayerBlock's chip carries the
+  // content instead — see layerName.ts's Text rung.
+  it("draws no text for a Text layer — the name chip carries the content", () => {
+    const { getByTestId } = render(
+      <TimelineVisualPreview
+        layer={textLayer}
+        layerWidthPx={400}
+        layerHeightPx={32}
+        pxPerSec={80}
+      />,
+    );
+
+    const preview = getByTestId("timeline-visual-preview");
+    expect(preview.textContent).toBe("");
+    expect(preview.textContent).not.toContain("Once upon");
   });
 });

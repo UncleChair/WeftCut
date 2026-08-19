@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@/bridge/ipc";
-import {
-  LAYER_LABEL_MIN_PX,
-  LAYER_PREVIEW_MIN_PX,
-} from "./geometry";
+import { LAYER_PREVIEW_MIN_PX } from "./geometry";
 import { TimelineFilmstrip } from "./TimelineFilmstrip";
 import { TimelineWaveform } from "./TimelineWaveform";
 import { trackStatic, type LayerSummary, type Rgba } from "../ipc";
@@ -17,12 +14,6 @@ function clamp01(value: number): number {
 function rgbaToCss(color: Rgba): string {
   const alpha = color.a / 255;
   return `rgba(${color.r}, ${color.g}, ${color.b}, ${clamp01(alpha)})`;
-}
-
-function compactText(content: string): string {
-  const clean = content.replace(/\s+/g, " ").trim();
-  if (!clean) return "Text";
-  return clean.length > 64 ? `${clean.slice(0, 61)}...` : clean;
 }
 
 function fallbackFill(surface: string, pattern?: "motif") {
@@ -183,19 +174,16 @@ export function TimelineVisualPreview({
           trackStatic(layer.params.color, { r: 0, g: 0, b: 0, a: 255 }),
           layer.color_hint,
         );
+      // Deliberately NOT a text render. Text is the one kind whose content
+      // lives in the same visual channel as the block's name chip — same 10px,
+      // same centred baseline, same left inset, same 48px reveal threshold — so
+      // drawing it here put two strings on one line, out of phase by the width
+      // of the chip's icon, with only the chip's fade-to-transparent scrim
+      // between them. The chip carries the content now (layerName.ts names a
+      // Text layer by its words), and it carries it BETTER: it is sticky, so it
+      // stays readable when a long caption's head scrolls out of the viewport.
       case "Text":
-        return (
-          <div
-            className="flex h-full w-full items-center overflow-hidden px-2"
-            style={{ backgroundColor: layerTheme.surface }}
-          >
-            {layerWidthPx >= LAYER_LABEL_MIN_PX && (
-              <span className="truncate text-[10px] font-semibold leading-none text-white/70">
-                {compactText(layer.params.content)}
-              </span>
-            )}
-          </div>
-        );
+        return fallbackFill(layerTheme.surface);
       case "Motif":
         return fallbackFill(layerTheme.surface, "motif");
     }
