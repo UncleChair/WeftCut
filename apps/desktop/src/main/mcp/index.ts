@@ -1,6 +1,5 @@
 import express from 'express'
 import { app } from 'electron'
-import type { Server as HttpServer } from 'node:http'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -8,6 +7,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { buildMcpServer } from './server.js'
 import { loadOrInitAuth, saveAuth, rotateToken, type McpAuth } from './auth.js'
+import { listenLoopback } from './bind.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -93,24 +93,11 @@ export async function startMcpHost(backend: Backend, getTsHost: () => import('..
       .json({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: no valid session ID' }, id: null })
   })
 
-  // Bind, with OS-pick fallback on collision.
-  const http: HttpServer = await new Promise((resolve, reject) => {
-    const s = appExpress.listen(auth.port, '127.0.0.1', () => resolve(s))
-    s.on('error', (e: NodeJS.ErrnoException) => {
-      if (e.code === 'EADDRINUSE') {
-        const fallback = appExpress.listen(0, '127.0.0.1', () => resolve(fallback))
-      } else {
-        reject(e)
-      }
-    })
-  })
-  const port = (http.address() as { port: number }).port
-  if (port !== auth.port) {
-    auth = { ...auth, port }
-    saveAuth(auth)
-  } else {
-    saveAuth(auth)
-  }
+  // The stored port is only a hint; listenLoopback explains why it goes
+  // stale and why re-picking is safe for connected clients.
+  const { server: http, port } = await listenLoopback(appExpress, auth.port)
+  auth = { ...auth, port }
+  saveAuth(auth)
 
   const url = `http://127.0.0.1:${port}/mcp`
   console.log(`[mcp] listening ${url}`)
