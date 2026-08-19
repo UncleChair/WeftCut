@@ -7,7 +7,9 @@
 // Handler order is LOAD-BEARING: workspace bookkeeping (cache→workspace→
 // agent-end→LogBus, inside commitWorkspace) BEFORE replace_state; recents AFTER
 // a successful swap/write.
+import { WorkspaceFailure, isWorkspaceFailure } from '../../shared/workspaceErrors'
 import type { ActorHandle } from './actor'
+import { isCommandFailure } from './errors'
 import type { IdGen } from './ids'
 import type { Project } from './model'
 import { blankProject } from './model'
@@ -81,7 +83,7 @@ export interface SchemaUpgradeReport {
   backupFile: string | null
 }
 
-/** project_open. Pre-check sentinels → load (schema gate + migration chain) →
+/** project_open. Pre-checks → load (schema gate + migration chain) →
  *  delete stale quick proxies → preserve pre-upgrade bytes → relink heal →
  *  commit_workspace (pre-broadcast) → onGridRepair + onSchemaUpgrade reports →
  *  replace_state → onRelink report → push_recent → (deferred) derivative
@@ -89,10 +91,11 @@ export interface SchemaUpgradeReport {
  *  the per-workspace LogBus. */
 export async function openProject(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
-  // Typed sentinels for the two common failure modes (renderer matches them).
-  if (!fs.exists(dir)) throw new Error('PROJECT_FOLDER_MISSING')
+  // Every refusal on this path is a WorkspaceError, never prose: the launch
+  // surface renders them as localized copy (shared/workspaceErrors.ts).
+  if (!fs.exists(dir)) throw new WorkspaceFailure({ error: 'ProjectFolderMissing' })
   const file = join(dir, PROJECT_FILE)
-  if (!fs.exists(file)) throw new Error('NOT_PROJECT_FOLDER')
+  if (!fs.exists(file)) throw new WorkspaceFailure({ error: 'NotProjectFolder' })
 
   const text = fs.readFile(file)
   // CAPTURE the repair report, do not emit it here. The LogBus is per-workspace and
@@ -103,7 +106,18 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // `clearSessionQuickProxies` both spread into fresh objects, so a WeakMap keyed on
   // the parsed project is already dead by the time `replaceState` runs.
   let gridRepairs: readonly GridRepair[] = []
-  const loaded = loadProjectFromJson(text, { dir, join, onGridRepair: (r) => { gridRepairs = r } })
+  // The schema gate inside already refuses in the workspace vocabulary; what is
+  // left to translate is everything below it — a JSON syntax error, a structural
+  // cast failure — which would otherwise reach the launch surface as raw English
+  // prose. Its wording (an offset, a field name) is the only actionable thing
+  // left to say, so it rides along as `detail` rather than being discarded.
+  let loaded: ReturnType<typeof loadProjectFromJson>
+  try {
+    loaded = loadProjectFromJson(text, { dir, join, onGridRepair: (r) => { gridRepairs = r } })
+  } catch (e) {
+    if (isWorkspaceFailure(e)) throw e
+    throw new WorkspaceFailure({ error: 'ProjectFileUnreadable', detail: String(e) })
+  }
   let project = loaded.project
   const { quickProxiesToDelete } = loaded
   // Best-effort: never fail the open on a leftover proxy we couldn't remove.
@@ -152,7 +166,18 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // fails validation, "this file was upgraded from v{n}" is the first thing worth
   // knowing about why.
   if (schemaUpgrade) { try { deps.onSchemaUpgrade?.(schemaUpgrade) } catch { /* best-effort, never blocks the open */ } }
-  actor.replaceState(project)                 // throws CommandFailure on invalid
+  // Throws CommandFailure on invalid. Retranslated rather than propagated: the
+  // editor's refusal formatter resolves the uuids in a CommandError against the
+  // renderer's project mirror, which on the launch surface is empty — so the
+  // structure is kept for the log's disclosure and the copy stays generic.
+  try {
+    actor.replaceState(project)
+  } catch (e) {
+    throw new WorkspaceFailure({
+      error: 'ProjectInvalid',
+      detail: isCommandFailure(e) ? JSON.stringify(e.err) : String(e),
+    })
+  }
   // After commitWorkspace — see OrchestratorDeps.onRelink.
   if (relinkReport) { try { deps.onRelink?.(relinkReport) } catch { /* best-effort, never blocks the open */ } }
   await napi.pushRecent(dir, project.metadata.name)
@@ -195,12 +220,15 @@ export function makeEnqueueDerivatives(
 export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArgs): Promise<string> {
   const { actor, napi, fs, join, idGen } = deps
   const trimmed = args.name.trim()
-  if (trimmed.length === 0) throw new Error('project name is required')
+  if (trimmed.length === 0) throw new WorkspaceFailure({ error: 'ProjectNameRequired' })
   if (args.width === 0 || args.height === 0 || args.fpsNum === 0 || args.fpsDen === 0) {
-    throw new Error('invalid canvas preset')
+    throw new WorkspaceFailure({ error: 'InvalidCanvasPreset' })
   }
   const target = join(args.parentFolder, trimmed)
-  if (fs.exists(target)) throw new Error(`folder already exists: ${target}`)
+  // Never overwritten: the occupant may be an unrelated folder full of the
+  // user's files. The path is not on the wire — the dialog composed it and is
+  // already previewing it under the name field.
+  if (fs.exists(target)) throw new WorkspaceFailure({ error: 'ProjectFolderExists' })
 
   const project = blankProject(idGen, trimmed)
   project.composition.width = args.width

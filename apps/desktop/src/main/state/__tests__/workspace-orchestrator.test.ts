@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
+import { WorkspaceFailure } from '../../../shared/workspaceErrors'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
+import { CommandFailure } from '../errors'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
 import { canonicalize } from '../canonical'
 import { serializeProject, type GridRepair } from '../serialize'
 import { applyAddLayer, colorParams } from '../mutations/add'
-import { blankProject } from '../model'
+import { blankProject, SCHEMA_VERSION } from '../model'
 import type { MediaItem } from '../model'
 import { seededGen } from '../ids'
 
@@ -43,14 +45,26 @@ describe('openProject', () => {
   const project = blankProject(seededGen(), 'Demo')
   const projectJson = serializeProjectToJson(project)
 
-  it('throws PROJECT_FOLDER_MISSING when the folder is absent', async () => {
+  it('refuses ProjectFolderMissing when the folder is absent', async () => {
     const d = deps()
-    await expect(openProject(d, '/ws')).rejects.toThrow('PROJECT_FOLDER_MISSING')
+    await expect(openProject(d, '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectFolderMissing' }))
   })
 
-  it('throws NOT_PROJECT_FOLDER when project.json is absent', async () => {
+  it('refuses NotProjectFolder when project.json is absent', async () => {
     const d = deps({ fs: memFs() }); (d.fs as any).dirs.add('/ws')
-    await expect(openProject(d, '/ws')).rejects.toThrow('NOT_PROJECT_FOLDER')
+    await expect(openProject(d, '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'NotProjectFolder' }))
+  })
+
+  it('lets the schema gate refusal through untouched', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: JSON.stringify({ schema_version: 999 }) }); fs.dirs.add('/ws')
+    await expect(openProject(deps({ fs }), '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectSchemaTooNew', found: 999, supported: SCHEMA_VERSION }))
+  })
+
+  it('refuses ProjectFileUnreadable on a corrupt project.json, keeping the parser prose as detail', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: '{not json' }); fs.dirs.add('/ws')
+    // Only the code is asserted: the prose is V8's, and pinning it here would
+    // make an engine bump a test failure.
+    await expect(openProject(deps({ fs }), '/ws')).rejects.toThrow(/"error":"ProjectFileUnreadable"/)
   })
 
   it('commits the workspace BEFORE replaceState, pushes recent AFTER', async () => {
@@ -64,8 +78,14 @@ describe('openProject', () => {
   it('does not push recent and propagates the error when replaceState throws', async () => {
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: projectJson }); fs.dirs.add('/ws')
     const d = deps({ fs })
-    d.actor.replaceState = vi.fn(() => { throw new Error('ValidationFailed') })
-    await expect(openProject(d, '/ws')).rejects.toThrow('ValidationFailed')
+    d.actor.replaceState = vi.fn(() => { throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'DuplicateLayerId', layer: 'l1' } }) })
+    // Retranslated, not propagated — the launch surface has no project mirror to
+    // resolve the refusal's uuids against, so the structure is kept as `detail`
+    // for the log and the copy stays generic.
+    await expect(openProject(d, '/ws')).rejects.toThrow(new WorkspaceFailure({
+      error: 'ProjectInvalid',
+      detail: JSON.stringify({ error: 'ValidationFailed', detail: { rule: 'DuplicateLayerId', layer: 'l1' } }),
+    }))
     expect(d.napi.pushRecent).not.toHaveBeenCalled()
   })
 
@@ -217,15 +237,16 @@ describe('newWorkspace', () => {
   const args = { parentFolder: '/parent', name: 'Fresh', width: 1280, height: 720, fpsNum: 24, fpsDen: 1 }
 
   it('rejects an empty name', async () => {
-    await expect(newWorkspace(deps(), { ...args, name: '  ' })).rejects.toThrow(/name is required/)
+    await expect(newWorkspace(deps(), { ...args, name: '  ' })).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectNameRequired' }))
   })
   it('rejects a zero canvas/fps', async () => {
-    await expect(newWorkspace(deps(), { ...args, width: 0 })).rejects.toThrow(/canvas preset/)
-    await expect(newWorkspace(deps(), { ...args, fpsDen: 0 })).rejects.toThrow(/canvas preset/)
+    const bad = new WorkspaceFailure({ error: 'InvalidCanvasPreset' })
+    await expect(newWorkspace(deps(), { ...args, width: 0 })).rejects.toThrow(bad)
+    await expect(newWorkspace(deps(), { ...args, fpsDen: 0 })).rejects.toThrow(bad)
   })
   it('rejects an existing target folder', async () => {
     const fs = memFs(); fs.dirs.add('/parent/Fresh')
-    await expect(newWorkspace(deps({ fs }), args)).rejects.toThrow(/already exists/)
+    await expect(newWorkspace(deps({ fs }), args)).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectFolderExists' }))
   })
   it('writes a blank project with the canvas preset, commits, swaps, pushes recent + parent', async () => {
     const d = deps()

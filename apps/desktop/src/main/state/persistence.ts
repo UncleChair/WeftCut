@@ -6,6 +6,7 @@
 // workspace-orchestrator.ts (injected fs). Filesystem/platform impurities are
 // injected (`join` for path reconcile) or returned (quick-proxy files to
 // delete).
+import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { upgradeWire } from './migrate'
 import { serializeProject, parseProject, type GridRepair, type ParseProjectOptions } from './serialize'
@@ -39,19 +40,21 @@ export function serializeProjectToJson(p: Project): string {
  *    do not exist here, and writing it back would silently drop them.
  *
  *  An OLDER version is deliberately NOT a refusal — it is the migration chain's
- *  input (migrate.ts). The ahead-of-build message stays version-agnostic on
- *  purpose: "update the app" is a guess that happens to be wrong for the file it
- *  fires on most often, a `.vproj` left behind by a different build of this repo.
+ *  input (migrate.ts).
+ *
+ *  Both refusals are WorkspaceFailures rather than prose: what renders them is
+ *  the startup screen, which has to say this in the user's language.
+ *  `ProjectSchemaTooNew` carries both versions so that copy can state
+ *  the mismatch instead of guessing that an app update fixes it — the file it
+ *  fires on most often is one left behind by a different build of this repo.
  */
 export function schemaGate(project: unknown): number {
   const v = (project as { schema_version?: unknown })?.schema_version
   if (typeof v !== 'number' || !Number.isInteger(v)) {
-    throw new Error(`project schema version is missing or non-numeric (this build reads v${SCHEMA_VERSION})`)
+    throw new WorkspaceFailure({ error: 'ProjectSchemaUnreadable' })
   }
   if (v > SCHEMA_VERSION) {
-    throw new Error(
-      `project.json was written by a different build (schema v${v}); this build reads v${SCHEMA_VERSION}.`,
-    )
+    throw new WorkspaceFailure({ error: 'ProjectSchemaTooNew', found: v, supported: SCHEMA_VERSION })
   }
   return v
 }

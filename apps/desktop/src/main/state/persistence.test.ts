@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import { seededGen } from './ids'
 import { blankProject, SCHEMA_VERSION } from './model'
 import type { MediaItem, Project } from './model'
@@ -40,18 +41,21 @@ describe('schemaGate', () => {
   it('admits an OLDER version — that is the migration chain\'s input, not an error', () => {
     expect(schemaGate({ schema_version: SCHEMA_VERSION - 1 })).toBe(SCHEMA_VERSION - 1)
   })
-  it('refuses a newer version without guessing that an app update fixes it', () => {
-    // The file this fires on most often is a .vproj left by a different build of
-    // this repo, where "update the app" is simply wrong. State the mismatch.
+  it('refuses a newer version, reporting both versions rather than prose', () => {
+    // The startup screen renders this in the user's language, so the refusal
+    // carries the two numbers its copy interpolates and states nothing itself —
+    // the file it fires on most often is one left by a different build of this
+    // repo, where "update the app" would simply be wrong.
     expect(() => schemaGate({ schema_version: SCHEMA_VERSION + 5 }))
-      .toThrow(new RegExp(`written by a different build \\(schema v${SCHEMA_VERSION + 5}\\); this build reads v${SCHEMA_VERSION}`))
+      .toThrow(new WorkspaceFailure({ error: 'ProjectSchemaTooNew', found: SCHEMA_VERSION + 5, supported: SCHEMA_VERSION }))
   })
   it('refuses an absent, non-numeric or fractional version', () => {
-    expect(() => schemaGate({})).toThrow(/missing or non-numeric/)
-    expect(() => schemaGate({ schema_version: '1' })).toThrow(/missing or non-numeric/)
-    expect(() => schemaGate({ schema_version: 1.5 })).toThrow(/missing or non-numeric/)
-    expect(() => schemaGate(null)).toThrow(/missing or non-numeric/)
-    expect(() => schemaGate(42)).toThrow(/missing or non-numeric/)
+    const unreadable = new WorkspaceFailure({ error: 'ProjectSchemaUnreadable' })
+    expect(() => schemaGate({})).toThrow(unreadable)
+    expect(() => schemaGate({ schema_version: '1' })).toThrow(unreadable)
+    expect(() => schemaGate({ schema_version: 1.5 })).toThrow(unreadable)
+    expect(() => schemaGate(null)).toThrow(unreadable)
+    expect(() => schemaGate(42)).toThrow(unreadable)
   })
 })
 
@@ -68,7 +72,8 @@ describe('parseProjectJson', () => {
     expect(parseProjectJson(wireAt(SCHEMA_VERSION)).upgradedFrom).toBeNull()
   })
   it('refuses a newer file at the gate, before the structural cast', () => {
-    expect(() => parseProjectJson(wireAt(SCHEMA_VERSION + 1))).toThrow(/written by a different build/)
+    expect(() => parseProjectJson(wireAt(SCHEMA_VERSION + 1)))
+      .toThrow(new WorkspaceFailure({ error: 'ProjectSchemaTooNew', found: SCHEMA_VERSION + 1, supported: SCHEMA_VERSION }))
   })
   it('refuses a version below the chain floor rather than guessing at its shape', () => {
     // v0 never shipped. The chain has no step for it and must not invent one.

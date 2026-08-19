@@ -44,7 +44,12 @@ import {
 } from "../ipc";
 import { CANVAS_PRESETS } from "./canvasPresets";
 import { LogoPulsePaths } from "./LogoPulsePaths";
-import { describeOpenError, isDeadRecentError } from "./openError";
+import {
+  cleanIpcDetail,
+  describeCreateError,
+  describeOpenError,
+  isDeadRecentError,
+} from "./openError";
 
 interface Props {
   /// Called once the user has successfully picked or created a workspace.
@@ -99,9 +104,11 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
     try {
       setRecents(await recentsList());
     } catch (e) {
-      setError(String(e));
+      // Reading the list has no refusal vocabulary of its own — a failure here
+      // is the store's fs or JSON, which stays English (see cleanIpcDetail).
+      setError(t("startup.recents_load_failed", { detail: cleanIpcDetail(e) }));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void refreshRecents();
@@ -502,10 +509,12 @@ function NewProjectForm({
       });
       onCreated();
     } catch (e) {
-      setSubmitError(String(e));
+      // The refusal carries no path — main composed the same target this dialog
+      // is already previewing — so hand the copy map that, not a parsed-back one.
+      setSubmitError(describeCreateError(e, previewPath ?? "", t));
       setBusy(false);
     }
-  }, [canCreate, parentFolder, name, preset, onCreated]);
+  }, [canCreate, parentFolder, name, preset, previewPath, t, onCreated]);
 
   return (
     <AppDialog

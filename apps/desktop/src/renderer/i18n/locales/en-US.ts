@@ -95,10 +95,22 @@ const enUS = {
     recent_show_all: "Show all ({{count}})",
     recent_show_less: "Show less",
     recent_open_failed: "Couldn't open project: {{detail}}",
+    recents_load_failed: "Couldn't load the recent projects list: {{detail}}",
     not_project_folder:
       "That folder isn't a WeftCut project. Pick a folder created by WeftCut, or start a new project.",
     project_folder_missing:
       "That project folder no longer exists — it may have been moved, renamed, or deleted. It was removed from the recent list.",
+    // States the mismatch and stops. "Update WeftCut" is a guess that happens to
+    // be wrong for the file this fires on most often — a project left behind by
+    // a different build of this same repo.
+    project_schema_too_new:
+      "That project was written by a different build of WeftCut (project format v{{found}}); this build reads v{{supported}}.",
+    project_schema_unreadable:
+      "That folder's project.json declares no project format version this build recognizes, so it can't be opened.",
+    project_file_unreadable:
+      "That project's project.json couldn't be read: {{detail}}",
+    project_invalid:
+      "That project's contents didn't pass validation — the file may be damaged or hand-edited.",
     time_just_now: "just now",
     time_minutes_ago_one: "{{count}} minute ago",
     time_minutes_ago_other: "{{count}} minutes ago",
@@ -137,6 +149,10 @@ const enUS = {
     create: "Create",
     creating: "Creating…",
     cancel: "Cancel",
+    folder_exists:
+      "A folder with that name is already there. Pick a different name, or a different location.",
+    invalid_preset: "That canvas preset isn't valid — pick another.",
+    create_failed: "Couldn't create the project: {{detail}}",
   },
   project: {
     canvas: "{{width}}×{{height}} · {{fps}}",

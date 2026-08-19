@@ -96,10 +96,19 @@ const zhCN: Resources = {
     recent_show_all: "显示全部（{{count}}）",
     recent_show_less: "收起",
     recent_open_failed: "无法打开项目：{{detail}}",
+    recents_load_failed: "无法读取最近项目列表：{{detail}}",
     not_project_folder:
       "此文件夹不是 WeftCut 项目。请选择由 WeftCut 创建的文件夹，或新建项目。",
     project_folder_missing:
       "找不到此项目的文件夹——它可能已被移动、重命名或删除，已自动从最近列表中移除。",
+    // 只陈述版本不一致，不建议"升级 WeftCut"——最常触发它的其实是本仓库另一个
+    // 构建留下的项目文件，那种情况下升级并不能解决问题。
+    project_schema_too_new:
+      "此项目由另一个 WeftCut 构建写入（项目格式 v{{found}}），当前构建读取 v{{supported}}。",
+    project_schema_unreadable:
+      "此文件夹中的 project.json 未声明当前构建可识别的项目格式版本，无法打开。",
+    project_file_unreadable: "无法读取此项目的 project.json：{{detail}}",
+    project_invalid: "此项目的内容未通过校验，文件可能已损坏或被手工修改过。",
     time_just_now: "刚刚",
     // Chinese has no plural forms; both _one and _other collapse.
     time_minutes_ago_one: "{{count}} 分钟前",
@@ -139,6 +148,9 @@ const zhCN: Resources = {
     create: "创建",
     creating: "创建中…",
     cancel: "取消",
+    folder_exists: "该位置已存在同名文件夹。请换一个名称，或换一个位置。",
+    invalid_preset: "所选画布预设无效，请另选一个。",
+    create_failed: "无法新建项目：{{detail}}",
   },
   project: {
     canvas: "{{width}}×{{height}} · {{fps}}",
