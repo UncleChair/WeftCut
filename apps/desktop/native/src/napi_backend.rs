@@ -490,39 +490,9 @@ impl Backend {
     pub async fn synthesize_speech_compute(&self, args_json: String) -> napi::Result<String> {
         let args: crate::mcp::SynthesizeSpeechArgs =
             serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
-        // Started/Ok/Err op wrap: an uncached synthesis is a network round
-        // trip to the TTS provider — seconds of dead air the status bar (and
-        // the agent-running pill) would otherwise show nothing for. Details
-        // carry counts, never the text itself.
-        let log_op_id = uuid::Uuid::now_v7();
-        self.log_slot.emit(crate::logs::LogEntryInput {
-            level: crate::logs::LogLevel::Info,
-            category: crate::logs::LogCategory::Mcp,
-            source: crate::logs::LogSource::Agent { client: "mcp".into() },
-            message: "MCP: synthesize_speech started".into(),
-            op_id: Some(log_op_id),
-            op_state: Some(crate::logs::OpState::Started),
-            details: Some(serde_json::json!({
-                "voice": args.voice,
-                "text_chars": args.text.chars().count(),
-            })),
-            ..Default::default()
-        });
-        let result = crate::mcp::synthesize_speech_audio(self, &args).await;
-        self.log_slot.emit(crate::logs::LogEntryInput {
-            level: if result.is_ok() { crate::logs::LogLevel::Info } else { crate::logs::LogLevel::Error },
-            category: crate::logs::LogCategory::Mcp,
-            source: crate::logs::LogSource::Agent { client: "mcp".into() },
-            message: match &result {
-                Ok((_, true)) => "MCP: synthesize_speech done (cached)".into(),
-                Ok((_, false)) => "MCP: synthesize_speech done".into(),
-                Err(e) => format!("MCP: synthesize_speech failed: {}", e.message),
-            },
-            op_id: Some(log_op_id),
-            op_state: Some(if result.is_ok() { crate::logs::OpState::Ok } else { crate::logs::OpState::Err }),
-            ..Default::default()
-        });
-        let (media_item, cached) = result.map_err(|e| Error::from_reason(e.message))?;
+        let (media_item, cached) = crate::mcp::synthesize_speech_audio(self, &args)
+            .await
+            .map_err(|e| Error::from_reason(e.message))?;
         let duration_us = media_item.metadata.duration_us.unwrap_or(0);
         serde_json::to_string(&serde_json::json!({
             "media_item": media_item,

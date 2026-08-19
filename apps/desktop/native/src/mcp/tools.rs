@@ -113,45 +113,6 @@ pub(super) async fn detect_silences(
     b: &Backend,
     args: DetectSilencesArgs,
 ) -> Result<ToolResult, McpToolError> {
-    // Started/Ok/Err op wrap: the walk decodes the clip's whole waveform, so a
-    // long clip grinds for seconds with nothing else on screen — the op row is
-    // what keeps the status bar (and the agent-running pill) honest meanwhile.
-    let log_op_id = uuid::Uuid::now_v7();
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: crate::logs::LogLevel::Info,
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: "MCP: detect_silences started".into(),
-        op_id: Some(log_op_id),
-        op_state: Some(crate::logs::OpState::Started),
-        details: Some(serde_json::json!({
-            "layer_id": args.layer_id,
-            "threshold_amp": args.threshold_amp,
-            "min_silence_us": args.min_silence_us,
-        })),
-        ..Default::default()
-    });
-    let result = detect_silences_inner(b, args).await;
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: if result.is_ok() { crate::logs::LogLevel::Info } else { crate::logs::LogLevel::Error },
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: match &result {
-            Ok(_) => "MCP: detect_silences done".into(),
-            Err(e) => format!("MCP: detect_silences failed: {e}"),
-        },
-        op_id: Some(log_op_id),
-        op_state: Some(if result.is_ok() { crate::logs::OpState::Ok } else { crate::logs::OpState::Err }),
-        ..Default::default()
-    });
-    result
-}
-
-#[cfg(feature = "jobs")]
-async fn detect_silences_inner(
-    b: &Backend,
-    args: DetectSilencesArgs,
-) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
     let layer = args
         .layer
@@ -974,53 +935,6 @@ pub(super) async fn transcribe_clip(
     b: &Backend,
     args: TranscribeClipArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let log_op_id = uuid::Uuid::now_v7();
-    let log_args = serde_json::to_value(&args).ok();
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: crate::logs::LogLevel::Info,
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent {
-            client: "mcp".into(),
-        },
-        message: "MCP: transcribe_clip started".into(),
-        op_id: Some(log_op_id),
-        op_state: Some(crate::logs::OpState::Started),
-        details: log_args,
-        ..Default::default()
-    });
-    let result = transcribe_clip_inner(b, args).await;
-    match &result {
-        Ok(_) => b.log_slot.emit(crate::logs::LogEntryInput {
-            level: crate::logs::LogLevel::Info,
-            category: crate::logs::LogCategory::Mcp,
-            source: crate::logs::LogSource::Agent {
-                client: "mcp".into(),
-            },
-            message: "MCP: transcribe_clip done".into(),
-            op_id: Some(log_op_id),
-            op_state: Some(crate::logs::OpState::Ok),
-            ..Default::default()
-        }),
-        Err(e) => b.log_slot.emit(crate::logs::LogEntryInput {
-            level: crate::logs::LogLevel::Error,
-            category: crate::logs::LogCategory::Mcp,
-            source: crate::logs::LogSource::Agent {
-                client: "mcp".into(),
-            },
-            message: format!("MCP: transcribe_clip failed: {e}"),
-            op_id: Some(log_op_id),
-            op_state: Some(crate::logs::OpState::Err),
-            ..Default::default()
-        }),
-    }
-    result
-}
-
-#[cfg(feature = "speech")]
-async fn transcribe_clip_inner(
-    b: &Backend,
-    args: TranscribeClipArgs,
-) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
     let resolved = resolve_clip_audio_source(
         args.layer.as_ref(),
@@ -1325,43 +1239,6 @@ async fn write_description_atomic(
 
 #[cfg(feature = "speech")]
 pub(super) async fn describe_clip(
-    b: &Backend,
-    args: DescribeClipArgs,
-) -> Result<ToolResult, McpToolError> {
-    let log_op_id = uuid::Uuid::now_v7();
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: crate::logs::LogLevel::Info,
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: "MCP: describe_clip started".into(),
-        op_id: Some(log_op_id),
-        op_state: Some(crate::logs::OpState::Started),
-        details: Some(serde_json::json!({
-            "layer_id": args.layer_id,
-            "backend": args.backend,
-            "fps": args.fps,
-            "focus": args.focus,
-        })),
-        ..Default::default()
-    });
-    let result = describe_clip_inner(b, args).await;
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: if result.is_ok() { crate::logs::LogLevel::Info } else { crate::logs::LogLevel::Error },
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: match &result {
-            Ok(_) => "MCP: describe_clip done".into(),
-            Err(e) => format!("MCP: describe_clip failed: {e}"),
-        },
-        op_id: Some(log_op_id),
-        op_state: Some(if result.is_ok() { crate::logs::OpState::Ok } else { crate::logs::OpState::Err }),
-        ..Default::default()
-    });
-    result
-}
-
-#[cfg(feature = "speech")]
-async fn describe_clip_inner(
     b: &Backend,
     args: DescribeClipArgs,
 ) -> Result<ToolResult, McpToolError> {

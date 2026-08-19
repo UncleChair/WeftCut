@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { buildMcpServer } from './server.js'
+import { buildMcpServer, type McpServerOptions } from './server.js'
 import { loadOrInitAuth, saveAuth, rotateToken, type McpAuth } from './auth.js'
 import { listenLoopback } from './bind.js'
 
@@ -24,7 +24,10 @@ export interface McpHost {
   close(): Promise<void>
 }
 
-export async function startMcpHost(backend: Backend, getTsHost: () => import('../state/ts-actor-host.js').TsActorHost | null = () => null, getPreferredEngine: () => string | null = () => null, getVlm: () => { config: Record<string, unknown>; preferred: string | null } = () => ({ config: {}, preferred: null })): Promise<McpHost> {
+/** Host-level seams, forwarded verbatim to every per-session `buildMcpServer`. */
+export type McpHostOptions = McpServerOptions
+
+export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}): Promise<McpHost> {
   let auth: McpAuth = loadOrInitAuth()
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const servers = new Set<Server>()
@@ -77,7 +80,7 @@ export async function startMcpHost(backend: Backend, getTsHost: () => import('..
         if (transport!.sessionId) transports.delete(transport!.sessionId)
         if (newServer) servers.delete(newServer)
       }
-      newServer = buildMcpServer(backend, getTsHost, getPreferredEngine, getVlm)
+      newServer = buildMcpServer(backend, opts)
       servers.add(newServer)
       // Cast: the SDK declares Transport.onclose as a getter typed
       // `(() => void) | undefined`, which TS won't accept against the optional

@@ -98,9 +98,9 @@ Notes:
 | Import | `Import` | `Info`/`Error` | Started → Progress (byte copy) → Ok/Err. Grouped by `op_id`. |
 | Export | `Export` | `Info`/`Error` | Started → Progress(%) → Ok/Err. Existing backend events stay; `LogBus` is an additional sink. |
 | Derivative jobs (proxy, quick proxy, thumbnails, waveform, conform) | `Job` | `Error` only | One row per failed job — `<Kind> job failed for <name>: <error>`, `source = System` (`jobs::emit_job_error`). No Started/Ok rows by design: liveness is the status-bar pill, and per-job Info rows would flood the console on bulk imports. |
-| Long-running MCP compute (transcribe_clip, synthesize_speech, detect_silences, describe_clip) | `Mcp` | `Info`/`Error` | Started → Ok/Err under one `op_id` — the generic MCP-tool shape below; no separate `Job` producer. |
+| Long-running MCP compute (transcribe_clip, synthesize_speech, detect_silences, describe_clip) | `Mcp` | `Info`/`Error` | No producer of their own: the generic MCP-tool decorator below covers them like any other tool. Their compute is what usually crosses the 250 ms threshold, so they are the ops that actually get a `Started` row — and crossing it is what lifts a read-route tool to `Info`. |
 | Preview rebuild | `Job` | `Debug` | Fires on every commit — hidden by default. |
-| MCP tool calls | `Mcp` | `Info`/`Error` | Two entries (Started + Ok/Err) sharing `op_id`. `details` carries args / return / error. Mutating tools' `project:changed` entry folds into the same `op_id`. |
+| MCP tool calls (and `tools/list`, `resources/*`, `prompts/*`) | `Mcp` | `Info` mutations, `Debug` quick reads, `Error` on failure | One `withLog` decorator on each of `buildMcpServer`'s six request handlers, so a newly added tool is logged with nothing to remember; the level is derived from `routeMcpTool`, never a per-tool list. Settling inside 250 ms → one entry, no `op_id`; still running at 250 ms → `Started` then `Ok`/`Err` under one `op_id` (the three-state shape Shortcuts use). An op slow enough to need a `Started` logs at `Info` whatever its route — the threshold is the test of whether the user is waiting on it. An op that crosses a workspace switch drops its `op_id`: `install` replaces the bus, so the pair cannot span it. `details` carries `{ tool, args, duration_ms, client_info }` plus `error` on failure; strings over 512 bytes are elided to `{ omitted, bytes, sha256_8 }` in TS, before the payload reaches the 4 KB cap that would otherwise discard the whole object. No return value. `source = Agent { client: "mcp" }` means "arrived over the MCP transport"; the real client identity is `details.client_info`. |
 | MCP server lifecycle | `Mcp` | `Info` | `source = System`. Connect/disconnect/bind events. |
 | Project mutations | `Project` | `Info` | `source = User` or `Agent { client }` depending on origin. Replaces `ActivityPanel`'s feed. |
 | Load-time media relink | `Project` | `Info` healed / `Warn` missing | `source = System`. `details.kind = "Relink"`. Emitted after the workspace commit, never during the heal — the commit rotates the per-workspace bus. |
@@ -230,8 +230,9 @@ Bets baked into v1:
 - `source.Agent { client }` and `op_id` grouping in the schema.
 - Backend-owned `LogBus` with broadcast — a future agent-mode UI
   subscribes to the same stream without re-plumbing.
-- `details` carries MCP tool args + return values; this is the
-  transcript.
+- `details` carries MCP tool args, with large values elided; this is
+  the transcript. Return values are omitted — a mutation's is an id or
+  an ack, and a read's is the project view, replayable at `Debug`.
 
 Deferred until agent-mode lands:
 - Chat-bubble transcript view, suggestion accept/reject UI, per-agent

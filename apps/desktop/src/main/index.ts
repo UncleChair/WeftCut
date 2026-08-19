@@ -713,12 +713,27 @@ app.whenReady().then(async () => {
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
-  const mcpHost = await startMcpHost(backend, () => tsHost, () => speechConfig.get().preferred_engine, () => {
-    // Merge non-secret store config + the OpenAI cloud key (the VLM cloud
-    // backend is gpt-4o) into the snapshot the stateless describe_clip resolver
-    // reads; empty until the user configures an engine → "no backend available".
-    const cfg = vlmConfig.get()
-    return { config: toVlmBackendSnapshot(cfg, loadAllKeys().openai ?? null), preferred: cfg.preferred_engine }
+  const mcpHost = await startMcpHost(backend, {
+    getTsHost: () => tsHost,
+    getPreferredEngine: () => speechConfig.get().preferred_engine,
+    getVlm: () => {
+      // Merge non-secret store config + the OpenAI cloud key (the VLM cloud
+      // backend is gpt-4o) into the snapshot the stateless describe_clip resolver
+      // reads; empty until the user configures an engine → "no backend available".
+      const cfg = vlmConfig.get()
+      return { config: toVlmBackendSnapshot(cfg, loadAllKeys().openai ?? null), preferred: cfg.preferred_engine }
+    },
+    // Every MCP request → a LogBus row (docs/status-log.md § Producers).
+    // Emitted through backend.invoke directly, as the content-download producer
+    // does and for the same reason — the ts-actor-host emitLog seam has no
+    // op_id/op_state. Swallowed on failure: pre-workspace there IS no bus, and
+    // a logging problem must never fail an MCP call.
+    log: {
+      emit: (entry) => {
+        try { void backend!.invoke('log_emit', JSON.stringify({ input: entry })).catch(() => {}) } catch { /* no bus yet */ }
+      },
+      currentWorkspace: () => wsCache,
+    },
   })
   mcpHostRef = mcpHost
 

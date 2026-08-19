@@ -6,6 +6,9 @@ import {
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  type CallToolRequest,
+  type ReadResourceRequest,
+  type GetPromptRequest,
   type ServerResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
@@ -18,6 +21,7 @@ import type { TsActorHost } from '../state/ts-actor-host.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
+import { withLog, NO_MCP_LOG, type McpLogDeps } from './withLog.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -156,34 +160,55 @@ export async function handleReadResource(
   return unwrap(await backend.mcpReadResource(uri)) as ServerResult
 }
 
-export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | null = () => null, getPreferredEngine: () => string | null = () => null, getVlm: VlmProvider = NO_VLM): Server {
+/** The injectable seams of one MCP session. An options bag rather than trailing
+ *  positionals: `log` is the fourth and every one of them is optional, and each
+ *  omitted seam must keep the behaviour it had before it existed. */
+export interface McpServerOptions {
+  getTsHost?: () => TsActorHost | null
+  getPreferredEngine?: () => string | null
+  getVlm?: VlmProvider
+  /** LogBus emit + workspace identity for the six request handlers. Omitted →
+   *  no rows at all, which is what a `buildMcpServer` without a bus wants. */
+  log?: McpLogDeps
+}
+
+export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): Server {
+  const getTsHost = opts.getTsHost ?? (() => null)
+  const getPreferredEngine = opts.getPreferredEngine ?? (() => null)
+  const getVlm = opts.getVlm ?? NO_VLM
+  const log = opts.log ?? NO_MCP_LOG
   const server = new Server(
     { name: 'weftcut', version: '0.1.0' },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
   )
+  // One Server per session (`mcp/index.ts`), so this closure resolves to the
+  // client that opened *this* session — `undefined` until it has initialized.
+  const clientInfo = (): { name: string; version?: string } | undefined => server.getClientVersion()
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+  // Every handler goes through withLog: the funnel is what keeps a newly added
+  // tool logged with nothing to remember. See `.scratch/mcp-logbus/spec.md`.
+  server.setRequestHandler(ListToolsRequestSchema, withLog('tools/list', async () => {
     const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
-  })
-  server.setRequestHandler(CallToolRequestSchema, async (req) =>
+  }, log, clientInfo))
+  server.setRequestHandler(CallToolRequestSchema, withLog('tools/call', async (req: CallToolRequest) =>
     handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm),
-  )
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  log, clientInfo))
+  server.setRequestHandler(ListResourcesRequestSchema, withLog('resources/list', async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
     return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
-  })
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) =>
+  }, log, clientInfo))
+  server.setRequestHandler(ReadResourceRequestSchema, withLog('resources/read', async (req: ReadResourceRequest) =>
     handleReadResource(backend, getTsHost, req.params.uri, getVlm),
-  )
-  server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  log, clientInfo))
+  server.setRequestHandler(ListPromptsRequestSchema, withLog('prompts/list', async () => {
     return { prompts: JSON.parse(await backend.mcpListPrompts()) } as unknown as ServerResult
-  })
-  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+  }, log, clientInfo))
+  server.setRequestHandler(GetPromptRequestSchema, withLog('prompts/get', async (req: GetPromptRequest) => {
     return unwrap(
       await backend.mcpGetPrompt(req.params.name, JSON.stringify(req.params.arguments ?? {})),
     ) as ServerResult
-  })
+  }, log, clientInfo))
 
   return server
 }
