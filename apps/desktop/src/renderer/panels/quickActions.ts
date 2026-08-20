@@ -16,6 +16,7 @@
 import {
   ArrowRightFromLine,
   ArrowRightToLine,
+  Blend,
   Bookmark,
   FoldVertical,
   MousePointer2,
@@ -43,6 +44,11 @@ export interface QuickActionState {
   /// so the strip takes no project-store subscription and the hint stays
   /// two-state.
   markersVisible: boolean;
+  /// Whether any eligible cut exists for `applyDefaultTransition`
+  /// (`useHasTransitionCut` — a boolean project-store selector, so edits
+  /// re-render the strip only when cut-existence flips). Existence only; WHICH
+  /// cut wins is resolved at dispatch time by the command itself.
+  hasTransitionCut: boolean;
 }
 
 export interface QuickActionItem {
@@ -160,6 +166,25 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         // reason instead of restating the label.
         hint: (s) =>
           s.hasRange ? "actions.clear_range" : "quick_actions.clear_range_empty",
+      },
+    ],
+  },
+  {
+    // The one-click half of transition discoverability (#16): the button is
+    // findable without knowing the right-click-on-a-cut gesture exists. Its
+    // own section, not `range`'s — that one is the in/out family.
+    id: "transitions",
+    mode: "command",
+    items: [
+      {
+        id: "applyDefaultTransition",
+        icon: Blend,
+        // Same disabled-button rule as `clearRange`: with no eligible cut the
+        // hint explains why, instead of restating a label that can't be used.
+        hint: (s) =>
+          s.hasTransitionCut
+            ? "actions.apply_default_transition"
+            : "transitions.no_target",
       },
     ],
   },

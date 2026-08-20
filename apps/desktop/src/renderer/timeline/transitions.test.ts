@@ -5,6 +5,7 @@ import {
   chipSliceSlot,
   defaultTransitionDurationUs,
   findCutNear,
+  findNearestCut,
   transitionChipsForTrack,
   transitionDirectionOf,
 } from "./transitions";
@@ -59,11 +60,11 @@ function audioLayer(
   };
 }
 
-function track(layers: LayerSummary[]): TrackSummary {
+function track(layers: LayerSummary[], id = "track-1"): TrackSummary {
   return {
-    id: "track-1",
+    id,
     kind: "Video",
-    label: "T1",
+    label: id,
     enabled: true,
     locked: false,
     muted: false,
@@ -149,6 +150,88 @@ describe("findCutNear", () => {
       toLayerId: "c",
       cutUs: 4_000_000,
     });
+  });
+});
+
+// ── findNearestCut — the argumentless-apply target kernel ────────────────────
+
+describe("findNearestCut", () => {
+  const a = visualLayer("a", 0, 2_000_000);
+  const b = visualLayer("b", 2_000_000, 4_000_000);
+  const c = visualLayer("c", 4_000_000, 6_000_000);
+
+  it("finds the nearest cut across all tracks with no distance limit", () => {
+    // Playhead parked 26 s past the only cut — a tolerance search would
+    // refuse; the command semantics say apply anyway.
+    const tracks = [track([a, b], "t1")];
+    expect(findNearestCut(tracks, 30_000_000)).toEqual({
+      fromLayerId: "a",
+      toLayerId: "b",
+      cutUs: 2_000_000,
+    });
+  });
+
+  it("nearer cut wins across tracks", () => {
+    const d = visualLayer("d", 3_000_000, 5_000_000);
+    const e = visualLayer("e", 5_000_000, 7_000_000);
+    // Cuts: t1 at 2s, t2 at 5s; playhead at 4.2s → 5s is nearer.
+    const tracks = [track([a, b], "t1"), track([d, e], "t2")];
+    expect(findNearestCut(tracks, 4_200_000)?.cutUs).toBe(5_000_000);
+  });
+
+  it("equidistant cuts on two tracks tie-break to the lower track index", () => {
+    const d = visualLayer("d", 1_000_000, 3_000_000);
+    const e = visualLayer("e", 3_000_000, 5_000_000);
+    // Cuts at 2s (t1) and 3s (t2); playhead at 2.5s is equidistant.
+    const tracks = [track([a, b], "t1"), track([d, e], "t2")];
+    expect(findNearestCut(tracks, 2_500_000)).toMatchObject({
+      fromLayerId: "a",
+      toLayerId: "b",
+    });
+  });
+
+  it("equidistant cuts on ONE track tie-break to the earlier cut", () => {
+    // Cuts at 2s and 4s; playhead dead-center at 3s.
+    const tracks = [track([a, b, c], "t1")];
+    expect(findNearestCut(tracks, 3_000_000)?.cutUs).toBe(2_000_000);
+  });
+
+  it("a selected layer's cut outranks a nearer unselected cut", () => {
+    const d = visualLayer("d", 2_900_000, 3_100_000);
+    const e = visualLayer("e", 3_100_000, 5_000_000);
+    // Playhead at 3.1s sits ON t2's cut, but the user selected `a`.
+    const tracks = [track([a, b], "t1"), track([d, e], "t2")];
+    expect(
+      findNearestCut(tracks, 3_100_000, new Set(["a"]))?.fromLayerId,
+    ).toBe("a");
+    // Either participant counts — selecting the incoming layer works too.
+    expect(
+      findNearestCut(tracks, 3_100_000, new Set(["b"]))?.fromLayerId,
+    ).toBe("a");
+  });
+
+  it("a selection touching no cut falls back to the global nearest", () => {
+    const lone = visualLayer("lone", 10_000_000, 12_000_000);
+    const tracks = [track([a, b], "t1"), track([lone], "t2")];
+    expect(findNearestCut(tracks, 0, new Set(["lone"]))?.cutUs).toBe(
+      2_000_000,
+    );
+  });
+
+  it("an empty selection set behaves like no selection", () => {
+    const tracks = [track([a, b], "t1")];
+    expect(findNearestCut(tracks, 0, new Set())?.cutUs).toBe(2_000_000);
+  });
+
+  it("returns null when no eligible cut exists anywhere", () => {
+    expect(findNearestCut([], 0)).toBeNull();
+    // Gap on one track, audio adjacency on the other: neither is a cut.
+    const gapped = visualLayer("g", 2_100_000, 4_000_000);
+    const audioTracks = [
+      track([a, gapped], "t1"),
+      track([audioLayer("x", 0, 1_000_000), audioLayer("y", 1_000_000, 2_000_000)], "t2"),
+    ];
+    expect(findNearestCut(audioTracks, 1_000_000)).toBeNull();
   });
 });
 

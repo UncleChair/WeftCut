@@ -303,6 +303,10 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     const media = this.addPanel("media", {
       initialWidth: Math.round(bodyWidth * 0.22),
     });
+    this.addPanel("transitions", {
+      position: { referencePanel: "media", direction: "within" },
+      inactive: true,
+    });
     this.addPanel("preview", {
       position: { referencePanel: "media", direction: "right" },
       initialWidth: Math.round(bodyWidth * 0.53),

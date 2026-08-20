@@ -216,6 +216,7 @@ const zhCN: Resources = {
     // 标记开关的两态提示：先说当前状态，再说点击后会发生什么。
     markers_shown_hint: "当前显示时间线标记。点击隐藏。",
     markers_hidden_hint: "已隐藏时间线标记。点击显示。",
+    transitions: "转场",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -227,6 +228,7 @@ const zhCN: Resources = {
     move_panel: "拖动以移动{{title}}",
     panels: {
       media: "素材库",
+      transitions: "转场",
       preview: "预览",
       timeline: "时间线",
       "quick-actions": "快捷操作",
@@ -305,6 +307,7 @@ const zhCN: Resources = {
     toggle_display_mode: "切换 A/B 轨 / 显示全部",
     toggle_follow_playhead: "切换跟随播放头",
     toggle_markers_visible: "切换时间线标记",
+    apply_default_transition: "应用默认转场（交叉溶解）",
     zoom_timeline_in: "放大时间线",
     zoom_timeline_out: "缩小时间线",
     focus_next_panel: "聚焦下一个面板",
@@ -456,6 +459,12 @@ const zhCN: Resources = {
     direction_right: "向右",
     direction_up: "向上",
     direction_down: "向下",
+    // 应用入口（快捷条按钮、面板卡片）禁用时的原因说明——各出口共用，
+    // 保证同一个前置条件在所有表面用同一句话解释。
+    no_target: "没有两个相邻可视片段之间的剪切点",
+    // 转场面板的空态教学文案：面板就是给不知道此功能的用户准备的，
+    // 所以把前置条件写明白。
+    panel_no_target_hint: "先在同一轨道上首尾相接放置两个可视片段，再在下方选择样式。",
     // 失败文案已迁移至 `errors.*`（errors/formatCommandError.ts）。
   },
   peek: {

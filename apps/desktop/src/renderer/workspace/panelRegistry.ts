@@ -9,6 +9,7 @@ export const DOCK_TAB_COMPONENT_ID = "weftcut-tab";
 
 export const PANEL_KINDS = [
   "media",
+  "transitions",
   "preview",
   "timeline",
   "quick-actions",
@@ -61,6 +62,16 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.media",
     minimumWidth: 240,
     minimumHeight: 160,
+    initiallyOpen: true,
+  },
+  // Open by default and tabbed with the Media Pool (see createEditingLayout):
+  // the panel EXISTS to be stumbled over (#16 — transition authoring was
+  // unreachable without knowing the right-click-on-a-cut gesture), so hiding
+  // it behind the View menu would defeat it.
+  transitions: {
+    kind: "transitions",
+    titleKey: "dock_workspace.panels.transitions",
+    ...TOOL_MINIMUM,
     initiallyOpen: true,
   },
   preview: {

@@ -34,6 +34,7 @@ import { tryMutate } from "../errors/tryMutate";
 import { Timeline } from "../timeline/Timeline";
 import { PreviewSection } from "../app/PreviewSection";
 import { MediaDropZone, MediaPool } from "../panels/MediaPool";
+import { TransitionsPanel } from "../panels/TransitionsPanel";
 import { AttributePanel } from "../panels/AttributePanel";
 import { CaptionPanel } from "../panels/CaptionPanel";
 import { EffectPanel } from "../panels/EffectPanel";
@@ -420,8 +421,21 @@ function HistoryDockPanel() {
   return <HistoryPanel />;
 }
 
+/// Reads its cut/playhead/selection inputs from the stores inside
+/// `applyTransition.ts`'s kernel, so the only contract it needs is the
+/// refresh callback every renderer-initiated mutation must invoke.
+function TransitionsDockPanel() {
+  const contracts = useContracts();
+  return (
+    <div className="weft-dock-panel-scroll">
+      <TransitionsPanel onMutated={contracts.onMutated} />
+    </div>
+  );
+}
+
 const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   media: MediaDockPanel,
+  transitions: TransitionsDockPanel,
   preview: PreviewDockPanel,
   timeline: TimelineDockPanel,
   "quick-actions": QuickActionsDockPanel,

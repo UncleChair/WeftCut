@@ -224,9 +224,11 @@ export function createEditingLayout(
   const width = sizeOf(viewport.width) ?? 1_000;
   const height = sizeOf(viewport.height) ?? 720;
   const contextual: PanelKind[] = ["attribute", "effect", "nearby"];
+  const library: PanelKind[] = ["media", "transitions"];
   const placements: PanelPlacements = {
     "quick-actions": { siblings: ["quick-actions"], index: 0 },
-    media: { siblings: ["media"], index: 0 },
+    media: { siblings: library, index: 0 },
+    transitions: { siblings: library, index: 1 },
     preview: { siblings: ["preview"], index: 0 },
     timeline: { siblings: ["timeline"], index: 0 },
     attribute: { siblings: contextual, index: 0 },
@@ -277,7 +279,7 @@ export function createEditingLayout(
                       size: Math.round(bodyWidth * 0.22),
                       data: {
                         id: "editing-media",
-                        views: ["media"],
+                        views: library,
                         activeView: "media",
                       },
                     },

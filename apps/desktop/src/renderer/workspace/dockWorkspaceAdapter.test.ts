@@ -393,12 +393,13 @@ function fakeDockview(
 }
 
 describe("Dock Panel registry", () => {
-  it("registers exactly the eleven semantic singleton kinds", () => {
-    expect(PANEL_KINDS).toHaveLength(11);
-    expect(new Set(PANEL_KINDS).size).toBe(11);
+  it("registers exactly the twelve semantic singleton kinds", () => {
+    expect(PANEL_KINDS).toHaveLength(12);
+    expect(new Set(PANEL_KINDS).size).toBe(12);
     expect(Object.keys(PANEL_REGISTRY)).toEqual([...PANEL_KINDS]);
     expect(EDITING_OPEN_PANEL_KINDS).toEqual([
       "media",
+      "transitions",
       "preview",
       "timeline",
       "quick-actions",
@@ -425,6 +426,7 @@ describe("DockWorkspaceAdapter", () => {
     expect(adapter.initializeEditingLayout()).toBe(false);
     expect(dock.added.map((panel) => panel.id)).toEqual([
       "media",
+      "transitions",
       "preview",
       "attribute",
       "effect",
@@ -1048,14 +1050,14 @@ describe("DockWorkspaceAdapter", () => {
     const adapter = new DockWorkspaceAdapter(dock.api);
     adapter.initializeEditingLayout();
 
-    // attribute/effect/nearby share one group; media sits alone in its own.
+    // attribute/effect/nearby share one group; preview sits alone in its own.
     const toolGroup = dock.groups.find((group) =>
       group.panels.some((panel) => panel.id === "attribute"),
     );
-    const mediaGroup = dock.groups.find((group) =>
-      group.panels.some((panel) => panel.id === "media"),
+    const previewGroup = dock.groups.find((group) =>
+      group.panels.some((panel) => panel.id === "preview"),
     );
-    if (!toolGroup || !mediaGroup) throw new Error("layout groups missing");
+    if (!toolGroup || !previewGroup) throw new Error("layout groups missing");
 
     // A panel over its own group's center merge zone: the drop is a no-op.
     expect(
@@ -1083,8 +1085,8 @@ describe("DockWorkspaceAdapter", () => {
       dock.showDockOverlay({
         kind: "content",
         position: "right",
-        group: mediaGroup,
-        data: { groupId: mediaGroup.id, panelId: "media" },
+        group: previewGroup,
+        data: { groupId: previewGroup.id, panelId: "preview" },
       }),
     ).toHaveBeenCalledOnce();
 
@@ -1114,7 +1116,7 @@ describe("DockWorkspaceAdapter", () => {
         kind: "content",
         position: "center",
         group: toolGroup,
-        data: { groupId: mediaGroup.id, panelId: "media" },
+        data: { groupId: previewGroup.id, panelId: "preview" },
       }),
     ).not.toHaveBeenCalled();
     expect(

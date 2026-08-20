@@ -215,7 +215,7 @@ describe("createEditingLayout", () => {
     expect(editor).toMatchObject({ type: "branch", size: 576 });
     expect(editor.data.map((node) => node.size)).toEqual([210, 507, 239]);
     expect(editor.data.map((node) => node.data.views)).toEqual([
-      ["media"],
+      ["media", "transitions"],
       ["preview"],
       ["attribute", "effect", "nearby"],
     ]);
@@ -232,6 +232,7 @@ describe("createEditingLayout", () => {
       "preview",
       "quick-actions",
       "timeline",
+      "transitions",
     ]);
     expect(result.placements.effect).toEqual({
       siblings: ["attribute", "effect", "nearby"],

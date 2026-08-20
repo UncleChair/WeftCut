@@ -79,6 +79,7 @@ import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
+import { applyTransitionAtPlayhead } from "./timeline/applyTransition";
 import {
   displayMode,
   markersVisible,
@@ -797,6 +798,10 @@ export function App({ onCloseProject }: AppProps) {
         },
         moveToNewTrack: handleMoveToNewTrack,
         toggleMarkersVisible: () => void toggleMarkersVisible(),
+        // Crossfade at the resolved cut; the kernel reads playhead/selection
+        // live and reports refusals itself, so App only lends `refresh`.
+        applyDefaultTransition: () =>
+          applyTransitionAtPlayhead("Crossfade", undefined, refresh),
       },
       {
         busy,

@@ -32,6 +32,7 @@ const menu = {
   createCheckpoint: noop,
   moveToNewTrack: noop,
   toggleMarkersVisible: noop,
+  applyDefaultTransition: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -138,42 +139,44 @@ describe("buildAppCommands", () => {
     expect(save.actionId).toBe("save");
   });
 
+  // Shared live-store fixtures for the enabled-gate suites below.
+  function layer(
+    id: string,
+    tStartUs: number,
+    tEndUs: number,
+    cls: "visual" | "audio" = "visual",
+  ): LayerSummary {
+    const kind = cls === "audio" ? "Audio" : "Color";
+    return {
+      id, kind, label: id, t_start_us: tStartUs, t_end_us: tEndUs,
+      enabled: true, locked: false, color_hint: "#888",
+      params: { kind } as LayerSummary["params"], effects: [],
+    };
+  }
+  function track(id: string, layers: LayerSummary[]): TrackSummary {
+    return {
+      id, kind: "Video", label: id, enabled: true, locked: false,
+      muted: false, solo: false, role: null, transient: false, layers,
+    };
+  }
+  function seed(tracks: TrackSummary[]): void {
+    const summary: ProjectSummary = {
+      project_id: "p", name: "p",
+      composition: { width: 640, height: 360, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
+      track_count: tracks.length,
+      layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
+      duration_us: 0,
+      history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+      media: [], tracks, markers: [], transitions: [], groups: [], audio_roles: [],
+    };
+    useProjectStore.getState().apply(summary);
+  }
+
   // "Move to a new track" offers itself only when ONE fresh lane could hold the
   // whole selection, so the impossible request never has to be refused after the
   // fact. Both inputs are read live: the commands are built BEFORE the selection
   // is made in every case below, which a build-time snapshot would freeze.
   describe("moveToNewTrack enabled", () => {
-    function layer(
-      id: string,
-      tStartUs: number,
-      tEndUs: number,
-      cls: "visual" | "audio" = "visual",
-    ): LayerSummary {
-      const kind = cls === "audio" ? "Audio" : "Color";
-      return {
-        id, kind, label: id, t_start_us: tStartUs, t_end_us: tEndUs,
-        enabled: true, locked: false, color_hint: "#888",
-        params: { kind } as LayerSummary["params"], effects: [],
-      };
-    }
-    function track(id: string, layers: LayerSummary[]): TrackSummary {
-      return {
-        id, kind: "Video", label: id, enabled: true, locked: false,
-        muted: false, solo: false, role: null, transient: false, layers,
-      };
-    }
-    function seed(tracks: TrackSummary[]): void {
-      const summary: ProjectSummary = {
-        project_id: "p", name: "p",
-        composition: { width: 640, height: 360, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-        track_count: tracks.length,
-        layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
-        duration_us: 0,
-        history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-        media: [], tracks, markers: [], transitions: [], groups: [], audio_roles: [],
-      };
-      useProjectStore.getState().apply(summary);
-    }
     const predicate = () =>
       buildAppCommands(handlers, menu, flags).find((d) => d.id === "moveToNewTrack")!
         .enabled!();
@@ -219,6 +222,48 @@ describe("buildAppCommands", () => {
       seed([track("t1", [layer("a", 0, 1_000_000)])]);
       setLayerSelection("a", ["a"]);
       expect(predicate()).toBe(true);
+    });
+  });
+
+  // "Apply default transition" gates on cut-existence — an eligible adjacency
+  // between two visual layers, anywhere. Read live from the project store for
+  // the same built-before-seeded reason as moveToNewTrack above.
+  describe("applyDefaultTransition enabled", () => {
+    const predicate = () =>
+      buildAppCommands(handlers, menu, flags).find(
+        (d) => d.id === "applyDefaultTransition",
+      )!.enabled!();
+
+    afterEach(() => {
+      useProjectStore.getState().apply(null);
+    });
+
+    it("is disabled with no project", () => {
+      expect(predicate()).toBe(false);
+    });
+
+    it("is enabled when two visual layers touch on one track", () => {
+      seed([
+        track("t1", [layer("a", 0, 1_000_000), layer("b", 1_000_000, 2_000_000)]),
+      ]);
+      expect(predicate()).toBe(true);
+    });
+
+    it("is disabled when the only adjacency is audio (never a participant)", () => {
+      seed([
+        track("t1", [
+          layer("a", 0, 1_000_000, "audio"),
+          layer("b", 1_000_000, 2_000_000, "audio"),
+        ]),
+      ]);
+      expect(predicate()).toBe(false);
+    });
+
+    it("is disabled when visual layers merely gap", () => {
+      seed([
+        track("t1", [layer("a", 0, 900_000), layer("b", 1_000_000, 2_000_000)]),
+      ]);
+      expect(predicate()).toBe(false);
     });
   });
 });

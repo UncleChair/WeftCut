@@ -221,6 +221,7 @@ const enUS = {
     // pressing again would get you.
     markers_shown_hint: "Showing timeline markers. Click to hide.",
     markers_hidden_hint: "Timeline markers hidden. Click to show.",
+    transitions: "Transitions",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -232,6 +233,7 @@ const enUS = {
     move_panel: "Drag to move {{title}}",
     panels: {
       media: "Media Pool",
+      transitions: "Transitions",
       preview: "Preview",
       timeline: "Timeline",
       "quick-actions": "Quick Actions",
@@ -316,6 +318,7 @@ const enUS = {
     toggle_display_mode: "Toggle A/B Roll / Show All",
     toggle_follow_playhead: "Toggle follow playhead",
     toggle_markers_visible: "Toggle timeline markers",
+    apply_default_transition: "Apply default transition (crossfade)",
     zoom_timeline_in: "Zoom timeline in",
     zoom_timeline_out: "Zoom timeline out",
     focus_next_panel: "Focus next Panel",
@@ -482,6 +485,13 @@ const enUS = {
     direction_right: "Right",
     direction_up: "Up",
     direction_down: "Down",
+    // Why the apply surfaces (strip button, panel cards) are disabled —
+    // shared so every outlet explains the same precondition the same way.
+    no_target: "No cut between two adjacent visual clips",
+    // The Transitions panel's empty-state teaching line: the panel exists for
+    // users who don't know the feature, so the precondition is spelled out.
+    panel_no_target_hint:
+      "Place two visual clips back-to-back on a track, then pick a style below.",
     // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
   peek: {

@@ -7,6 +7,7 @@ import { resolveAccelerator } from "../shortcuts/match";
 import { useDisplayMode, useMarkersVisible } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
 import { useHasMarkedRange } from "../state/rangeStore";
+import { useHasTransitionCut } from "../timeline/applyTransition";
 import {
   QUICK_ACTION_SECTIONS,
   resolveIcon,
@@ -232,6 +233,9 @@ export function QuickActionsPanel({
   // only when the range appears or disappears, not on every position change.
   const hasRange = useHasMarkedRange();
   const markersVisible = useMarkersVisible();
+  // Same subscribed-not-imperative reasoning as `hasRange` directly above,
+  // for `applyDefaultTransition`'s enabled state.
+  const hasTransitionCut = useHasTransitionCut();
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -240,7 +244,13 @@ export function QuickActionsPanel({
     orientation,
   );
 
-  const state: QuickActionState = { tool, displayMode, hasRange, markersVisible };
+  const state: QuickActionState = {
+    tool,
+    displayMode,
+    hasRange,
+    markersVisible,
+    hasTransitionCut,
+  };
 
   // Buttons resolve against the command registry, so a command whose provider
   // hasn't mounted yet is simply absent rather than a dead button.

@@ -74,6 +74,78 @@ export function findCutNear(
   return best?.cut ?? null;
 }
 
+/// Find the cut nearest to `tUs` across ALL tracks, with no distance limit —
+/// the target-resolution kernel behind every argumentless "apply transition"
+/// surface (palette command, Quick Actions button, Transitions panel card).
+/// The registry has no parameterized-command shape, so the target must come
+/// from state; this is where.
+///
+/// Selection preference: when any selected layer participates in a cut, only
+/// those cuts compete — the user's selection names the join they mean, even
+/// with the playhead parked elsewhere. A selection touching no cut falls back
+/// to the global search rather than refusing.
+///
+/// Ties are deterministic: nearer wins, then the lower track index, then the
+/// earlier cut. Same eligibility as `findCutNear` (adjacent visual pairs,
+/// audio never participates).
+export function findNearestCut(
+  tracks: readonly TrackSummary[],
+  tUs: number,
+  selectedLayerIds?: ReadonlySet<string>,
+): TransitionCut | null {
+  const pick = (restrictToSelection: boolean): TransitionCut | null => {
+    let best: {
+      cut: TransitionCut;
+      dist: number;
+      trackIndex: number;
+    } | null = null;
+    for (let trackIndex = 0; trackIndex < tracks.length; trackIndex++) {
+      const track = tracks[trackIndex]!;
+      for (const from of track.layers) {
+        if (!VISUAL_LAYER_KINDS.has(from.kind)) continue;
+        const to = track.layers.find(
+          (l) =>
+            l.id !== from.id &&
+            VISUAL_LAYER_KINDS.has(l.kind) &&
+            l.t_start_us === from.t_end_us,
+        );
+        if (!to) continue;
+        if (
+          restrictToSelection &&
+          !selectedLayerIds!.has(from.id) &&
+          !selectedLayerIds!.has(to.id)
+        )
+          continue;
+        const dist = Math.abs(tUs - from.t_end_us);
+        const wins =
+          best === null ||
+          dist < best.dist ||
+          (dist === best.dist &&
+            (trackIndex < best.trackIndex ||
+              (trackIndex === best.trackIndex &&
+                from.t_end_us < best.cut.cutUs)));
+        if (wins) {
+          best = {
+            cut: {
+              fromLayerId: from.id,
+              toLayerId: to.id,
+              cutUs: from.t_end_us,
+            },
+            dist,
+            trackIndex,
+          };
+        }
+      }
+    }
+    return best?.cut ?? null;
+  };
+  if (selectedLayerIds !== undefined && selectedLayerIds.size > 0) {
+    const preferred = pick(true);
+    if (preferred !== null) return preferred;
+  }
+  return pick(false);
+}
+
 /// Default duration: 1 second snapped DOWN to a whole composition-frame
 /// count, minimum 1 frame. Hardcoded — no settings entry.
 ///

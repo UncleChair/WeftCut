@@ -33,6 +33,7 @@ function commandIds(): Set<string> {
       createCheckpoint: () => {},
       moveToNewTrack: () => {},
       toggleMarkersVisible: () => {},
+      applyDefaultTransition: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, canBlade: false, exportLocked: false },
   );
@@ -47,6 +48,7 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     displayMode: "AbRoll",
     hasRange: false,
     markersVisible: true,
+    hasTransitionCut: false,
     ...over,
   };
 }
@@ -203,5 +205,19 @@ describe("quickActions catalogue", () => {
       "quick_actions.clear_range_empty",
     );
     expect(item?.hint?.(state({ hasRange: true }))).toBe("actions.clear_range");
+  });
+
+  // Same disabled-button rule for the apply-transition button: with no
+  // eligible cut anywhere the hint names the precondition, not the label.
+  it("explains why Apply transition is unavailable with no eligible cut", () => {
+    const item = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+      (i) => i.id === "applyDefaultTransition",
+    );
+    expect(item?.hint?.(state({ hasTransitionCut: false }))).toBe(
+      "transitions.no_target",
+    );
+    expect(item?.hint?.(state({ hasTransitionCut: true }))).toBe(
+      "actions.apply_default_transition",
+    );
   });
 });

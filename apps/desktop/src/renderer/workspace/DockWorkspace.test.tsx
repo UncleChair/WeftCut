@@ -120,6 +120,7 @@ vi.mock("../panels/MediaPool", () => ({
   MediaDropZone: ({ children }: { children: React.ReactNode }) => children,
   MediaPool: () => null,
 }));
+vi.mock("../panels/TransitionsPanel", () => ({ TransitionsPanel: () => null }));
 vi.mock("../panels/AttributePanel", () => ({ AttributePanel: () => null }));
 vi.mock("../panels/CaptionPanel", () => ({ CaptionPanel: () => null }));
 vi.mock("../panels/EffectPanel", () => ({ EffectPanel: () => null }));
@@ -417,8 +418,8 @@ describe("DockWorkspace React integration", () => {
     // StrictMode intentionally repeats effect setup, while the WeftCut
     // adapter recognizes the same API and leaves registration idempotent.
     expect(dockHarness.readyCalls).toBe(2);
-    expect(dock.addPanel).toHaveBeenCalledTimes(7);
-    expect(dock.panels.size).toBe(7);
+    expect(dock.addPanel).toHaveBeenCalledTimes(8);
+    expect(dock.panels.size).toBe(8);
     // StrictMode tears the first ready effect down and recreates it. Each API
     // lifetime has exactly one subscription; the first is disposed before the
     // second becomes live.
@@ -976,7 +977,7 @@ describe("DockWorkspace React integration", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset Workspace" }));
     expect(dock.fromJSON).toHaveBeenCalledOnce();
-    expect(dock.panels.size).toBe(7);
+    expect(dock.panels.size).toBe(8);
     expect(dock.panels.has("role-mixer")).toBe(false);
   });
 });

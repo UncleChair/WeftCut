@@ -2,6 +2,7 @@ import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import { followPlayheadEnabled, markersVisible } from "../settings/appSettingsStore";
 import { hasMarkedRange } from "../state/rangeStore";
+import { hasTransitionCut } from "../timeline/applyTransition";
 import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
@@ -56,6 +57,12 @@ export const MENU_ONLY_COMMAND_IDS = [
   // createCheckpoint reason above: they are per-row actions, and the registry
   // has no parameterized-command shape. The marker context menu is their home.
   "toggleMarkersVisible",
+  // Crossfade at the cut nearest the playhead (`transitionTargetCut`). The
+  // registry's no-arguments shape is exactly the Premiere "apply default
+  // transition" contract — the target comes from state, not a parameter. No
+  // binding on purpose (the key budget rule above); discoverability rides the
+  // strip button, the palette, and the Transitions panel instead.
+  "applyDefaultTransition",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -74,6 +81,7 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   createCheckpoint: "actions.create_checkpoint",
   moveToNewTrack: "actions.move_to_new_track",
   toggleMarkersVisible: "actions.toggle_markers_visible",
+  applyDefaultTransition: "actions.apply_default_transition",
 };
 
 /// "Move to a new track" is offered only when one fresh lane could actually hold
@@ -177,6 +185,9 @@ export function buildAppCommands(
   // other half of the id namespace.
   const menuEnabledFor: Partial<Record<MenuOnlyCommandId, () => boolean>> = {
     moveToNewTrack: canMoveSelectionToNewTrack,
+    // Live-read for the same reason as `clearRange`: whether an eligible cut
+    // exists changes with every edit, and App renders on none of them.
+    applyDefaultTransition: hasTransitionCut,
   };
 
   // …and check state, same shape and same rule as `checkedFor` above: a
