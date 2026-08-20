@@ -168,6 +168,7 @@ mod tests {
                     to_layer: layer2_id,
                     duration_us: 1_000_000,
                     kind: TransitionKind::Crossfade,
+                    extended_us: 1_000_000,
                 },
                 Transition {
                     id: uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000011").unwrap(),
@@ -177,6 +178,7 @@ mod tests {
                     kind: TransitionKind::Wipe {
                         direction: TransitionDirection::Left,
                     },
+                    extended_us: 0,
                 },
                 Transition {
                     id: uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000012").unwrap(),
@@ -186,6 +188,7 @@ mod tests {
                     kind: TransitionKind::Slide {
                         direction: TransitionDirection::Up,
                     },
+                    extended_us: 500_000,
                 },
             ],
             groups: imbl::Vector::new(),

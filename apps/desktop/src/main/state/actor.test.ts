@@ -482,11 +482,14 @@ describe('dispatch: transitions', () => {
     expect(fromEnd(actor, a1)).toBe(3_000_000) // untouched
   })
   it('update_transition duration + kind together in one commit', () => {
-    const { actor, a1, tid } = withCrossfade()
+    const { actor, a1, a2, tid } = withCrossfade()
     const before = actor.historyStatus().len
     expect(actor.dispatch('update_transition', { transition: tid, duration_us: 1_500_000, kind: 'Slide', direction: 'down' }).ok).toBe(true)
     expect(actor.snapshot().transitions[0]).toMatchObject({ duration_us: 1_500_000, kind: { kind: 'Slide', direction: 'down' } })
-    expect(fromEnd(actor, a1)).toBe(3_500_000)
+    // Growth never borrows (ADR 0048): the outgoing tail stays put and the incoming
+    // layer opens the extra overlap by moving left.
+    expect(fromEnd(actor, a1)).toBe(3_000_000)
+    expect(actor.snapshot().tracks[0].layers.find((l) => l.id === a2)!.t_start_us).toBe(1_500_000)
     expect(actor.historyStatus().len).toBe(before + 1)
   })
   it('update_transition direction without kind → InvalidArgument(direction)', () => {

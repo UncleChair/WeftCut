@@ -25,7 +25,7 @@ describe('structural invariants', () => {
         { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
         { id: 'l2', t_start_us: 800, t_end_us: 1800, params: { kind: 'Color' } },
       ] }],
-      transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' } }],
+      transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0 }],
       composition: { ...base.composition, duration_us: 1800 } }
     expect(() => invNoUnauthorizedOverlap(ok)).not.toThrow()
   })
@@ -49,7 +49,7 @@ describe('transition invariant (re-derived, Policy B reconcile guarantee)', () =
       { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
       { id: 'l2', t_start_us: 800, t_end_us: 1800, params: { kind: 'Color' } },
     ] }],
-    transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, ...tr }],
+    transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0, ...tr }],
     composition: { ...base.composition, duration_us: 1800 } })
 
   it('accepts a healthy Crossfade, and a Wipe/Slide with direction', () => {
@@ -100,8 +100,8 @@ describe('transition invariant (re-derived, Policy B reconcile guarantee)', () =
         { id: 'l3', t_start_us: 1600, t_end_us: 2600, params: { kind: 'Color' } },
       ] }],
       transitions: [
-        { id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' } },
-        { id: 'y', from_layer: 'l1', to_layer: 'l3', duration_us: 200, kind: { kind: 'Crossfade' } },
+        { id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0 },
+        { id: 'y', from_layer: 'l1', to_layer: 'l3', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0 },
       ],
       composition: { ...base.composition, duration_us: 2600 } }
     expect(() => invTransitionsWellFormed(p)).toThrow(InvariantError)
@@ -112,5 +112,15 @@ describe('transition invariant (re-derived, Policy B reconcile guarantee)', () =
     expect(() => invTransitionsWellFormed(withPair({ kind: { kind: 'Wipe' } }))).toThrow(InvariantError)
     expect(() => invTransitionsWellFormed(withPair({ kind: { kind: 'Slide', direction: 'diagonal' } }))).toThrow(InvariantError)
     expect(() => invTransitionsWellFormed(withPair({ kind: { kind: 'Dissolve' } }))).toThrow(InvariantError)
+  })
+
+  it('accepts extended_us at both lane edges (0 = pure placement, duration = full borrow)', () => {
+    expect(() => invTransitionsWellFormed(withPair({ extended_us: 0 }))).not.toThrow()
+    expect(() => invTransitionsWellFormed(withPair({ extended_us: 200 }))).not.toThrow()
+  })
+
+  it('rejects extended_us outside [0, duration_us]', () => {
+    expect(() => invTransitionsWellFormed(withPair({ extended_us: -1 }))).toThrow(InvariantError)
+    expect(() => invTransitionsWellFormed(withPair({ extended_us: 201 }))).toThrow(InvariantError)
   })
 })

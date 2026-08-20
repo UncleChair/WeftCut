@@ -85,6 +85,11 @@ export function invTransitionsWellFormed(p: WireProject): void {
       fail(`transition ${tr.id} duration ${tr.duration_us}µs out of range (fromLen ${fromLen}µs, toLen ${toLen}µs)`)
     const overlap = Math.min(from.layer.t_end_us, to.layer.t_end_us) - Math.max(from.layer.t_start_us, to.layer.t_start_us)
     if (overlap !== tr.duration_us) fail(`transition ${tr.id} duration ${tr.duration_us}µs !== geometric overlap ${overlap}µs`)
+    // Borrowed-tail provenance stays inside the window: a counter outside
+    // [0, duration] would make remove return material the transition never
+    // borrowed (or move the incoming layer left instead of right).
+    if (!(tr.extended_us >= 0 && tr.extended_us <= tr.duration_us))
+      fail(`transition ${tr.id} extended_us ${tr.extended_us}µs outside [0, ${tr.duration_us}]`)
     if (asFrom.has(tr.from_layer)) fail(`layer ${tr.from_layer} is from_layer in two transitions`)
     asFrom.add(tr.from_layer)
     if (asTo.has(tr.to_layer)) fail(`layer ${tr.to_layer} is to_layer in two transitions`)

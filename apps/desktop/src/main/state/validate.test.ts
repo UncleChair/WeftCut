@@ -50,14 +50,14 @@ describe('validate', () => {
     const p = blankProject(seededGen(), 't')
     p.media_pool['m'] = mediaItem
     p.tracks[0].layers = [audioLayer('a', 'm', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
-    p.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' } }]
+    p.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     try { validate(p); throw new Error('expected TransitionUnsupportedLayerKind, but validate passed') }
     catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err).toEqual({ rule: 'TransitionUnsupportedLayerKind', transition: 'tr', layer: 'a' }) }
     // Audio to-layer behind a visual from-layer.
     const q = blankProject(seededGen(), 't')
     q.media_pool['m'] = mediaItem
     q.tracks[0].layers = [colorLayer('a', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
-    q.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' } }]
+    q.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     try { validate(q); throw new Error('expected TransitionUnsupportedLayerKind, but validate passed') }
     catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err).toEqual({ rule: 'TransitionUnsupportedLayerKind', transition: 'tr', layer: 'b' }) }
   })
@@ -281,7 +281,7 @@ describe('validate — frame-grid backstop', () => {
     const fromEnd = 66_733        // frame 2
     p.composition.duration_us = 100_100 // frame 3
     p.tracks[0].layers = [colorLayer('a', 0, fromEnd), colorLayer('b', cut, 100_100)]
-    p.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: fromEnd - cut, kind: { kind: 'Crossfade' } }]
+    p.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: fromEnd - cut, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     expect(fromEnd - cut).toBe(33_366) // NOT a canonical time
     expect(() => validate(p)).not.toThrow()
   })

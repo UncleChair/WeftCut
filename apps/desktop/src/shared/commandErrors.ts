@@ -31,6 +31,10 @@ export type ValidationError =
   | { rule: 'TransitionUnsupportedLayerKind'; transition: Uuid; layer: Uuid }
   | { rule: 'TransitionDurationOutOfRange'; transition: Uuid; duration: TimeUs }
   | { rule: 'TransitionDurationMismatch'; transition: Uuid; duration: TimeUs; overlap: TimeUs }
+  // The borrowed-tail counter out of its lane: `0 ≤ extended_us ≤ duration_us`.
+  // Structural (validate-only) — no layer edit can corrupt the counter, so
+  // reconcile never drops on it (see validateTransitions).
+  | { rule: 'TransitionExtendedOutOfRange'; transition: Uuid; extended: TimeUs; duration: TimeUs }
   | { rule: 'LayerInMultipleTransitions'; layer: Uuid }
   | { rule: 'DuplicateLayerId'; layer: Uuid }
   | { rule: 'InvalidLayerRange'; layer: Uuid; t_start: TimeUs; t_end: TimeUs }
@@ -75,6 +79,11 @@ export type CommandError =
   | { error: 'TransitionLayersNotAdjacent'; from: Uuid; to: Uuid; duration: TimeUs }
   | { error: 'TransitionUnsupportedLayerKind'; layer: Uuid; kind: string }
   | { error: 'TransitionInsufficientHandle'; layer: Uuid; available_us: TimeUs }
+  // remove_transition's restore move is blocked: `layer` (the incoming layer or
+  // one of its group siblings) cannot land on its destination because a
+  // non-moving layer occupies it — the user may have filled the vacated gap,
+  // and the system never makes room.
+  | { error: 'TransitionRestoreCollision'; layer: Uuid }
   | { error: 'CheckpointNotFound'; checkpoint: Uuid }
   | { error: 'MediaNotFound'; media: Uuid }
   | { error: 'MediaInUse'; media: Uuid; referenced_by: Uuid[] }

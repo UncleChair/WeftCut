@@ -161,7 +161,7 @@ describe('parseProject grid repair', () => {
     const track = p.tracks[0].id
     const from = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 0, 3_000_000)
     const to = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 2_000_000, 5_000_000)
-    p.transitions = [{ id: 'tr', from_layer: from, to_layer: to, duration_us: 1_000_000, kind: { kind: 'Crossfade' } }]
+    p.transitions = [{ id: 'tr', from_layer: from, to_layer: to, duration_us: 1_000_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     const wire = serializeProject(p) as Wire
     wire.tracks[0].layers[0].t_end_us = 2_999_999
     wire.transitions[0].duration_us = 999_999
@@ -172,6 +172,48 @@ describe('parseProject grid repair', () => {
       { entity: 'Layer', id: from, field: 't_end_us', from: 2_999_999, to: 3_000_000 },
       { entity: 'Transition', id: 'tr', field: 'duration_us', from: 999_999, to: 1_000_000 },
     ])
+    expect(() => validate(project)).not.toThrow()
+  })
+
+  it('backfills a missing transition.extended_us with duration_us, leaving a present value alone', () => {
+    // A file written before extended_us existed: its only reachable add borrowed
+    // the outgoing tail by the FULL duration, so duration_us is the exact truth.
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    const track = p.tracks[0].id
+    const from = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 0, 3_000_000)
+    const to = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 2_000_000, 5_000_000)
+    p.transitions = [{ id: 'tr', from_layer: from, to_layer: to, duration_us: 1_000_000, kind: { kind: 'Crossfade' }, extended_us: 250_000 }]
+    // Deep-clone: serializeProject is a shallow spread, so deleting on its
+    // output directly would reach back into `p` and corrupt the second half.
+    const wire = JSON.parse(JSON.stringify(serializeProject(p))) as Wire
+    delete wire.transitions[0].extended_us
+    const project = parseProject(wire, silent)
+    expect(project.transitions[0].extended_us).toBe(1_000_000)
+    expect(() => validate(project)).not.toThrow()
+    // A present value is authored provenance — never overwritten.
+    const wire2 = JSON.parse(JSON.stringify(serializeProject(p))) as Wire
+    expect(parseProject(wire2, silent).transitions[0].extended_us).toBe(250_000)
+  })
+
+  it('the extended_us backfill reads the grid-repaired duration, not the stale stored one', () => {
+    // Ordering guard: the grid repair re-derives duration_us from repaired
+    // geometry, and the backfill copies THAT value — copying the stale one could
+    // mint extended_us > duration_us and the project would refuse to open on
+    // the structural rule.
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    const track = p.tracks[0].id
+    const from = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 0, 3_000_000)
+    const to = applyAddLayer(p, g, track, colorParams(RED, 16, 9), 2_000_000, 5_000_000)
+    p.transitions = [{ id: 'tr', from_layer: from, to_layer: to, duration_us: 1_000_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
+    const wire = serializeProject(p) as Wire
+    wire.tracks[0].layers[0].t_end_us = 2_999_999 // repair snaps → duration re-derives to 1_000_000
+    wire.transitions[0].duration_us = 999_999
+    delete wire.transitions[0].extended_us
+    const project = parseProject(wire, silent)
+    expect(project.transitions[0].duration_us).toBe(1_000_000)
+    expect(project.transitions[0].extended_us).toBe(1_000_000)
     expect(() => validate(project)).not.toThrow()
   })
 

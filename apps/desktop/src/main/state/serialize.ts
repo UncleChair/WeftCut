@@ -318,5 +318,22 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // how blank-screen-on-open bugs happen here.
   const repairs = repairGrid(o)
   if (repairs.length > 0) (opts.onGridRepair ?? warnGridRepair)(repairs)
+  // `Transition.extended_us` (added WITHOUT a schema bump): absent → the
+  // transition's own duration. Exactly true for every extend-add an
+  // extended_us-less build could write (its adds borrowed the outgoing tail by
+  // the FULL duration); a pre-positioned add (MCP-only, layers hand-overlapped
+  // first) would deserve 0, but no project containing one exists to load.
+  // This is the one backfill site
+  // ([[feedback_ts_parse_additive_field_defaults]]): a second one would let
+  // `replaceState` and `project_open` disagree, and a consumer reading the field
+  // as required (remove/update routing) would see `undefined` and shrink NaN µs.
+  // AFTER repairGrid deliberately: the repair re-derives duration_us from
+  // repaired geometry, and the backfill must copy the FINAL value or a
+  // shrinking repair would mint `extended_us > duration_us` — a project that
+  // fails validate's structural check and refuses to open.
+  for (const tr of (o.transitions as Array<Record<string, unknown>> | undefined) ?? []) {
+    if (tr === null || typeof tr !== 'object') continue
+    if (tr.extended_us === undefined && typeof tr.duration_us === 'number') tr.extended_us = tr.duration_us
+  }
   return json as Project
 }

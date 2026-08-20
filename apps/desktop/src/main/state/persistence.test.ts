@@ -24,9 +24,9 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
   it('round-trips all three transition kinds (wire twin: native/src/state/transition.rs)', () => {
     const p = blankProject(seededGen(), 'doc')
     p.transitions.push(
-      { id: 't1', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Crossfade' } },
-      { id: 't2', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Wipe', direction: 'left' } },
-      { id: 't3', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Slide', direction: 'up' } },
+      { id: 't1', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Crossfade' }, extended_us: 1_000_000 },
+      { id: 't2', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Wipe', direction: 'left' }, extended_us: 0 },
+      { id: 't3', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Slide', direction: 'up' }, extended_us: 500_000 },
     )
     const { project: back } = parseProjectJson(serializeProjectToJson(p))
     expect(back.transitions).toEqual(p.transitions)

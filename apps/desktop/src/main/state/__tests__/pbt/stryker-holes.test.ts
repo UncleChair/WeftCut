@@ -154,7 +154,7 @@ describe('validate: pairKey lookup (authorized overlap)', () => {
       colorLayer(fromId, 0, 1_000_000),
       colorLayer(toId, 800_000, 1_800_000),  // 200µs overlap
     ]
-    p.transitions.push({ id: 'tr1', from_layer: fromId, to_layer: toId, duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: fromId, to_layer: toId, duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     p.composition.duration_us = 1_800_000
     // Should be accepted — the authorized overlap exactly matches.
     expect(() => validate(p)).not.toThrow()
@@ -340,7 +340,7 @@ describe('validate: transition duration boundary checks', () => {
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 1_000_000, 2_000_000),  // adjacent, no overlap
     ]
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 0, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 0, kind: { kind: 'Crossfade' }, extended_us: 0 })
     p.composition.duration_us = 2_000_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
@@ -353,7 +353,7 @@ describe('validate: transition duration boundary checks', () => {
       colorLayer('l2', 300_000, 800_000), // overlap=200_000 < len
     ]
     // duration_us = 500_000 = fromLen → must be rejected (> fromLen fails).
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 500_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     p.composition.duration_us = 800_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
@@ -364,7 +364,7 @@ describe('validate: transition duration boundary checks', () => {
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 800_000, 1_800_000), // overlap = 200_000
     ]
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     p.composition.duration_us = 1_800_000
     expect(() => validate(p)).not.toThrow()
   })
@@ -491,8 +491,8 @@ describe('validate: transition structural integrity', () => {
     ]
     p.composition.duration_us = 1_800_000
     // Add the same transition twice — second has a duplicate tr.id.
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' } })
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
@@ -500,7 +500,7 @@ describe('validate: transition structural integrity', () => {
     const p = mkProject()
     p.tracks[0].layers = [colorLayer('l1', 0, 1_000_000)]
     p.composition.duration_us = 1_000_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l1', duration_us: 100_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l1', duration_us: 100_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
@@ -509,7 +509,7 @@ describe('validate: transition structural integrity', () => {
     p.tracks[0].layers = [colorLayer('l1', 0, 1_000_000)]
     p.tracks[1].layers = [colorLayer('l2', 800_000, 1_800_000)]
     p.composition.duration_us = 1_800_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
@@ -522,8 +522,8 @@ describe('validate: transition structural integrity', () => {
       colorLayer('l3', 900_000, 1_900_000),
     ]
     p.composition.duration_us = 1_900_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' } })
-    p.transitions.push({ id: 'tr2', from_layer: 'l1', to_layer: 'l3', duration_us: 100_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    p.transitions.push({ id: 'tr2', from_layer: 'l1', to_layer: 'l3', duration_us: 100_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
@@ -535,9 +535,24 @@ describe('validate: transition structural integrity', () => {
       colorLayer('l3', 800_000, 1_800_000),
     ]
     p.composition.duration_us = 1_800_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' } })
-    p.transitions.push({ id: 'tr2', from_layer: 'l2', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    p.transitions.push({ id: 'tr2', from_layer: 'l2', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
+  })
+
+  it('rejects extended_us outside [0, duration_us] (borrowed-tail counter out of its lane)', () => {
+    // Same healthy pair; only the counter is corrupted (hand-edit shape — no
+    // command writes these values). Both directions, so a `>=`/`<=` flip dies.
+    for (const extended of [-1, 200_001]) {
+      const p = mkProject()
+      p.tracks[0].layers = [
+        colorLayer('l1', 0, 1_000_000),
+        colorLayer('l2', 800_000, 1_800_000),
+      ]
+      p.composition.duration_us = 1_800_000
+      p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: extended })
+      expect(() => validate(p)).toThrow(ValidationFailure)
+    }
   })
 
   it('fromLen computed as end-start (not start-end) — catches arithmetic mutation', () => {
@@ -550,7 +565,7 @@ describe('validate: transition structural integrity', () => {
     ]
     p.composition.duration_us = 700_000
     // duration_us = 400_000 > fromLen=300_000 → must be rejected.
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 400_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 400_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -613,7 +628,7 @@ describe('validate: pairKey produces a non-empty canonical key', () => {
       colorLayer('bbb', 800_000, 1_800_000),
     ]
     // Valid: 200µs overlap authorized.
-    p.transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p.transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     p.composition.duration_us = 1_800_000
     expect(() => validate(p)).not.toThrow()
 
@@ -623,7 +638,7 @@ describe('validate: pairKey produces a non-empty canonical key', () => {
       colorLayer('aaa', 0, 1_000_000),
       colorLayer('bbb', 700_000, 1_700_000), // overlap = 300_000
     ]
-    p2.transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' } })
+    p2.transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     p2.composition.duration_us = 1_700_000
     expect(() => validate(p2)).toThrow(ValidationFailure)
   })

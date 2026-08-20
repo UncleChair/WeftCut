@@ -136,6 +136,11 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
       available: ctx.seconds(e.available_us),
     }),
   },
+  TransitionRestoreCollision: {
+    tier: "curated",
+    key: "errors.transition_restore_collision",
+    args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
+  },
   CheckpointNotFound: { tier: "generic" },
   MediaNotFound: { tier: "generic" },
   // Curated PRESENTATION already exists: MediaPool's RemoveMediaDialog turns
@@ -222,6 +227,7 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
   TransitionUnsupportedLayerKind: { tier: "generic" },
   TransitionDurationOutOfRange: { tier: "generic" },
   TransitionDurationMismatch: { tier: "generic" },
+  TransitionExtendedOutOfRange: { tier: "generic" },
   LayerInMultipleTransitions: { tier: "generic" },
   DuplicateLayerId: { tier: "generic" },
   InvalidLayerRange: { tier: "generic" },

@@ -322,6 +322,7 @@ export function dryRunErrorString(e: CommandError): string {
     return `validation failed: ${d.rule}`
   }
   if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
+  if (e.error === 'TransitionRestoreCollision') return `removing the transition would move layer ${e.layer} back onto occupied space`
   if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
   return e.error
 }
@@ -413,6 +414,11 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'TransitionInsufficientHandle') {
     return { code: 'invalid_params', message: `insufficient tail media on the outgoing layer: only ${e.available_us} µs remaining past its source out-point — shorten the transition to at most that`, data: {
       error: 'TransitionInsufficientHandle', layer: e.layer, available_us: e.available_us,
+    } }
+  }
+  if (e.error === 'TransitionRestoreCollision') {
+    return { code: 'invalid_params', message: `removing the transition moves layer ${e.layer} back toward the cut, but its destination is occupied — the gap left by the transition placement has been filled; move or delete the blocking layer first (the system never makes room)`, data: {
+      error: 'TransitionRestoreCollision', layer: e.layer,
     } }
   }
   if (e.error === 'TransitionUnsupportedLayerKind') {

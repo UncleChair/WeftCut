@@ -563,6 +563,8 @@ const enUS = {
       "Can't split “{{layer}}” at {{time}} — the position is outside the clip.",
     transition_insufficient_handle:
       "“{{layer}}” has only {{available}} of source handle — not enough for this transition.",
+    transition_restore_collision:
+      "Removing the transition needs to move “{{layer}}” back to the cut, but that space is now occupied.",
     transition_layers_not_adjacent:
       "“{{from}}” and “{{to}}” must touch to add a transition.",
     fps_locked_by_content:

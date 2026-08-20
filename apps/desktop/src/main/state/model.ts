@@ -106,7 +106,16 @@ export type TransitionKind =
   | { kind: 'Crossfade' }
   | { kind: 'Wipe'; direction: TransitionDirection }
   | { kind: 'Slide'; direction: TransitionDirection }
-export interface Transition { id: Uuid; from_layer: Uuid; to_layer: Uuid; duration_us: TimeUs; kind: TransitionKind }
+export interface Transition {
+  id: Uuid; from_layer: Uuid; to_layer: Uuid; duration_us: TimeUs; kind: TransitionKind
+  /** How many µs of the outgoing layer's tail this transition borrowed to open
+   *  its overlap; 0 = pure placement overlap (both layers play exactly their
+   *  trimmed ranges). `from_layer.t_end_us − extended_us` is the exit frame the
+   *  user actually cut — the inverse ops route by it so remove/update give back
+   *  ONLY borrowed material and move the incoming layer for the rest.
+   *  Invariant `0 ≤ extended_us ≤ duration_us` (validate, structural). */
+  extended_us: TimeUs
+}
 /** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts. */
 export interface Group { id: Uuid; label?: string; members: Uuid[] }
 export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolean }

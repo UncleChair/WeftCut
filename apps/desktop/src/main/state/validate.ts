@@ -97,9 +97,10 @@ function buildTransitionLayerIndex(p: Project): TransitionLayerIndex {
 /** The invariant an ordinary layer edit (trim/move/split/delete/track op) can
  *  break: participants exist, same track, visual-only, duration in range,
  *  overlap exactly equals duration. Structural corruption (duplicate transition
- *  id, self-reference, LayerInMultipleTransitions) is deliberately NOT here —
- *  no layer edit can produce those, so they stay validate-only failures; a
- *  reconcile that silently swallowed them would mask real bugs. */
+ *  id, self-reference, LayerInMultipleTransitions, extended_us out of
+ *  [0, duration_us]) is deliberately NOT here — no layer edit can produce
+ *  those, so they stay validate-only failures; a reconcile that silently
+ *  swallowed them would mask real bugs. */
 function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): ValidationError | null {
   const from = idx.get(tr.from_layer)
   if (!from) return { rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.from_layer }
@@ -141,6 +142,16 @@ function validateTransitions(p: Project): Map<string, number> {
     if (seenIds.has(tr.id)) fail({ rule: 'DuplicateTransitionId', transition: tr.id })
     seenIds.add(tr.id)
     if (tr.from_layer === tr.to_layer) fail({ rule: 'TransitionSelfReference', transition: tr.id, layer: tr.from_layer })
+    // Borrowed-tail counter in its lane. VALIDATE-ONLY, like the two structural
+    // checks above and deliberately NOT in transitionInvariantError: only the
+    // transition commands write the counter and every layer edit that touches
+    // the participants' geometry breaks the overlap equality first, so no edit
+    // can corrupt it — a reconcile that dropped on it would be swallowing a
+    // writer bug (or hand-edited corruption) instead of surfacing it. The
+    // negated form also fails a non-numeric counter a hand-edited file smuggles
+    // past the parse backfill.
+    if (!(tr.extended_us >= 0 && tr.extended_us <= tr.duration_us))
+      fail({ rule: 'TransitionExtendedOutOfRange', transition: tr.id, extended: tr.extended_us, duration: tr.duration_us })
     const invariantErr = transitionInvariantError(tr, idx)
     if (invariantErr !== null) fail(invariantErr)
     if (asFrom.has(tr.from_layer)) fail({ rule: 'LayerInMultipleTransitions', layer: tr.from_layer })

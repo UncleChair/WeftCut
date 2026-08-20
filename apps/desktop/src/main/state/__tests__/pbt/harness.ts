@@ -13,7 +13,7 @@ export const PBT_RUNS = Number(process.env.WEFTCUT_PBT_RUNS ?? 200)
 export interface WireLayer { id: string; t_start_us: number; t_end_us: number; params: { kind: string } }
 export interface WireTrack { id: string; layers: WireLayer[] }
 export interface WireGroup { id: string; members: string[] }
-export interface WireTransition { id: string; from_layer: string; to_layer: string; duration_us: number; kind: { kind: string; direction?: string } }
+export interface WireTransition { id: string; from_layer: string; to_layer: string; duration_us: number; kind: { kind: string; direction?: string }; extended_us: number }
 export interface WireProject {
   composition: { duration_us: number; duration_pinned: boolean; fps: { num: number; den: number }; width: number; height: number }
   tracks: WireTrack[]

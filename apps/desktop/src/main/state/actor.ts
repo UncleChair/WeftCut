@@ -137,8 +137,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  Reconcile (Policy B, spec § Edit-interaction policy) runs on EVERY commit
    *  — trim/move/split/delete/group ops stay transition-blind — inside the same
    *  produce(), so the drop lands in the SAME snapshot as the edit (one undo
-   *  restores both). add/update/remove_transition need no exemption: after
-   *  their apply the invariant holds by construction, so reconcile is a no-op.
+   *  restores both). add/update/remove_transition need no exemption either:
+   *  their OWN transition holds by construction after apply, and when
+   *  update/remove move the incoming layer through a FOLLOWING transition's
+   *  geometry (B is also from_layer of some B→C), reconcile dropping that
+   *  chained transition — with its status row — is the designed outcome.
    *
    *  `summary` is a `HistorySummary` (history-labels.ts), not a bare string: the
    *  entry records its `.text` verbatim AND its `.key`, so the panel can
@@ -781,9 +784,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'update_transition': {
           const kind = parseTransitionKindOpt(a.kind, a.direction)
-          const patch: { duration_us?: number; kind?: TransitionKind } = {}
+          const patch: { duration_us?: number; kind?: TransitionKind; extended_us?: number } = {}
           const dur = parseNumOpt(a.duration_us, 'duration_us')
           if (dur !== undefined) patch.duration_us = dur
+          const ext = parseNumOpt(a.extended_us, 'extended_us')
+          if (ext !== undefined) patch.extended_us = ext
           if (kind !== undefined) patch.kind = kind
           commit(HISTORY_SUMMARY.transitionUpdate, transitionSideRefs(a.transition as Uuid), { kind: 'Coarse' }, (d) => applyUpdateTransition(d, a.transition as Uuid, patch))
           return { ok: true, value: null }

@@ -53,7 +53,7 @@ type Op =
   | { t: 'delete'; n: number }
   | { t: 'group'; n: number; m: number }
   | { t: 'addTransition'; pick: 'adjacent' | 'any'; n: number; m: number; dur: number; kindArg: KindArg }
-  | { t: 'updateTransition'; n: number; unknownId: boolean; dur: number | undefined; kindArg: KindArg | undefined }
+  | { t: 'updateTransition'; n: number; unknownId: boolean; dur: number | undefined; ext: number | undefined; kindArg: KindArg | undefined }
   | { t: 'removeTransition'; n: number; unknownId: boolean }
   | { t: 'undo' } | { t: 'redo' }
 
@@ -82,6 +82,13 @@ const durArb = fc.oneof(
   { arbitrary: fc.integer({ min: 1, max: 5 }).map((x) => x * 100_000), weight: 4 },
   { arbitrary: fc.constantFrom(0, -100_000, 7_777, 60_000_000), weight: 1 },
 )
+// extended_us patch values: mostly small plausible borrows (0 included — the
+// give-it-all-back edge), hostile tail (negative, off-grid, over any plausible
+// duration) so the [0, d′] request gate and the routing both run.
+const extArb = fc.oneof(
+  { arbitrary: fc.integer({ min: 0, max: 5 }).map((x) => x * 100_000), weight: 4 },
+  { arbitrary: fc.constantFrom(-100_000, 7_777, 60_000_000), weight: 1 },
+)
 const rareTrue = fc.oneof({ arbitrary: fc.constant(false), weight: 7 }, { arbitrary: fc.constant(true), weight: 1 })
 
 // Weights keep the pool productive: layer edits (the reconcile stressors) and
@@ -106,7 +113,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
     pick: fc.oneof({ arbitrary: fc.constant('adjacent' as const), weight: 3 }, { arbitrary: fc.constant('any' as const), weight: 1 }),
     n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }), dur: durArb, kindArg: kindArb }), weight: 4 },
   { arbitrary: fc.record({ t: fc.constant('updateTransition' as const), n: fc.nat({ max: 8 }), unknownId: rareTrue,
-    dur: fc.option(durArb, { nil: undefined }), kindArg: fc.option(kindArb, { nil: undefined }) }), weight: 3 },
+    dur: fc.option(durArb, { nil: undefined }), ext: fc.option(extArb, { nil: undefined }), kindArg: fc.option(kindArb, { nil: undefined }) }), weight: 3 },
   { arbitrary: fc.record({ t: fc.constant('removeTransition' as const), n: fc.nat({ max: 8 }), unknownId: rareTrue }), weight: 2 },
   fc.record({ t: fc.constant('undo' as const) }), fc.record({ t: fc.constant('redo' as const) }),
 )
@@ -156,6 +163,7 @@ function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
       if (target === null) return null
       const args: Record<string, unknown> = { transition: target }
       if (op.dur !== undefined) args.duration_us = op.dur
+      if (op.ext !== undefined) args.extended_us = op.ext
       if (op.kindArg !== undefined) Object.assign(args, op.kindArg)
       return actor.dispatch('update_transition', args)
     }

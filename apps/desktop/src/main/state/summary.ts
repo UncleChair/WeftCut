@@ -170,7 +170,7 @@ export interface MarkerSummary { id: string; t_us: number; end_t_us: number | nu
 /** Wire shape == model shape (model.ts `Transition`) — the compositor's
  *  two-input node consumes it verbatim in both realms (preview snapshot and
  *  the export Worker's structured-clone of this summary). */
-export interface TransitionView { id: string; from_layer: string; to_layer: string; duration_us: number; kind: TransitionKind }
+export interface TransitionView { id: string; from_layer: string; to_layer: string; duration_us: number; kind: TransitionKind; extended_us: number }
 export interface MediaSummary {
   id: string; label: string; path: string; kind: string; duration_us: number | null
   start_pts_us: number | null; container_duration_us: number | null
@@ -266,7 +266,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
     id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
   }))
   const transitions: TransitionView[] = p.transitions.map((t) => ({
-    id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind,
+    id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,
   }))
   const groups: GroupSummary[] = p.groups.map((g: Group) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
   const audio_roles: RoleMixView[] = ROLE_ORDER.map((role) => {

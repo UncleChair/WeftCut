@@ -29,6 +29,12 @@ pub struct Transition {
     /// overlap between `from_layer` and `to_layer`. Enforced in validation.
     pub duration_us: TimeUs,
     pub kind: TransitionKind,
+    /// How many µs of the outgoing layer's tail this transition borrowed to
+    /// open its overlap; 0 = pure placement overlap (both layers play exactly
+    /// their trimmed ranges). Always in `[0, duration_us]`; the TS inverse ops
+    /// route by it. Last in the struct because serde field order mirrors the
+    /// TS `JSON.stringify` wire order.
+    pub extended_us: TimeUs,
 }
 
 /// Motion direction (industry convention), NOT the reveal side: `Left` means
@@ -65,17 +71,17 @@ mod tests {
     fn transition_kinds_deserialize_from_ts_json() {
         let cases: [(&str, TransitionKind); 3] = [
             (
-                r#"{"id":"00000000-0000-0000-0000-000000000006","from_layer":"00000000-0000-0000-0000-000000000004","to_layer":"00000000-0000-0000-0000-000000000005","duration_us":1000000,"kind":{"kind":"Crossfade"}}"#,
+                r#"{"id":"00000000-0000-0000-0000-000000000006","from_layer":"00000000-0000-0000-0000-000000000004","to_layer":"00000000-0000-0000-0000-000000000005","duration_us":1000000,"kind":{"kind":"Crossfade"},"extended_us":1000000}"#,
                 TransitionKind::Crossfade,
             ),
             (
-                r#"{"id":"00000000-0000-0000-0000-000000000007","from_layer":"00000000-0000-0000-0000-000000000004","to_layer":"00000000-0000-0000-0000-000000000005","duration_us":1000000,"kind":{"kind":"Wipe","direction":"left"}}"#,
+                r#"{"id":"00000000-0000-0000-0000-000000000007","from_layer":"00000000-0000-0000-0000-000000000004","to_layer":"00000000-0000-0000-0000-000000000005","duration_us":1000000,"kind":{"kind":"Wipe","direction":"left"},"extended_us":0}"#,
                 TransitionKind::Wipe {
                     direction: TransitionDirection::Left,
                 },
             ),
             (
-                r#"{"id":"00000000-0000-0000-0000-000000000008","from_layer":"00000000-0000-0000-0000-000000000004","to_layer":"00000000-0000-0000-0000-000000000005","duration_us":1000000,"kind":{"kind":"Slide","direction":"up"}}"#,
+                r#"{"id":"00000000-0000-0000-0000-000000000008","from_layer":"00000000-0000-0000-0000-000000000004","to_layer":"00000000-0000-0000-0000-000000000005","duration_us":1000000,"kind":{"kind":"Slide","direction":"up"},"extended_us":500000}"#,
                 TransitionKind::Slide {
                     direction: TransitionDirection::Up,
                 },
@@ -105,6 +111,7 @@ mod tests {
                 to_layer: crate::state::ids::new_id(),
                 duration_us: 500_000,
                 kind,
+                extended_us: 200_000,
             };
             let json = serde_json::to_string(&tr).unwrap();
             let back: Transition = serde_json::from_str(&json).unwrap();
