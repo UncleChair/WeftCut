@@ -714,7 +714,8 @@ export function Timeline({
   // triggered by LayerBlock's onContextMenu (right-click). Also hit-tests
   // the click against the cuts on the layer's track: within
   // CUT_CLICK_TOLERANCE_PX of a seam between same-track adjacent visual
-  // layers, the menu grows the "Add transition" section.
+  // layers both long enough for the default duration (the kernel's
+  // eligibility), the menu grows the "Add transition" section.
   const onContextMenu = useCallback(
     (
       e: React.MouseEvent,
@@ -731,7 +732,12 @@ export function Timeline({
         const rect = canvas.getBoundingClientRect();
         const xUs = ((e.clientX - rect.left) / pxPerSec) * 1_000_000;
         const toleranceUs = (CUT_CLICK_TOLERANCE_PX / pxPerSec) * 1_000_000;
-        cut = findCutNear(track.layers, xUs, toleranceUs);
+        cut = findCutNear(
+          track.layers,
+          xUs,
+          toleranceUs,
+          defaultTransitionDurationUs(fpsNum, fpsDen),
+        );
       }
       setContextMenu({
         x: e.clientX,
@@ -742,14 +748,16 @@ export function Timeline({
         cut,
       });
     },
-    [tracks, pxPerSec],
+    [tracks, pxPerSec, fpsNum, fpsDen],
   );
 
   // Create a transition at a cut (context-menu action). Default duration is
-  // the hardcoded 1 s snapped DOWN to whole comp frames. Errors surface
-  // through the status bar / log (errors/formatCommandError.ts owns the
-  // copy — TransitionInsufficientHandle renders `available_us` with the
-  // layer's name). NO silent clamping.
+  // the hardcoded 1 s snapped DOWN to whole comp frames; no placement arg, so
+  // the add takes the overlap default (the incoming layer moves left,
+  // ADR 0048). The refusals the eligibility gate cannot prevent (participants
+  // sharing a group, a moved sibling crossing t = 0) surface through the
+  // status bar / log (errors/formatCommandError.ts owns the copy). NO silent
+  // clamping.
   const onAddTransition = useCallback(
     async (
       cut: TransitionCut,

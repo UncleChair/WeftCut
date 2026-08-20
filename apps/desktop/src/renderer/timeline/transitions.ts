@@ -2,7 +2,7 @@
 // create gesture, the hardcoded 1 s frame-snapped default duration, chip
 // geometry, and (kind, direction) wire-arg pairing for add/update_transition.
 // Pure functions only — the components stay thin and these get unit tests.
-// See ADR 0035.
+// See ADR 0035 (render node) and ADR 0048 (overlap placement).
 
 import type {
   LayerSummary,
@@ -47,12 +47,18 @@ export interface TransitionCut {
 
 /// Find the cut nearest to `tUs` within `toleranceUs`, or null. Only exact
 /// adjacency counts (a pair already overlapped by a transition no longer
-/// shares a boundary, so it naturally stops matching). Audio layers never
-/// participate (ADR 0035 § Placement, participants, and handle).
+/// shares a boundary, so it naturally stops matching). `durationUs` is the
+/// duration the caller intends to apply: eligibility is
+/// `durationUs ≤ min(len_A, len_B)` — overlap placement moves the incoming
+/// layer left by the duration, so both participants must exist for the whole
+/// window; no tail-handle check, since no source material is touched
+/// (ADR 0048). A too-short pair is simply not offered — prevention first, the
+/// mutation-layer refusal is the backstop. Audio layers never participate.
 export function findCutNear(
   layers: readonly LayerSummary[],
   tUs: number,
   toleranceUs: number,
+  durationUs: number,
 ): TransitionCut | null {
   let best: { cut: TransitionCut; dist: number } | null = null;
   for (const from of layers) {
@@ -64,6 +70,7 @@ export function findCutNear(
       if (to.id === from.id) continue;
       if (!VISUAL_LAYER_KINDS.has(to.kind)) continue;
       if (to.t_start_us !== from.t_end_us) continue;
+      if (durationUs > participantSpanUs(from, to)) continue;
       best = {
         cut: { fromLayerId: from.id, toLayerId: to.id, cutUs: from.t_end_us },
         dist,
@@ -72,6 +79,15 @@ export function findCutNear(
     }
   }
   return best?.cut ?? null;
+}
+
+/// min(len_A, len_B) in µs — the ceiling every intended duration is checked
+/// against by both cut finders.
+function participantSpanUs(from: LayerSummary, to: LayerSummary): number {
+  return Math.min(
+    from.t_end_us - from.t_start_us,
+    to.t_end_us - to.t_start_us,
+  );
 }
 
 /// Find the cut nearest to `tUs` across ALL tracks, with no distance limit —
@@ -86,11 +102,13 @@ export function findCutNear(
 /// to the global search rather than refusing.
 ///
 /// Ties are deterministic: nearer wins, then the lower track index, then the
-/// earlier cut. Same eligibility as `findCutNear` (adjacent visual pairs,
-/// audio never participates).
+/// earlier cut. Same eligibility as `findCutNear` (adjacent visual pairs long
+/// enough for `durationUs` — the duration the surface will apply — audio
+/// never participates).
 export function findNearestCut(
   tracks: readonly TrackSummary[],
   tUs: number,
+  durationUs: number,
   selectedLayerIds?: ReadonlySet<string>,
 ): TransitionCut | null {
   const pick = (restrictToSelection: boolean): TransitionCut | null => {
@@ -110,6 +128,7 @@ export function findNearestCut(
             l.t_start_us === from.t_end_us,
         );
         if (!to) continue;
+        if (durationUs > participantSpanUs(from, to)) continue;
         if (
           restrictToSelection &&
           !selectedLayerIds!.has(from.id) &&
@@ -176,13 +195,14 @@ export function defaultTransitionDurationUs(
   return presetTransitionDurationUs(1, fpsNum, fpsDen);
 }
 
-/// One chip on a track lane. Start-at-cut alignment: the window is the
-/// incoming layer's first `duration_us` µs, i.e. it starts at the OLD cut
-/// point and spans the authorized overlap.
+/// One chip on a track lane. The window is the incoming layer's first
+/// `duration_us` µs — under the default overlap placement that head is the
+/// moved-left start; under extend placement it is the old cut. Either way the
+/// chip spans exactly the overlap the transition renders (ADR 0048).
 export interface TrackTransitionChip {
   transition: TransitionSummary;
   toLayer: LayerSummary;
-  /// Window start == `toLayer.t_start_us` (the cut).
+  /// Window start == `toLayer.t_start_us`.
   startUs: number;
   /// `startUs + duration_us`.
   endUs: number;

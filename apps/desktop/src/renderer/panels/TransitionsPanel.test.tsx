@@ -117,6 +117,21 @@ describe("TransitionsPanel", () => {
     expect(ipcMocks.addTransition).not.toHaveBeenCalled();
   });
 
+  it("a cut whose participant is too short for the default 1 s duration reads as no target", () => {
+    // The kernel's eligibility (`d ≤ min(len_A, len_B)`, ADR 0048) gates the
+    // cards exactly like cut-absence: a 0.5s clip can't host the 1 s default,
+    // so the apply is prevented rather than refused after the click (#18).
+    seed([
+      makeTrack("t1", [colorLayer("layer-a", 0, 500_000), colorLayer("layer-b", 500_000, 4_000_000)]),
+    ]);
+    render(<TransitionsPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+    const card = screen.getByTestId("transition-card-crossfade") as HTMLButtonElement;
+    expect(card.disabled).toBe(true);
+    expect(card.title).toBe("No cut between two adjacent visual clips");
+    fireEvent.click(card);
+    expect(ipcMocks.addTransition).not.toHaveBeenCalled();
+  });
+
   it("a directional card applies that exact kind+direction at the resolved cut, frame-snapped 1 s", async () => {
     seedWithCut();
     const onMutated = vi.fn().mockResolvedValue(undefined);

@@ -6,9 +6,10 @@ import {
   type ParticipantLayer,
 } from "./activeTransitions";
 
-// Window semantics under start-at-cut alignment: the window IS the overlap,
-// [to.t_start, to.t_start + duration). These tests pin the selection gates
-// and the boundary inclusivity the shader's progress derives from.
+// Window semantics: the window IS the overlap, [to.t_start, to.t_start +
+// duration) — placement-independent (overlap or extend, ADR 0048). These
+// tests pin the selection gates and the boundary inclusivity the shader's
+// progress derives from.
 
 const layer = (over: Partial<ParticipantLayer> = {}): ParticipantLayer => ({
   t_start_us: 0,
@@ -24,6 +25,7 @@ const crossfade = (over: Partial<TransitionSummary> = {}): TransitionSummary => 
   to_layer: "B",
   duration_us: 1_000_000,
   kind: { kind: "Crossfade" },
+  extended_us: 0,
   ...over,
 });
 

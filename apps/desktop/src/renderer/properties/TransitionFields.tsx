@@ -52,9 +52,10 @@ export function TransitionFields({
   }, [transition.id, transition.duration_us, fpsNum, fpsDen]);
 
   // Surface structured backend errors through the status bar / log — the
-  // app's error path (errors/formatCommandError.ts owns the copy;
-  // TransitionInsufficientHandle renders `available_us` with the layer's
-  // name). NO silent clamping anywhere.
+  // app's error path (errors/formatCommandError.ts owns the copy). This
+  // panel's commits never send `extended_us`, so the refusals here are the
+  // overlap-routing ones (occupied destination, t = 0 crossing, duration
+  // bounds). NO silent clamping anywhere.
   const surfaceError = (err: unknown) => {
     logMutationFailure(err, "Update transition");
   };
@@ -99,6 +100,9 @@ export function TransitionFields({
     }
     if (us === transition.duration_us) return;
     try {
+      // Duration only — no extended_us — so the mutation's sanctity-preferring
+      // routing decides the geometry: growth moves the incoming layer left and
+      // never borrows tail; shrink returns borrowed tail first (ADR 0048).
       await updateTransition({ transitionId: transition.id, durationUs: us });
       await onMutated();
     } catch (e) {

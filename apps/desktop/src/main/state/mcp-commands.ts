@@ -431,7 +431,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   if (e.error === 'TransitionInsufficientHandle') {
-    return { code: 'invalid_params', message: `insufficient tail media on the outgoing layer: only ${e.available_us} µs remaining past its source out-point — shorten the transition to at most that`, data: {
+    return { code: 'invalid_params', message: `insufficient tail media on the outgoing layer: only ${e.available_us} µs remaining past its source out-point — borrow at most that (a shorter extend-add duration_us, or a smaller extended_us). Overlap placement borrows nothing and is not length-limited by the tail.`, data: {
       error: 'TransitionInsufficientHandle', layer: e.layer, available_us: e.available_us,
     } }
   }
@@ -686,34 +686,38 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
   // ── table-exec: transitions ──────────────────────────────────────────────
   { name: 'add_transition', exec: 'table',
-    description: "Add a transition at the cut between two layers on the SAME track. `from_layer_id` (outgoing) and `to_layer_id` (incoming) must be adjacent — the outgoing layer's t_end_us equal to the incoming layer's t_start_us. Alignment is start-at-cut: the outgoing layer auto-extends forward by `duration_us` and the transition occupies the incoming layer's FIRST `duration_us` microseconds. `kind` ∈ 'Crossfade' (default when omitted) | 'Wipe' | 'Slide'. `direction` is the MOTION direction ('left' = the wipe boundary / sliding content moves leftward); it is required for Wipe/Slide and rejected for Crossfade. Visual layers only (video, image, text, color, motif) — an Audio participant fails with TransitionUnsupportedLayerKind. If the outgoing layer has too little tail media to extend, fails with TransitionInsufficientHandle carrying `available_us` (the maximum extension possible) — shorten `duration_us` to at most that and retry. Returns the new transition id. Recorded (one undo restores the outgoing layer's original length too).",
+    description: "Add a transition at the cut between two layers on the SAME track. `from_layer_id` (outgoing) and `to_layer_id` (incoming) must be adjacent — the outgoing layer's t_end_us equal to the incoming layer's t_start_us. Default placement is 'overlap': the INCOMING layer moves LEFT by the frame-floored duration, so both layers still play exactly their trimmed ranges (extended_us = 0) and the span it vacated stays a gap — nothing ripples. The incoming layer's group siblings follow the move; a shifted sibling whose lane is now occupied bounces to a free lane, spawning one when none exists (each bounce lands a status-log row). Refusals: the participants share a group (moving one would drag the other, so the overlap never opens), a moved member would cross t = 0, or the duration exceeds either participant's length. `placement: 'extend'` borrows outgoing tail media past its source out-point instead — positions untouched, extended_us = duration — pre-checked against the remaining tail: too little fails with TransitionInsufficientHandle carrying `available_us`. A pair already overlapped by EXACTLY the duration attaches as-is under both placements (nothing moves, extended_us = 0). `kind` ∈ 'Crossfade' (default when omitted) | 'Wipe' | 'Slide'. `direction` is the MOTION direction ('left' = the wipe boundary / sliding content moves leftward); it is required for Wipe/Slide and rejected for Crossfade. Visual layers only (video, image, text, color, motif) — an Audio participant fails with TransitionUnsupportedLayerKind. Returns the new transition id. Recorded (one undo restores every moved layer too).",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
       duration_us: { type: 'integer' },
       from_layer_id: { type: 'string' },
       kind: { type: 'string', enum: ['Crossfade', 'Wipe', 'Slide'] },
+      placement: { type: 'string', enum: ['overlap', 'extend'], description: "Where the overlap comes from. 'overlap' (default): the incoming layer moves left; both trimmed ranges preserved. 'extend': the outgoing layer borrows tail media; positions untouched." },
       to_layer_id: { type: 'string' },
     }, required: ['duration_us', 'from_layer_id', 'to_layer_id'] },
     parseArgs: (a) => {
       parseTransitionKind(a.kind ?? 'Crossfade', a.direction) // strict enum gate at the MCP boundary; dispatch re-derives from the raw args below
-      return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction } }
+      parseTransitionPlacement(a.placement) // strict enum gate; dispatch re-derives (absent → 'overlap')
+      return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction, placement: a.placement } }
     },
     shapeResult: (v) => toolText(v as string) },
   { name: 'update_transition', exec: 'table',
-    description: "Patch a transition's `duration_us`, `kind`, and/or `direction` in ONE recorded commit (one undo step). Only fields you set are applied. `direction` rides inside `kind`: changing kind to Wipe/Slide requires `direction` in the same call, and `direction` alone (without `kind`) or alongside Crossfade is rejected. Duration changes move the OUTGOING layer's auto-extended tail (start-at-cut alignment — the incoming layer never moves); growth is pre-checked against the outgoing layer's remaining tail media and fails with TransitionInsufficientHandle carrying `available_us`. Errors with TransitionNotFound for an unknown id.",
+    description: "Patch a transition's `duration_us`, `kind`/`direction`, and/or `extended_us` in ONE recorded commit (one undo step). Only fields you set are applied. `direction` rides inside `kind`: changing kind to Wipe/Slide requires `direction` in the same call, and `direction` alone (without `kind`) or alongside Crossfade is rejected. Geometry is a two-target model: the pair (duration_us, extended_us) fully determines both window edges. `extended_us` is the borrowed share of the overlap — how much outgoing tail media the transition consumed (0 = pure placement, duration_us = pure borrow); the outgoing layer ends at its sacred exit frame + extended_us, and the incoming layer starts duration_us before that end. When `extended_us` is OMITTED the routing preserves trimmed ranges: growing the duration moves the INCOMING layer further left and never borrows tail; shrinking returns borrowed tail first, then moves the incoming layer right by the remainder. Only an explicit `extended_us` can grow the borrow, and only that direction is pre-checked against the outgoing layer's remaining tail media (TransitionInsufficientHandle carries `available_us`). The incoming layer's group siblings follow its move; a move that lands on occupied space or crosses t = 0 refuses the whole commit. Errors with TransitionNotFound for an unknown id.",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
       duration_us: { type: 'integer' },
+      extended_us: { type: 'integer', description: 'Explicit borrowed-tail target in µs, within [0, duration_us]. Omit to keep trimmed ranges sacred: growth never borrows, shrink returns the borrow first.' },
       kind: { type: 'string', enum: ['Crossfade', 'Wipe', 'Slide'] },
       transition_id: { type: 'string' },
     }, required: ['transition_id'] },
     parseArgs: (a) => {
       parseTransitionKindOpt(a.kind, a.direction) // strict enum gate; dispatch re-derives
       parseNumOpt(a.duration_us, 'duration_us')
-      return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction } }
+      parseNumOpt(a.extended_us, 'extended_us')
+      return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction, extended_us: a.extended_us } }
     } },
   { name: 'remove_transition', exec: 'table',
-    description: "Remove a transition by id. The outgoing layer's auto-extension is undone — its end shrinks back by the transition's duration, restoring the hard cut. Recorded (undoable). Errors with TransitionNotFound for an unknown id.",
+    description: "Remove a transition by id. The restore is routed by provenance: the outgoing layer's end shrinks back by the transition's `extended_us` (only borrowed tail media is returned — real content of a pre-positioned overlap is never trimmed) and the incoming layer moves RIGHT by the remainder (`duration_us − extended_us`), its group siblings following, restoring the hard cut exactly. Refuses with TransitionRestoreCollision when a moved layer's destination is occupied (the vacated gap has since been filled) — the system never makes room; move or delete the blocking layer first. Recorded (undoable). Errors with TransitionNotFound for an unknown id.",
     inputSchema: { type: 'object', properties: { transition_id: { type: 'string' } }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
   // ── table-exec: composition ──────────────────────────────────────────────

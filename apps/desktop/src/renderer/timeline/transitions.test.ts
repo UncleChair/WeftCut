@@ -91,8 +91,13 @@ function crossfade(
     to_layer: toLayer,
     duration_us: durationUs,
     kind: { kind: "Crossfade" },
+    extended_us: 0,
   };
 }
+
+// The intended duration every eligibility check below runs against — the
+// kernels take it as a required arg (`d ≤ min(len_A, len_B)`, ADR 0048).
+const DUR_1S = 1_000_000;
 
 // ── findCutNear — cut-detection geometry ─────────────────────────────────────
 
@@ -101,43 +106,67 @@ describe("findCutNear", () => {
   const b = visualLayer("b", 2_000_000, 4_000_000);
 
   it("finds the cut when the click lands within tolerance of the seam", () => {
-    expect(findCutNear([a, b], 2_010_000, 50_000)).toEqual({
+    expect(findCutNear([a, b], 2_010_000, 50_000, DUR_1S)).toEqual({
       fromLayerId: "a",
       toLayerId: "b",
       cutUs: 2_000_000,
     });
     // Approaching from the left of the seam works too.
-    expect(findCutNear([a, b], 1_960_000, 50_000)?.fromLayerId).toBe("a");
+    expect(findCutNear([a, b], 1_960_000, 50_000, DUR_1S)?.fromLayerId).toBe(
+      "a",
+    );
   });
 
   it("returns null outside the tolerance band", () => {
-    expect(findCutNear([a, b], 2_100_000, 50_000)).toBeNull();
+    expect(findCutNear([a, b], 2_100_000, 50_000, DUR_1S)).toBeNull();
   });
 
   it("tolerance boundary is inclusive", () => {
-    expect(findCutNear([a, b], 2_050_000, 50_000)).not.toBeNull();
+    expect(findCutNear([a, b], 2_050_000, 50_000, DUR_1S)).not.toBeNull();
   });
 
   it("requires EXACT adjacency — gaps and overlaps are not cuts", () => {
     const gapped = visualLayer("g", 2_033_333, 4_000_000);
-    expect(findCutNear([a, gapped], 2_000_000, 50_000)).toBeNull();
+    expect(findCutNear([a, gapped], 2_000_000, 50_000, DUR_1S)).toBeNull();
     // A pair already overlapped (authorized transition) no longer shares a
     // boundary, so it stops matching — the add menu disappears naturally.
     const overlapped = visualLayer("o", 1_500_000, 4_000_000);
-    expect(findCutNear([a, overlapped], 2_000_000, 50_000)).toBeNull();
+    expect(findCutNear([a, overlapped], 2_000_000, 50_000, DUR_1S)).toBeNull();
   });
 
   it("rejects audio participants on either side", () => {
     const audioTail = audioLayer("aud", 2_000_000, 4_000_000);
-    expect(findCutNear([a, audioTail], 2_000_000, 50_000)).toBeNull();
+    expect(findCutNear([a, audioTail], 2_000_000, 50_000, DUR_1S)).toBeNull();
     const audioHead = audioLayer("aud", 0, 2_000_000);
-    expect(findCutNear([audioHead, b], 2_000_000, 50_000)).toBeNull();
+    expect(findCutNear([audioHead, b], 2_000_000, 50_000, DUR_1S)).toBeNull();
+  });
+
+  it("a cut whose participant is shorter than the intended duration is not offered", () => {
+    // Prevention first (#18): the surface never dangles an add the mutation
+    // would refuse with TransitionDurationOutOfRange.
+    const shortOutgoing = visualLayer("a", 1_500_000, 2_000_000); // 0.5 s
+    expect(
+      findCutNear([shortOutgoing, b], 2_000_000, 50_000, DUR_1S),
+    ).toBeNull();
+    const shortIncoming = visualLayer("b", 2_000_000, 2_500_000); // 0.5 s
+    expect(
+      findCutNear([a, shortIncoming], 2_000_000, 50_000, DUR_1S),
+    ).toBeNull();
+  });
+
+  it("a participant exactly as long as the duration is still offered (d ≤ min, inclusive)", () => {
+    const exact = visualLayer("x", 2_000_000, 3_000_000); // exactly 1 s
+    expect(findCutNear([a, exact], 2_000_000, 50_000, DUR_1S)).toEqual({
+      fromLayerId: "a",
+      toLayerId: "x",
+      cutUs: 2_000_000,
+    });
   });
 
   it("picks the nearest cut when several are inside tolerance", () => {
     const c = visualLayer("c", 4_000_000, 6_000_000);
     // Cuts at 2s and 4s; click at 3.9s with a huge tolerance → 4s wins.
-    expect(findCutNear([a, b, c], 3_900_000, 3_000_000)).toEqual({
+    expect(findCutNear([a, b, c], 3_900_000, 3_000_000, DUR_1S)).toEqual({
       fromLayerId: "b",
       toLayerId: "c",
       cutUs: 4_000_000,
@@ -149,11 +178,13 @@ describe("findCutNear", () => {
     // 2.5s with tolerance covering both: only the real cut matches.
     const bShifted = visualLayer("b", 2_500_000, 4_000_000);
     const c = visualLayer("c", 4_000_000, 6_000_000);
-    expect(findCutNear([a, bShifted, c], 2_400_000, 2_000_000)).toEqual({
-      fromLayerId: "b",
-      toLayerId: "c",
-      cutUs: 4_000_000,
-    });
+    expect(findCutNear([a, bShifted, c], 2_400_000, 2_000_000, DUR_1S)).toEqual(
+      {
+        fromLayerId: "b",
+        toLayerId: "c",
+        cutUs: 4_000_000,
+      },
+    );
   });
 });
 
@@ -168,7 +199,7 @@ describe("findNearestCut", () => {
     // Playhead parked 26 s past the only cut — a tolerance search would
     // refuse; the command semantics say apply anyway.
     const tracks = [track([a, b], "t1")];
-    expect(findNearestCut(tracks, 30_000_000)).toEqual({
+    expect(findNearestCut(tracks, 30_000_000, DUR_1S)).toEqual({
       fromLayerId: "a",
       toLayerId: "b",
       cutUs: 2_000_000,
@@ -180,7 +211,7 @@ describe("findNearestCut", () => {
     const e = visualLayer("e", 5_000_000, 7_000_000);
     // Cuts: t1 at 2s, t2 at 5s; playhead at 4.2s → 5s is nearer.
     const tracks = [track([a, b], "t1"), track([d, e], "t2")];
-    expect(findNearestCut(tracks, 4_200_000)?.cutUs).toBe(5_000_000);
+    expect(findNearestCut(tracks, 4_200_000, DUR_1S)?.cutUs).toBe(5_000_000);
   });
 
   it("equidistant cuts on two tracks tie-break to the lower track index", () => {
@@ -188,7 +219,7 @@ describe("findNearestCut", () => {
     const e = visualLayer("e", 3_000_000, 5_000_000);
     // Cuts at 2s (t1) and 3s (t2); playhead at 2.5s is equidistant.
     const tracks = [track([a, b], "t1"), track([d, e], "t2")];
-    expect(findNearestCut(tracks, 2_500_000)).toMatchObject({
+    expect(findNearestCut(tracks, 2_500_000, DUR_1S)).toMatchObject({
       fromLayerId: "a",
       toLayerId: "b",
     });
@@ -197,45 +228,68 @@ describe("findNearestCut", () => {
   it("equidistant cuts on ONE track tie-break to the earlier cut", () => {
     // Cuts at 2s and 4s; playhead dead-center at 3s.
     const tracks = [track([a, b, c], "t1")];
-    expect(findNearestCut(tracks, 3_000_000)?.cutUs).toBe(2_000_000);
+    expect(findNearestCut(tracks, 3_000_000, DUR_1S)?.cutUs).toBe(2_000_000);
+  });
+
+  it("a too-short pair is skipped even when it is the nearest cut", () => {
+    // t2's cut at 3.1s is nearer to the playhead, but its outgoing layer is
+    // only 0.2 s long — ineligible for the 1 s duration, so t1's cut wins.
+    const d = visualLayer("d", 2_900_000, 3_100_000);
+    const e = visualLayer("e", 3_100_000, 5_000_000);
+    const tracks = [track([a, b], "t1"), track([d, e], "t2")];
+    expect(findNearestCut(tracks, 3_100_000, DUR_1S)?.cutUs).toBe(2_000_000);
+  });
+
+  it("returns null when the only cut's participants are too short for the duration", () => {
+    const shortA = visualLayer("sa", 0, 500_000);
+    const shortB = visualLayer("sb", 500_000, 1_000_000);
+    expect(findNearestCut([track([shortA, shortB], "t1")], 0, DUR_1S)).toBeNull();
+  });
+
+  it("participants exactly as long as the duration stay eligible (d ≤ min, inclusive)", () => {
+    const x = visualLayer("x", 0, 1_000_000);
+    const y = visualLayer("y", 1_000_000, 2_000_000);
+    expect(findNearestCut([track([x, y], "t1")], 0, DUR_1S)?.cutUs).toBe(
+      1_000_000,
+    );
   });
 
   it("a selected layer's cut outranks a nearer unselected cut", () => {
-    const d = visualLayer("d", 2_900_000, 3_100_000);
+    const d = visualLayer("d", 2_100_000, 3_100_000);
     const e = visualLayer("e", 3_100_000, 5_000_000);
     // Playhead at 3.1s sits ON t2's cut, but the user selected `a`.
     const tracks = [track([a, b], "t1"), track([d, e], "t2")];
     expect(
-      findNearestCut(tracks, 3_100_000, new Set(["a"]))?.fromLayerId,
+      findNearestCut(tracks, 3_100_000, DUR_1S, new Set(["a"]))?.fromLayerId,
     ).toBe("a");
     // Either participant counts — selecting the incoming layer works too.
     expect(
-      findNearestCut(tracks, 3_100_000, new Set(["b"]))?.fromLayerId,
+      findNearestCut(tracks, 3_100_000, DUR_1S, new Set(["b"]))?.fromLayerId,
     ).toBe("a");
   });
 
   it("a selection touching no cut falls back to the global nearest", () => {
     const lone = visualLayer("lone", 10_000_000, 12_000_000);
     const tracks = [track([a, b], "t1"), track([lone], "t2")];
-    expect(findNearestCut(tracks, 0, new Set(["lone"]))?.cutUs).toBe(
+    expect(findNearestCut(tracks, 0, DUR_1S, new Set(["lone"]))?.cutUs).toBe(
       2_000_000,
     );
   });
 
   it("an empty selection set behaves like no selection", () => {
     const tracks = [track([a, b], "t1")];
-    expect(findNearestCut(tracks, 0, new Set())?.cutUs).toBe(2_000_000);
+    expect(findNearestCut(tracks, 0, DUR_1S, new Set())?.cutUs).toBe(2_000_000);
   });
 
   it("returns null when no eligible cut exists anywhere", () => {
-    expect(findNearestCut([], 0)).toBeNull();
+    expect(findNearestCut([], 0, DUR_1S)).toBeNull();
     // Gap on one track, audio adjacency on the other: neither is a cut.
     const gapped = visualLayer("g", 2_100_000, 4_000_000);
     const audioTracks = [
       track([a, gapped], "t1"),
       track([audioLayer("x", 0, 1_000_000), audioLayer("y", 1_000_000, 2_000_000)], "t2"),
     ];
-    expect(findNearestCut(audioTracks, 1_000_000)).toBeNull();
+    expect(findNearestCut(audioTracks, 1_000_000, DUR_1S)).toBeNull();
   });
 });
 
@@ -431,6 +485,14 @@ describe("chip-menu update args", () => {
         transitionId: "tr-1",
         durationUs: 2_000_000,
       });
+    });
+
+    it("carries duration ONLY — no extendedUs key, so the preset rides the mutation's sanctity-preferring routing (D5)", () => {
+      // `toEqual` ignores undefined-valued keys, so pin the key set itself:
+      // a stray `extendedUs` here would silently turn every preset pick into
+      // an explicit borrow request.
+      const args = transitionDurationUpdateArgs(wipeLeft, 2_000_000)!;
+      expect(Object.keys(args).sort()).toEqual(["durationUs", "transitionId"]);
     });
 
     it("picking the matching (checkmarked) preset is a no-op", () => {

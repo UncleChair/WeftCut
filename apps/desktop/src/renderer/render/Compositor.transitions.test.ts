@@ -89,6 +89,7 @@ const summary: ProjectSummary = {
       to_layer: "layer-b",
       duration_us: 1_000_000,
       kind: { kind: "Crossfade" },
+      extended_us: 0,
     },
   ],
   groups: [],

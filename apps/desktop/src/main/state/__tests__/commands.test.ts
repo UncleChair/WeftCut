@@ -99,6 +99,15 @@ describe('parseMechanical transitions', () => {
     expect(durationOnly?.args).toEqual({ transition: 'tr-1', duration_us: 250_000, kind: undefined, direction: undefined })
   })
 
+  it('update_transition forwards extendedUs as extended_us (pure renaming, same as duration_us)', () => {
+    const withExt = parseMechanical('update_transition', { transitionId: 'tr-1', extendedUs: 250_000 })
+    expect(withExt?.args.extended_us).toBe(250_000)
+    // A wrapper that never set extendedUs must reach the actor as absent, not
+    // 0 — absent is what keeps the routing sanctity-preferring (D5).
+    const without = parseMechanical('update_transition', { transitionId: 'tr-1', durationUs: 250_000 })
+    expect(without?.args.extended_us).toBeUndefined()
+  })
+
   it('remove_transition maps transitionId', () => {
     expect(parseMechanical('remove_transition', { transitionId: 'tr-1' })).toEqual({
       op: 'remove_transition',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseEasing, parseAnimatedF64, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, McpArgError, toolJson } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseEasing, parseAnimatedF64, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, McpArgError, toolJson } from '../mcp-commands'
 import { EASING_PRESETS } from '../../../shared/easing'
 
 describe('parseInterp', () => {
@@ -130,6 +130,22 @@ describe('parseRole', () => {
   it('rejects an unknown role', () => { expect(() => parseRole('bogus')).toThrow(McpArgError) })
   it('rejects a non-string', () => { expect(() => parseRole(3)).toThrow(McpArgError) })
 })
+describe('parseTransitionPlacement', () => {
+  it("absent (undefined/null) defaults to 'overlap' — spec D1", () => {
+    expect(parseTransitionPlacement(undefined)).toBe('overlap')
+    expect(parseTransitionPlacement(null)).toBe('overlap')
+  })
+  it('accepts the two placements', () => {
+    expect(parseTransitionPlacement('overlap')).toBe('overlap')
+    expect(parseTransitionPlacement('extend')).toBe('extend')
+  })
+  it('rejects a typo instead of silently classifying as overlap', () => {
+    expect(() => parseTransitionPlacement('Extend')).toThrow(McpArgError)
+    expect(() => parseTransitionPlacement('both')).toThrow(McpArgError)
+    expect(() => parseTransitionPlacement(1)).toThrow(McpArgError)
+  })
+})
+
 describe('parseRgba', () => {
   it('accepts a well-formed Rgba object', () => {
     expect(parseRgba({ r: 0, g: 128, b: 255, a: 255 }, 'color')).toEqual({ r: 0, g: 128, b: 255, a: 255 })

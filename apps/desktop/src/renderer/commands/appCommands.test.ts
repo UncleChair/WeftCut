@@ -242,11 +242,18 @@ describe("buildAppCommands", () => {
       expect(predicate()).toBe(false);
     });
 
-    it("is enabled when two visual layers touch on one track", () => {
+    it("is enabled when two visual layers touch on one track (each exactly the 1 s default long — d ≤ min is inclusive)", () => {
       seed([
         track("t1", [layer("a", 0, 1_000_000), layer("b", 1_000_000, 2_000_000)]),
       ]);
       expect(predicate()).toBe(true);
+    });
+
+    it("is disabled when a participant is shorter than the default duration (kernel eligibility, ADR 0048)", () => {
+      seed([
+        track("t1", [layer("a", 0, 500_000), layer("b", 500_000, 2_000_000)]),
+      ]);
+      expect(predicate()).toBe(false);
     });
 
     it("is disabled when the only adjacency is audio (never a participant)", () => {

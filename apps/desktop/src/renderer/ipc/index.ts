@@ -456,15 +456,19 @@ export type TransitionKindView =
   | { kind: "Wipe"; direction: TransitionDirection }
   | { kind: "Slide"; direction: TransitionDirection };
 
-/// Wire mirror of the model's `Transition`. Start-at-cut alignment: the
-/// transition occupies the incoming layer's first `duration_us` µs, which is
-/// exactly the authorized overlap with `from_layer`.
+/// Wire mirror of the model's `Transition` (summary.ts TransitionView). The
+/// transition occupies the incoming layer's first `duration_us` µs — the
+/// authorized overlap with `from_layer`. `extended_us` is the borrowed share
+/// of that overlap (how much outgoing tail media the transition consumed;
+/// 0 = pure placement) — inverse ops and the chip's right edge route by it
+/// (ADR 0048).
 export interface TransitionSummary {
   id: string;
   from_layer: string;
   to_layer: string;
   duration_us: number;
   kind: TransitionKindView;
+  extended_us: number;
 }
 
 export interface LayerPatch {
@@ -1299,10 +1303,12 @@ export async function deleteLayer(layerId: string): Promise<void> {
 // ============================================================
 
 /// Add a transition at a hard cut between same-track adjacent visual layers.
-/// The outgoing layer auto-extends by `durationUs` (start-at-cut alignment).
-/// Crossfade must OMIT `direction`; Wipe/Slide must carry one — the backend
-/// rejects the other pairing. Throws structured errors, notably
-/// `TransitionInsufficientHandle { available_us }` — surface it, never clamp.
+/// Overlap placement (the backend default — this wrapper sends no placement):
+/// the incoming layer moves left by the frame-floored `durationUs`, trimmed
+/// ranges preserved, no tail borrowed (ADR 0048). Crossfade must OMIT
+/// `direction`; Wipe/Slide must carry one — the backend rejects the other
+/// pairing. Throws structured refusals (shared group, t = 0 crossing,
+/// duration over a participant's length) — surface them, never clamp.
 export async function addTransition(args: {
   fromLayerId: string;
   toLayerId: string;
@@ -1319,25 +1325,34 @@ export async function addTransition(args: {
   });
 }
 
-/// Patch duration and/or kind+direction in ONE recorded commit (one undo
-/// step). Direction rides inside kind — sending direction without kind is
-/// rejected, so kind changes to Wipe/Slide must include a direction.
+/// Patch duration, kind+direction, and/or the borrowed-tail target in ONE
+/// recorded commit (one undo step). Direction rides inside kind — sending
+/// direction without kind is rejected, so kind changes to Wipe/Slide must
+/// include a direction. Omitting `extendedUs` keeps the routing
+/// sanctity-preferring (ADR 0048): growth moves the incoming layer left and
+/// never borrows; shrink returns borrowed tail first. Only an explicit
+/// `extendedUs` (the chip's right edge) grows the borrow.
 export async function updateTransition(args: {
   transitionId: string;
   durationUs?: number;
   kind?: TransitionKindView["kind"];
   direction?: TransitionDirection;
+  extendedUs?: number;
 }): Promise<void> {
   return invoke<void>("update_transition", {
     transitionId: args.transitionId,
     ...(args.durationUs !== undefined ? { durationUs: args.durationUs } : {}),
     ...(args.kind !== undefined ? { kind: args.kind } : {}),
     ...(args.direction !== undefined ? { direction: args.direction } : {}),
+    ...(args.extendedUs !== undefined ? { extendedUs: args.extendedUs } : {}),
   });
 }
 
-/// Remove by id; the outgoing layer shrinks back by the transition's
-/// duration, restoring the hard cut. Recorded (undoable).
+/// Remove by id; routed restore (ADR 0048): the outgoing layer shrinks back
+/// by the transition's `extended_us` and the incoming layer moves right by
+/// the remainder (siblings following), restoring the hard cut. Can refuse
+/// with TransitionRestoreCollision when the restore destination is occupied.
+/// Recorded (undoable).
 export async function removeTransition(transitionId: string): Promise<void> {
   return invoke<void>("remove_transition", { transitionId });
 }

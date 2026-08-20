@@ -87,7 +87,8 @@ function makeTrack(layers: LayerSummary[]): TrackSummary {
 const layerA = colorLayer("layer-a", "Clip A", 0, 2_000_000);
 const layerB = colorLayer("layer-b", "Clip B", 2_000_000, 4_000_000);
 
-// Post-add state: A auto-extended by the 0.5s overlap, transition riding it.
+// Post-add state under EXTEND placement (reachable via placement:'extend' /
+// the chip's right edge): A borrowed 0.5s of tail, the transition rides it.
 const extendedA = colorLayer("layer-a", "Clip A", 0, 2_500_000);
 const transition: TransitionSummary = {
   id: "tr-1",
@@ -95,6 +96,7 @@ const transition: TransitionSummary = {
   to_layer: "layer-b",
   duration_us: 500_000,
   kind: { kind: "Wipe", direction: "left" },
+  extended_us: 500_000,
 };
 
 function renderTimeline(overrides: {
@@ -257,6 +259,26 @@ describe("cut context menu", () => {
 
     await screen.findByText("Rename"); // menu is open
     expect(screen.queryByText("Add crossfade")).toBeNull();
+  });
+
+  it("a seam whose participant is too short for the default duration offers no Add transition entries", async () => {
+    // Outgoing clip is 0.5s < the 1s default at 30 fps — the kernel's
+    // eligibility (`d ≤ min(len_A, len_B)`) drops the cut, so the menu never
+    // dangles an add the mutation would refuse. Prevention first (#18).
+    const shortA = colorLayer("layer-a", "Clip A", 0, 500_000);
+    const longB = colorLayer("layer-b", "Clip B", 500_000, 4_000_000);
+    // Right-click the LONG clip (the 40px-wide short one renders no label to
+    // grab): the hit test runs against the whole track, so the seam at its
+    // head is reachable from either side.
+    const { getByText } = renderTimeline({ tracks: [makeTrack([shortA, longB])] });
+    const blockB = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+    // Seam at 0.5s = 40px at 80 px/s.
+    fireEvent.contextMenu(blockB, { clientX: 40, clientY: 30 });
+
+    await screen.findByText("Rename"); // menu is open
+    expect(screen.queryByText("Add crossfade")).toBeNull();
+    expect(ipcMocks.addTransition).not.toHaveBeenCalled();
   });
 
   it("TransitionInsufficientHandle surfaces available_us through the status log — never a silent clamp", async () => {

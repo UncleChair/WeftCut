@@ -146,7 +146,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // validated actor-side by parseTransitionKind (Crossfade REJECTS direction;
   // Wipe/Slide REQUIRE one), so undefined passes through untouched.
   add_transition: (a) => ({ op: 'add_transition', args: { from: a.fromLayerId, to: a.toLayerId, duration_us: a.durationUs, kind: a.kind, direction: a.direction } }),
-  update_transition: (a) => ({ op: 'update_transition', args: { transition: a.transitionId, duration_us: a.durationUs, kind: a.kind, direction: a.direction } }),
+  update_transition: (a) => ({ op: 'update_transition', args: { transition: a.transitionId, duration_us: a.durationUs, kind: a.kind, direction: a.direction, extended_us: a.extendedUs } }),
   remove_transition: (a) => ({ op: 'remove_transition', args: { transition: a.transitionId } }),
   restyle_captions: (a) => ({ op: 'restyle_captions', args: { patch: a.patch } }),
   update_project_settings: (a) => ({ op: 'update_project_settings', args: { patch: a.patch } }),
