@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 
 /**
  * Markers painted on the timeline ruler, and the one switch that silences them.
@@ -162,10 +162,23 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
     const renameInput = page.getByLabel('Marker label')
 
-    // Park the playhead away from the row head first: a frame-0 diamond is
-    // centred on the strip's left edge, so half of it sits under the overflow
-    // clip — a poor right-click target for the step below.
+    // Give the composition real duration BEFORE parking the playhead. The
+    // ruler seek clamps to the last frame anchor, and an empty composition's
+    // autofitted duration is 0 (ADR 0005) — so over an empty timeline the park
+    // below silently snaps back to frame 0. A layer via the renderer's own
+    // command bridge keeps this spec's premise: still no MCP client anywhere.
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 5_000_000 })
+
+    // Park the playhead away from the row head: a frame-0 diamond is centred
+    // on the lane's left edge, so half of it sits under the sticky header
+    // column — a poor right-click target for the step below. Asserted, not
+    // assumed: a park that quietly clamped home would fail HERE, instead of as
+    // an interception mystery at the right-click.
+    await waitForHook(page, 'getPlayheadUs')
     await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__weftcutTest.getPlayheadUs()))
+      .toBeGreaterThan(0)
 
     // ── M drops an unlabelled point marker at the playhead's frame ─────────
     await page.keyboard.press('M')

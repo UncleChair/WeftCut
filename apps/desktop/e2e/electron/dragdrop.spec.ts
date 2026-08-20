@@ -84,6 +84,9 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
     await page.locator('.splash-screen').waitFor({ state: 'detached', timeout: 15_000 })
 
     // The drop targets the media pool; resolve its viewport-center coordinates.
+    // No tab activation needed first: Transitions shares the library group, but
+    // the Media Pool is the group's active tab in the built-in layout, so
+    // `.media-pool` is the visible content here (waitForSelector requires it).
     await page.waitForSelector('.media-pool')
     const box = await page.locator('.media-pool').boundingBox()
     if (!box) throw new Error('media pool has no bounding box')
@@ -118,6 +121,7 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
       'preview',
       'quick-actions',
       'timeline',
+      'transitions',
     ])
   } finally {
     await app.close()

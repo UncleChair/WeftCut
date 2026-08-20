@@ -70,7 +70,16 @@ test('every open Panel is a focus region', async () => {
             .sort(),
         ),
       )
-      .toEqual(['attribute', 'effect', 'media', 'nearby', 'preview', 'quick-actions', 'timeline'])
+      .toEqual([
+        'attribute',
+        'effect',
+        'media',
+        'nearby',
+        'preview',
+        'quick-actions',
+        'timeline',
+        'transitions',
+      ])
   } finally {
     await app.close()
   }

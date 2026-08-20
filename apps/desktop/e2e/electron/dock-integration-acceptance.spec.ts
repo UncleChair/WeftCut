@@ -36,7 +36,9 @@ const SRT_PATH = path.resolve(__dirname, "../fixtures/subtitles/overlapping.srt"
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 /// The built-in Editing baseline, sorted. Quick Actions is a Panel like any
-/// other — it just renders its tab as a drag grip instead of a label.
+/// other — it just renders its tab as a drag grip instead of a label; and
+/// Transitions ships open too, tabbed behind the Media Pool in the library
+/// group.
 const DEFAULT_PANELS = [
   "attribute",
   "effect",
@@ -45,6 +47,7 @@ const DEFAULT_PANELS = [
   "preview",
   "quick-actions",
   "timeline",
+  "transitions",
 ];
 const PANEL_COUNT = DEFAULT_PANELS.length;
 /// Panel-body selector for the `rect()` / `settledWidth()` readers below, which
@@ -187,8 +190,8 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
     // A second Backquote press reverses the overlay: no Panel is maximized,
     // the tree is still the built-in Panel set (maximize never persisted),
     // and the layout is a genuine multi-column split again — Preview back to
-    // a shared column alongside Media and Timeline (both single-Panel groups,
-    // so robustly visible).
+    // a shared column alongside Media and Timeline (Timeline solo, Media the
+    // library group's active tab, so both robustly visible).
     await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBeNull();
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
@@ -329,6 +332,7 @@ test("an edge drop splits a Panel into its own group beside the target", async (
       "Media Pool",
       "Nearby",
       "Timeline",
+      "Transitions",
     ]);
 
     // Drag Nearby's tab to the LEFT edge of Timeline. An edge drop must create a
@@ -357,6 +361,7 @@ test("an edge drop splits a Panel into its own group beside the target", async (
         "Media Pool",
         "Nearby",
         "Timeline",
+        "Transitions",
       ]);
     // Nearby now sits to the left of Timeline.
     const nearby = await rect(page, panelSel("nearby"));

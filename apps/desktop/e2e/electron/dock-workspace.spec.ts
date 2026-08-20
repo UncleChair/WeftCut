@@ -49,9 +49,10 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     });
     // `.weft-dock-panel` prefix required throughout: `[data-panel-kind]` alone
     // also matches each Panel's tab, so a bare selector double-counts.
-    await expect(page.locator(".weft-dock-panel[data-panel-kind]")).toHaveCount(7);
+    await expect(page.locator(".weft-dock-panel[data-panel-kind]")).toHaveCount(8);
     for (const kind of [
       "media",
+      "transitions",
       "preview",
       "timeline",
       "quick-actions",
@@ -119,12 +120,15 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     // Every group keeps its 28px tab strip with a visible title — except a solo
     // Preview, whose strip (and drag handle) is hidden until another Panel joins
     // its group, and the Quick Actions strip, whose tab is the grip instead.
+    // Transitions ships tabbed behind the Media Pool, so its label shows in the
+    // library group's strip even while its content sleeps.
     await expect(page.locator(".weft-dock-tab--grip")).toBeVisible();
     await expect(
       page.locator('.weft-dock-tab-label:text-is("Quick Actions")'),
     ).toHaveCount(0);
     for (const label of [
       "Media Pool",
+      "Transitions",
       "Timeline",
       "Attribute",
       "Effect",
@@ -147,7 +151,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     // grip is the only tab with a `title`, and even there it sits on the inner
     // div, so it does NOT become the `role="tab"`'s accessible name — the grip
     // tab is unnamed. Locate tabs with `dockTab()`, not by title.
-    for (const label of ["Media Pool", "Timeline", "Attribute", "Effect", "Nearby"]) {
+    for (const label of ["Media Pool", "Transitions", "Timeline", "Attribute", "Effect", "Nearby"]) {
       await expect(page.getByRole("tab", { name: label })).toHaveCount(1);
     }
 
@@ -386,8 +390,9 @@ test("tabs carry no close chrome, and the Quick Actions grip closes its strip", 
 
     // Right-clicking a tab opens nothing at all — neither Dockview's menu nor
     // one of ours. Checked on a solo tab and on a tab inside a shared group —
-    // the solo and grouped tab shapes.
-    for (const kind of ["media", "attribute"]) {
+    // the solo and grouped tab shapes. (Timeline is the solo one: Media Pool
+    // stopped qualifying when Transitions joined its group.)
+    for (const kind of ["timeline", "attribute"]) {
       await dockTab(page, kind).click({ button: "right" });
       await expect(page.locator(".dv-context-menu-item")).toHaveCount(0);
       await expect(page.locator(".app-menu-list")).toHaveCount(0);
@@ -401,7 +406,7 @@ test("tabs carry no close chrome, and the Quick Actions grip closes its strip", 
     await expect(gripItems).toHaveText(/Close Panel|关闭面板/);
     await gripItems.click();
     await expect(dockPanel(page, "quick-actions")).toHaveCount(0);
-    await expect(dockPanel(page)).toHaveCount(6);
+    await expect(dockPanel(page)).toHaveCount(7);
   } finally {
     await app.close();
   }
@@ -642,11 +647,13 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     await expect.poll(effectOrder).toEqual(reordered);
 
     // The card gesture never touched the Dock Tree. Preview sits solo, so its
-    // tab strip (and label) is hidden; every other group's tab shows.
-    const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "quick-actions", "timeline"];
+    // tab strip (and label) is hidden; every other group's tab shows —
+    // including Transitions, tabbed behind the Media Pool in the library group.
+    const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "quick-actions", "timeline", "transitions"];
     expect(await panelKinds()).toEqual(defaultPanelSet);
     expect(await visibleTabLabels()).toEqual([
       "Media Pool",
+      "Transitions",
       "Attribute",
       "Effect",
       "Nearby",
@@ -666,6 +673,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
       "Nearby",
       "Preview",
       "Timeline",
+      "Transitions",
     ]);
     expect(await panelKinds()).toEqual(defaultPanelSet);
     expect(await effectOrder()).toEqual(reordered);
@@ -686,7 +694,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
       name: "workspace-ui",
       canvas: CANVAS,
     });
-    await expect(page.locator(".weft-dock-panel[data-panel-kind]")).toHaveCount(7);
+    await expect(page.locator(".weft-dock-panel[data-panel-kind]")).toHaveCount(8);
 
     const viewMenu = page.locator(".menu-trigger").nth(2);
     // Menu labels are localized (the e2e runtime may be en-US or zh-CN); match
