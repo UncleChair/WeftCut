@@ -3,12 +3,15 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { updateLayerParamTrack } = vi.hoisted(() => ({
+const { updateLayerParamTrack, logEmit } = vi.hoisted(() => ({
   updateLayerParamTrack: vi.fn(async () => {}),
+  logEmit: vi.fn(async () => {}),
 }));
-vi.mock("../ipc", () => ({ updateLayerParamTrack }));
+vi.mock("../ipc", () => ({ updateLayerParamTrack, logEmit }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string, o?: { defaultValue?: string }) => o?.defaultValue ?? k }),
+  // tryMutate's import chain pulls ../i18n, whose init `.use()`s this plugin.
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 // Isolate from KeyframeField internals: a stub that surfaces the wired props
 // and lets the test fire onCommitTrack.

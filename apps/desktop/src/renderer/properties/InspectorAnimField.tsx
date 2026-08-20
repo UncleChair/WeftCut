@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { KeyframeField } from "../components/KeyframeField";
+import { tryMutate } from "../errors/tryMutate";
 import { updateLayerParamTrack, updateLayerParamTracks, type LayerSummary } from "../ipc";
 import { readParamTrack, type ParamDescriptor } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
@@ -37,12 +38,16 @@ export function InspectorAnimField({
       fallback={desc.fallback}
       tInLayerUs={tInLayerUs}
       playheadInSpan={playheadInSpan}
-      onCommitTrack={(k, next) =>
-        (fanOut
-          ? updateLayerParamTracks(layer.id, fanOutEntries(fanOut, next))
-          : updateLayerParamTrack(layer.id, k, next)
-        ).then(onMutated).catch((e) => console.warn(e))
-      }
+      onCommitTrack={async (k, next) => {
+        await tryMutate(
+          () =>
+            (fanOut
+              ? updateLayerParamTracks(layer.id, fanOutEntries(fanOut, next))
+              : updateLayerParamTrack(layer.id, k, next)
+            ).then(onMutated),
+          "Edit keyframes",
+        );
+      }}
       onMutated={onMutated}
       widgets={desc.widgets ?? ["number"]}
       {...(desc.step !== undefined ? { step: desc.step } : {})}

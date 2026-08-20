@@ -170,9 +170,10 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
               ariaLabel={t("property_panel.font_size_px")}
               onValueChange={setFontSize}
               onCommit={(v) =>
-                restyleCaptions({ font_size_px: v })
-                  .then(onMutated)
-                  .catch((e) => console.warn("restyle captions failed:", e))
+                void tryMutate(
+                  () => restyleCaptions({ font_size_px: v }).then(onMutated),
+                  "Restyle captions",
+                )
               }
             />
             <AppColorField
@@ -183,9 +184,10 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
                 setColor(next);
                 if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
                 colorDebounceRef.current = setTimeout(() => {
-                  restyleCaptions({ color: next })
-                    .then(onMutated)
-                    .catch((e) => console.warn("restyle captions color failed:", e));
+                  void tryMutate(
+                    () => restyleCaptions({ color: next }).then(onMutated),
+                    "Restyle captions",
+                  );
                 }, 250);
               }}
             />

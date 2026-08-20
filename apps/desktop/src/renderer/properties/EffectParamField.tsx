@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { KeyframeField } from "../components/KeyframeField";
+import { tryMutate } from "../errors/tryMutate";
 import { updateLayerParamTrack, type AnimTrack, type EffectView, type LayerSummary } from "../ipc";
 import { getDescriptor, type EffectParamSpec } from "../render/effects/effectRegistry";
 
@@ -76,7 +77,12 @@ function EffectParamField({
         fallback={spec.default}
         tInLayerUs={tInLayerUs}
         playheadInSpan={playheadInSpan}
-        onCommitTrack={(k, next) => updateLayerParamTrack(layer.id, k, next).then(onMutated).catch((e) => console.warn(e))}
+        onCommitTrack={async (k, next) => {
+          await tryMutate(
+            () => updateLayerParamTrack(layer.id, k, next).then(onMutated),
+            "Edit effect parameter",
+          );
+        }}
         onMutated={onMutated}
         widgets={["number"]}
         step={step}

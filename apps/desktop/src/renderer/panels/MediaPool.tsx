@@ -35,6 +35,7 @@ import { formatTimecode } from "../frames";
 import { trackDisplayName } from "../lib/trackName";
 import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
+import { tryMutate } from "../errors/tryMutate";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
 import { quickProxyPath } from "../render/decodeRoute";
@@ -440,7 +441,12 @@ export function MediaPool({
             if (next === true && quickProxyPath(contextMedia) === null) {
               void generateQuickProxy(contextMedia.id);
             }
-            void setProxyOverride(contextMedia.id, next);
+            // Persisted project-settings write: a rejection without this wrap
+            // is an unhandled promise rejection, not even a devtools warning.
+            void tryMutate(
+              () => setProxyOverride(contextMedia.id, next),
+              "Set proxy mode",
+            );
           }}
           onAnalyze={() => {
             setContextMenu(null);

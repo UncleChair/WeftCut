@@ -14,6 +14,7 @@ import {
   type MotifStaleEntry,
   ping,
 } from "../ipc";
+import { tryMutate } from "../errors/tryMutate";
 import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
 import { wireProjectStore } from "../state/projectStore";
@@ -107,19 +108,11 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   }, []);
 
   const exitAgentMode = useCallback(async () => {
-    try {
-      await agentSessionEnd();
-    } catch (e) {
-      console.warn("agent_session_end failed:", e);
-    }
+    await tryMutate(() => agentSessionEnd(), "agent_session_end");
   }, []);
 
   const enterAgentMode = useCallback(async (reason: string) => {
-    try {
-      await agentSessionBegin(reason);
-    } catch (e) {
-      console.warn("agent_session_begin failed:", e);
-    }
+    await tryMutate(() => agentSessionBegin(reason), "agent_session_begin");
   }, []);
 
   // Wire the status-log stream: seed from `log_list`, then subscribe to

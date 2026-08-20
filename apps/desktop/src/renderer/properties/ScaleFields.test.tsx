@@ -3,12 +3,15 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { setScaleLinked } = vi.hoisted(() => ({
+const { setScaleLinked, logEmit } = vi.hoisted(() => ({
   setScaleLinked: vi.fn(async () => {}),
+  logEmit: vi.fn(async () => {}),
 }));
-vi.mock("../ipc", () => ({ setScaleLinked }));
+vi.mock("../ipc", () => ({ setScaleLinked, logEmit }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
+  // tryMutate's import chain pulls ../i18n, whose init `.use()`s this plugin.
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 // Isolate from the real field stack: surface which descriptor got rendered.
 vi.mock("./InspectorAnimField", () => ({
@@ -53,10 +56,28 @@ describe("ScaleFields", () => {
     renderScale(true);
     await userEvent.click(screen.getByRole("button", { name: "property_panel.scale_unlink" }));
     expect(setScaleLinked).toHaveBeenCalledWith("L1", false);
+    expect(logEmit).not.toHaveBeenCalled();
 
     cleanup();
     renderScale(false);
     await userEvent.click(screen.getByRole("button", { name: "property_panel.scale_link" }));
     expect(setScaleLinked).toHaveBeenCalledWith("L1", true);
+  });
+
+  // Gates the tryMutate wiring this batch added across the inspector: a
+  // refused direct commit lands one Project/User row instead of console.warn.
+  it("a refused toggle logs one Project row through the tryMutate funnel", async () => {
+    setScaleLinked.mockRejectedValueOnce(new Error("nope"));
+    renderScale(true);
+    await userEvent.click(screen.getByRole("button", { name: "property_panel.scale_unlink" }));
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(logEmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        category: { kind: "Project" },
+        source: { kind: "User" },
+        message: "Toggle scale link failed: Error: nope",
+      }),
+    );
   });
 });

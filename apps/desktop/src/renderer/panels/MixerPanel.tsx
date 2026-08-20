@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { RotateCcwIcon } from "lucide-react";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSlider } from "../components/AppSlider";
+import { tryMutate } from "../errors/tryMutate";
 import {
   AUDIO_ROLES,
   setRoleGain,
@@ -111,9 +112,10 @@ function RoleChannel({ role, mix, onMutated }: {
   const commitGain = (gainDb: number) => {
     clearRoleGainOverride(role);
     setDraft(null);
-    setRoleGain(role, gainDb)
-      .then(onMutated)
-      .catch((e) => console.warn("set_role_gain failed:", e));
+    void tryMutate(
+      () => setRoleGain(role, gainDb).then(onMutated),
+      "Set role gain",
+    );
   };
   // Escape: abandon the gesture. Clear the override (restores the original
   // sound), drop the draft (restores the displayed value), and arm the guard so
@@ -125,9 +127,10 @@ function RoleChannel({ role, mix, onMutated }: {
     setDraft(null);
   };
   const flip = (patch: { muted?: boolean; solo?: boolean }) => () => {
-    updateRoleFlags(role, patch)
-      .then(onMutated)
-      .catch((e) => console.warn("update_role_flags failed:", e));
+    void tryMutate(
+      () => updateRoleFlags(role, patch).then(onMutated),
+      "Toggle role flag",
+    );
   };
 
   return (

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Clock } from "lucide-react";
 import type { AnimTrack } from "../ipc";
 import { updateLayerParamTrack } from "../ipc";
+import { logMutationFailure } from "../errors/tryMutate";
 import { resolveAnimated } from "../render/animated";
 import { collapseToStatic, liftToKeyframed } from "../keyframe/edits";
 import { setKeyframeFocus } from "../keyframe/focusStore";
@@ -69,7 +70,7 @@ export function AnimatableField({
         await onMutated();
       }
     } catch (e) {
-      console.warn("stopwatch toggle failed:", e);
+      logMutationFailure(e, "Toggle keyframes");
     }
   };
 

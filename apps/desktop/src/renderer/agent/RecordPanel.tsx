@@ -6,6 +6,7 @@ import {
   type LogEntry,
   type OpState,
 } from "../ipc";
+import { tryMutate } from "../errors/tryMutate";
 import { useLogStore } from "../logs/store";
 
 /// Agent record panel — filtered + grouped view of the log stream
@@ -260,13 +261,13 @@ export function RecordPanel({ sessionStartedAt, lockReason }: RecordPanelProps) 
   const onRestore = async (checkpointId: string) => {
     if (lockReason) return; // belt-and-suspenders; backend would also reject
     setRestoring(checkpointId);
-    try {
-      await projectRestoreCheckpoint(checkpointId);
-    } catch (e) {
-      console.warn("restore failed:", e);
-    } finally {
-      setRestoring(null);
-    }
+    // Same funnel + context as the History panel's checkpoint section — one
+    // command must not refuse silently on this surface and log on that one.
+    await tryMutate(
+      () => projectRestoreCheckpoint(checkpointId),
+      "project_restore_checkpoint",
+    );
+    setRestoring(null);
   };
 
   return (

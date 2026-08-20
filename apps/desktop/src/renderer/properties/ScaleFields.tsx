@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link2, Link2Off } from "lucide-react";
+import { tryMutate } from "../errors/tryMutate";
 import { setScaleLinked, type LayerSummary } from "../ipc";
 import { SCALE, SCALE_X, SCALE_Y } from "../keyframe/descriptors";
 import { InspectorAnimField } from "./InspectorAnimField";
@@ -32,7 +33,10 @@ export function ScaleFields({
       aria-label={toggleLabel}
       title={toggleLabel}
       onClick={() => {
-        setScaleLinked(layer.id, !scaleLinked).then(onMutated).catch((e) => console.warn(e));
+        void tryMutate(
+          () => setScaleLinked(layer.id, !scaleLinked).then(onMutated),
+          "Toggle scale link",
+        );
       }}
     >
       {scaleLinked ? <Link2 size={12} aria-hidden /> : <Link2Off size={12} aria-hidden />}

@@ -14,6 +14,7 @@
 import { useEffect, useRef } from "react";
 import { RotateCcwIcon } from "lucide-react";
 
+import { logMutationFailure } from "../errors/tryMutate";
 import { snapFrameRound } from "../frames";
 import {
   updateLayerParamTracks,
@@ -643,7 +644,7 @@ function TransformGizmo({
         // Nothing landed, so those ledger entries are fiction and no summary is
         // coming to lift their carry.
         for (const [key] of entries) pendingRef.current.delete(key);
-        console.warn(`transform gizmo ${what} commit failed:`, err);
+        logMutationFailure(err, `Transform gizmo ${what}`);
       })
       .finally(() => {
         inFlightRef.current -= 1;

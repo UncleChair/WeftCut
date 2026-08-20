@@ -685,7 +685,7 @@ export function Timeline({
         if (track === null) revealSpawnedTrack(trackId);
         await onMutated();
       } catch (err) {
-        console.error("media drop failed:", err);
+        logMutationFailure(err, "Media drop");
       }
     },
     [

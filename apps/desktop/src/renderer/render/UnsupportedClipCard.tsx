@@ -6,6 +6,7 @@
 
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { tryMutate } from "../errors/tryMutate";
 import { setAppSettings } from "../settings/appSettingsStore";
 import { useDecodeComponentStore } from "../settings/decodeComponentStore";
 import { generateQuickProxy } from "../ipc";
@@ -44,7 +45,9 @@ export function UnsupportedClipCard({ mediaId }: { mediaId: string }) {
             data-testid="unsupported-generate-proxy"
             onClick={() => {
               void generateQuickProxy(mediaId);
-              void setProxyOverride(mediaId, true);
+              // Persisted project-settings write: a rejection without this
+              // wrap is an unhandled promise rejection.
+              void tryMutate(() => setProxyOverride(mediaId, true), "Set proxy mode");
             }}
           >
             {t("settings.decode_unsupported_generate_proxy")}
