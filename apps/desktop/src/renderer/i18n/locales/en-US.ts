@@ -1281,6 +1281,11 @@ const enUS = {
     op_state_Started: "Started",
     op_state_Ok: "Done",
     op_state_Err: "Failed",
+    export_started: "Exporting {{path}}",
+    export_ok: "Exported {{path}}",
+    export_failed: "Export failed: {{error}}",
+    export_cancelled: "Export cancelled",
+    cleared: "Log cleared",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three

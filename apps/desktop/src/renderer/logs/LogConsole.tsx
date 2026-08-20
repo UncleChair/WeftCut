@@ -91,8 +91,11 @@ interface Props {
 
 async function clearLogs(): Promise<void> {
   try {
-    await logClear();
+    // Mirror first, ring second: `log_clear` emits the `Log cleared` marker
+    // row, and its `log:entry` event must land in an already-cleared mirror —
+    // the other order can wipe the marker from the mirror it just arrived in.
     useLogStore.getState().clear();
+    await logClear();
   } catch (e) {
     console.warn("logClear failed:", e);
   }

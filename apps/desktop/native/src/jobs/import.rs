@@ -312,8 +312,20 @@ impl ImportQueue {
                     }
                 }
                 Ok(None) => {
-                    // Cancelled mid-copy.
+                    // Cancelled mid-copy. A `Started` row is already out, so the
+                    // op MUST be closed or the running-ops badge never clears; a
+                    // user cancel closes it as `Ok`, not `Err` (same convention
+                    // as the content-download op in `src/main/index.ts`).
                     self.finalize(media_id, ImportStatus::Cancelled);
+                    self.log_slot.emit(logs::LogEntryInput {
+                        level: logs::LogLevel::Info,
+                        category: logs::LogCategory::Import,
+                        source: logs::LogSource::User,
+                        message: format!("Import cancelled: {}", next.source.display()),
+                        op_id: Some(log_op_id),
+                        op_state: Some(logs::OpState::Ok),
+                        ..Default::default()
+                    });
                 }
                 Err(e) => {
                     warn!("import: copy failed: {e:#}");
@@ -559,6 +571,84 @@ mod tests {
         assert_eq!(std::fs::read(&landed).unwrap(), b"hello video");
         assert_eq!(copy.facts.size, 11);
         assert!(!copy.facts.blake3_hex.is_empty());
+    }
+
+    /// A test sink that cancels the running import the moment `import:started`
+    /// fires. That event is emitted before the copy loop starts, so the loop's
+    /// first per-buffer cancel check already sees the flag — a deterministic
+    /// mid-copy cancel with no timing dependency.
+    struct CancelOnStarted {
+        queue: Mutex<Option<ImportQueue>>,
+        media_id: MediaId,
+    }
+
+    impl EventSink for CancelOnStarted {
+        fn emit(&self, event: &str, _payload: serde_json::Value) {
+            if event == events::STARTED {
+                if let Some(q) = self.queue.lock().unwrap().as_ref() {
+                    q.cancel(self.media_id);
+                }
+            }
+        }
+    }
+
+    // Guards the cancel arm's terminal row: a `Started` is already out when a
+    // mid-copy cancel lands, so the op must close (as `Ok` — a user cancel is
+    // not an error) or the running-ops badge never clears.
+    #[tokio::test]
+    async fn cancel_mid_copy_closes_the_log_op() {
+        let ws = TempDir::new().unwrap();
+        let ext = TempDir::new().unwrap();
+        let src = ext.path().join("video.mp4");
+        std::fs::write(&src, vec![0u8; 4 * 1024 * 1024]).unwrap();
+
+        let media_id: MediaId = crate::state::ids::new_id();
+        let sink = Arc::new(CancelOnStarted {
+            queue: Mutex::new(None),
+            media_id,
+        });
+        let slot = LogBusSlot::new();
+        let bus = crate::logs::LogBus::spawn(&ws.path().to_path_buf(), sink.clone());
+        slot.install(bus.clone());
+
+        let queue = ImportQueue::new(sink.clone(), slot);
+        *sink.queue.lock().unwrap() = Some(queue.clone());
+        queue.enqueue(media_id, src, ws.path().to_path_buf());
+
+        // The worker emits the terminal row synchronously after the copy
+        // returns; poll for it (bounded) rather than sleeping a fixed amount.
+        let mut terminal = None;
+        for _ in 0..500 {
+            terminal = bus
+                .list()
+                .into_iter()
+                .find(|e| matches!(e.op_state, Some(logs::OpState::Ok)));
+            if terminal.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let terminal = terminal.expect("cancel emitted no terminal row");
+
+        assert!(
+            terminal.message.starts_with("Import cancelled:"),
+            "unexpected terminal message: {}",
+            terminal.message
+        );
+        assert_eq!(terminal.level, logs::LogLevel::Info);
+        let started = bus
+            .list()
+            .into_iter()
+            .find(|e| matches!(e.op_state, Some(logs::OpState::Started)))
+            .expect("no Started row");
+        assert_eq!(
+            started.op_id, terminal.op_id,
+            "terminal row must close the Started op"
+        );
+        assert!(queue
+            .list()
+            .iter()
+            .any(|e| matches!(e.status, ImportStatus::Cancelled)));
     }
 
     #[tokio::test]

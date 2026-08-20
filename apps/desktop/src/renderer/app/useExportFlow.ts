@@ -8,8 +8,9 @@ import {
   sendNotification,
 } from "@/bridge/notification";
 import { remove, writeFile } from "@/bridge/fs";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { createExportLogMirror } from "./exportLog";
 import {
   ensureExportAudioConform,
   ensureFullProxy,
@@ -157,6 +158,14 @@ export function useExportFlow(deps: {
     };
   }, []);
 
+  // LogBus mirror — the third lifecycle observer next to the taskbar and
+  // notification effects. Row shapes and the reason it watches state instead
+  // of instrumenting the pipeline: exportLog.ts.
+  const exportLog = useMemo(() => createExportLogMirror(), []);
+  useEffect(() => {
+    exportLog.observe(exportState);
+  }, [exportLog, exportState]);
+
   // Native toast when an export reaches a terminal state while the window
   // is unfocused — the in-app panel and taskbar progress are invisible to
   // a user working in another app. Terminal states are set exactly once
@@ -215,6 +224,8 @@ export function useExportFlow(deps: {
   // clear.
   const runExportWithSettings = useCallback(
     async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
+    // Name the run for the log mirror before any state can transition.
+    exportLog.begin({ output: path, codec: settings.codec });
     // ---- No-material guard -----------------------------------------------
     // A video export with nothing visible to render would emit pure black —
     // reject it as "no video material" instead. (Audio emptiness is judged
@@ -806,7 +817,7 @@ export function useExportFlow(deps: {
       payload: { outputPath: path, durationUs },
     });
     },
-    [t, previewRef, proxyStateRef, decodeProbeMemo],
+    [t, previewRef, proxyStateRef, decodeProbeMemo, exportLog],
   );
 
   // E2E-only: mirror the export phase onto window so a WebDriver diagnostic can

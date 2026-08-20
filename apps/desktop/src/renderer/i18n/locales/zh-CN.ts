@@ -1219,6 +1219,11 @@ const zhCN: Resources = {
     op_state_Started: "已开始",
     op_state_Ok: "完成",
     op_state_Err: "失败",
+    export_started: "正在导出 {{path}}",
+    export_ok: "已导出 {{path}}",
+    export_failed: "导出失败：{{error}}",
+    export_cancelled: "已取消导出",
+    cleared: "已清空日志",
   },
   history: {
     initial: "初始状态",

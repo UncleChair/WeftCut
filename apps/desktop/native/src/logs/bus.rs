@@ -14,8 +14,7 @@
 //!   * `emit` is non-blocking. It pushes to a parking_lot RwLock-guarded
 //!     ring (microseconds), then `broadcast::Sender::send` (non-blocking,
 //!     drops if no subscribers) and `mpsc::Sender::try_send` (drops the
-//!     JSONL line on full; one warning event is emitted by the writer
-//!     itself, not from here, to avoid feedback).
+//!     JSONL line on full, silently — see `WRITER_CAPACITY`).
 //!   * Never call `tracing::*!` macros inside `emit` — see
 //!     [[feedback_async_block_on_in_async]] for the analogous trap.
 //!     `tracing_layer` forwards `tracing::error!` events into `emit`,
@@ -42,8 +41,12 @@ const RING_CAPACITY: usize = 1000;
 /// bursty MCP agent activity without coercing the bus into blocking.
 const BROADCAST_CAPACITY: usize = 256;
 
-/// JSONL writer mpsc bound. Bursts beyond this drop the line with a
-/// counter the writer task surfaces on its next flush.
+/// JSONL writer mpsc bound. Bursts beyond this drop the line SILENTLY:
+/// there is no drop counter, and the writer's own `tracing::warn!`s never
+/// reach the bus (the layer bridges Error-level `weftcut*` targets only) —
+/// so the JSONL can under-report a saturation burst. If drop reporting is
+/// ever added, it must not run inside `emit`: the tracing layer forwards
+/// into `emit`, so reporting from there would recurse.
 const WRITER_CAPACITY: usize = 4096;
 
 /// napi event name carrying each new `LogEntry`. The frontend
@@ -126,8 +129,8 @@ impl LogBus {
         // Broadcast: ignore "no subscribers" — that's the normal state
         // before the renderer connects its listener.
         let _ = self.inner.broadcast.send(entry.clone());
-        // Persistence: try-send; drop the line on saturation. The
-        // writer counts drops itself.
+        // Persistence: try-send; drop the line on saturation, silently
+        // (see WRITER_CAPACITY).
         let _ = self.inner.writer.try_send(entry);
     }
 

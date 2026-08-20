@@ -44,6 +44,18 @@ pub async fn log_list(backend: &Backend) -> Result<Vec<crate::logs::LogEntry>, S
 pub async fn log_clear(backend: &Backend) -> Result<(), String> {
     if let Some(bus) = backend.log_slot.current() {
         bus.clear();
+        // The marker becomes the cleared ring's first row: an empty console
+        // must be distinguishable from "nothing has happened", and the JSONL
+        // (which `clear` never truncates) keeps when history was cut short
+        // deliberately.
+        bus.emit(crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Info,
+            category: crate::logs::LogCategory::System,
+            source: crate::logs::LogSource::User,
+            message: "Log cleared".into(),
+            i18n_key: Some("log.cleared".into()),
+            ..Default::default()
+        });
     }
     Ok(())
 }

@@ -437,6 +437,19 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           endSlot: () => deps.endAgentSessionSlot?.(),
           unlockHistory: () => actor.unlockHistory(),
         })
+        // The exit bookend to the `Pre-agent:` pin-row — without it the record
+        // panel's transcript has no right bracket. This channel is the only
+        // end path (there is no end_agent_session MCP tool; the human exits
+        // via the UI), so `User` is exact.
+        try {
+          deps.emitLog?.({
+            level: 'info',
+            category: { kind: 'Project' },
+            source: { kind: 'User' },
+            message: 'Agent session ended',
+            details: { kind: 'AgentSessionEnd' },
+          })
+        } catch (err) { console.warn('[ts-actor-host] emitLog failed (agent_session_end)', err) }
         return null
       case 'agentSessionBegin': {
         // UI-initiated session — mirrors the MCP path in server.ts: mint the
