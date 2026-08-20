@@ -100,13 +100,24 @@ moving left. Agents consume the enum directly, so this reading is the wire
 contract's meaning (ADR 0035).
 _Avoid_: reveal side, wipe from, source edge
 
-**Start-at-cut**:
-The alignment of every transition: the window occupies the incoming layer's
-first `duration` microseconds, and only the outgoing layer extends forward —
-pulling its tail source handle — to open the authorized overlap. The cut
-instant is the window's start, not its midpoint (ADR 0035); center-at-cut and
-end-at-cut are future additive parameters.
-_Avoid_: centered transition, symmetric overlap, cut-straddling window
+**Overlap placement**:
+The default arrangement of every `add_transition`: the incoming layer moves
+left by the frame-floored duration (group siblings following on their own
+lattices), so both participants play exactly their trimmed ranges — no
+default touches the user's cut (ADR 0048). The vacated span stays a gap
+(groups, not ripple, express "these move together"), and a shifted sibling
+that collides on its lane bounces to a free one.
+_Avoid_: start-at-cut, auto-extend, handle-checked add, silent extend fallback
+
+**extended_us / borrowed handle**:
+The per-transition counter of borrowed outgoing-tail µs: `0` = pure
+placement, and the outgoing layer's sacred end — the exit frame the user
+cut — is always `t_end_us − extended_us`. Inverse operations route by it
+(removal shrinks the outgoing layer by `extended_us`, moves the incoming
+layer right by the remainder). Only the chip's right edge or an explicit
+patch raises it; implicit duration changes are sanctity-preferring
+(ADR 0048).
+_Avoid_: placement enum, extend flag, handle-consumption mode
 
 ## Transform
 

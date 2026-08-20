@@ -55,7 +55,16 @@ Supporting choices:
 
 ### Placement, participants, and handle
 
-Alignment is **start-at-cut** (glossary): the window occupies the incoming
+> **Superseded (placement only) by
+> [ADR 0048](0048-transition-overlap-by-placement-not-extension.md).** The
+> default add now opens the overlap by moving the incoming layer left — both
+> trimmed ranges stay sacred — and a per-transition `extended_us` records any
+> borrowed tail so inverse operations route by provenance. Extension survives
+> only behind an explicit request, which narrows the handle pre-check below
+> to those paths. The two-input node, Policy B reconcile, and the split truth
+> table stand unchanged.
+
+Alignment is **start-at-cut**: the window occupies the incoming
 layer's first `duration` microseconds, and `add_transition` auto-extends only
 the outgoing layer forward, pulling its tail source handle to open the
 authorized overlap. The handle is pre-checked **before the transition id is
@@ -139,11 +148,18 @@ a truth table in `src/main/state/reconcile.test.ts`:
   freeze-frame handles, audio equal-power crossfade, Policy C) is tracked
   post-v1. Authoring discoverability and chip drag-resize are v1 items —
   adding a transition currently requires right-clicking exactly on a cut.
+  **Superseded in part by
+  [ADR 0048](0048-transition-overlap-by-placement-not-extension.md):** the
+  alignment variants dissolve (overlap placement is end-at-cut geometry;
+  mixed `extended_us` covers center), Policy C dissolves at the gesture
+  layer under the chip's pointer capture, and chip drag-resize ships as the
+  chip's two placement-independent edges.
 
 ## References
 
-- [`CONTEXT.md`](../../CONTEXT.md#transitions) — Transition direction and
-  Start-at-cut glossary entries.
+- [`CONTEXT.md`](../../CONTEXT.md#transitions) — the Transition direction
+  glossary entry; the placement vocabulary (Overlap placement,
+  extended_us / borrowed handle) is ADR 0048's.
 - `src/main/state/validate.ts` (the shared predicate +
   `reconcileTransitions`), `src/main/state/actor.ts` (commit + dryRun
   callers, LogBus drop rows), `src/main/state/mutations/transitions.ts`

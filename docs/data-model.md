@@ -24,11 +24,12 @@ source media's own time space, and the renderer's
 `sampleIndexForPtsUs` naturally handles whatever value lands there.
 
 `transition.duration_us` and marker `t_us` / `end_t_us` are on that grid
-too. A transition duration is a whole number of composition frames
-measured **from the cut**, which is what lets the outgoing layer's
-auto-extended `t_end_us` stay on the grid *and* keep the
-`overlap == duration_us` invariant — at 29.97 / 23.976 a duration derived
-from the rate alone cannot satisfy both. Requests below half a frame are
+too. A transition duration is a whole number of composition frames measured
+between two canonical boundaries anchored **at the cut** — backward for the
+default overlap placement (the incoming layer's shifted start), forward for
+an explicit extend's borrowed tail (ADR 0048) — which is what lets the moved
+endpoint stay on the grid *and* keep the `overlap == duration_us` invariant;
+at 29.97 / 23.976 a duration derived from the rate alone cannot satisfy both. Requests below half a frame are
 rejected, not rounded down: a transition and a region marker each span at
 least one frame. Markers being frame-quantized matches Premiere/Resolve,
 so a marker dropped mid-frame moves up to half a frame.
