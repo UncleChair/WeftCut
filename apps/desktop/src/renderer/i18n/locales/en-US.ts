@@ -455,6 +455,12 @@ const enUS = {
     add_transition_wipe: "Add wipe · {{direction}}",
     add_transition_slide: "Add slide · {{direction}}",
     transition_chip_title: "{{kind}} transition · {{start}} → {{end}}",
+    // Chip context-menu submenu triggers; kind/direction values reuse
+    // `transitions.*`, delete reuses `property_panel.transition_delete`.
+    transition_menu_kind: "Kind",
+    transition_menu_direction: "Direction",
+    transition_menu_duration: "Duration",
+    transition_menu_duration_preset: "{{seconds}} s",
     // Hover text for a mark in the ruler's lower half; `label` falls back to
     // `$t(kinds.marker)` at the call site. Which pattern a marker gets is
     // TimelineRuler.tsx's `markerTitle`.

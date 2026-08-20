@@ -6,8 +6,12 @@ import {
   defaultTransitionDurationUs,
   findCutNear,
   findNearestCut,
+  presetTransitionDurationUs,
   transitionChipsForTrack,
   transitionDirectionOf,
+  transitionDirectionUpdateArgs,
+  transitionDurationUpdateArgs,
+  transitionKindUpdateArgs,
 } from "./transitions";
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
@@ -261,6 +265,35 @@ describe("defaultTransitionDurationUs", () => {
   });
 });
 
+// ── presetTransitionDurationUs — the chip menu's duration ladder ─────────────
+
+describe("presetTransitionDurationUs", () => {
+  it("integer-frame presets land exactly at 30 fps", () => {
+    expect(presetTransitionDurationUs(0.5, 30, 1)).toBe(500_000);
+    expect(presetTransitionDurationUs(2, 30, 1)).toBe(2_000_000);
+  });
+
+  it("29.97 fps floors to whole frames, matching the default's rule", () => {
+    // floor(0.5 * 30000/1001) = 14 frames.
+    expect(presetTransitionDurationUs(0.5, 30000, 1001)).toBe(
+      Math.floor((14 * 1_000_000 * 1001) / 30000),
+    );
+    // The 1 s preset IS the default.
+    expect(presetTransitionDurationUs(1, 30000, 1001)).toBe(
+      defaultTransitionDurationUs(30000, 1001),
+    );
+  });
+
+  it("clamps to the 1-frame minimum", () => {
+    // 0.5 s at 1 fps: floor(0.5) = 0 → min 1 frame = 1 s.
+    expect(presetTransitionDurationUs(0.5, 1, 1)).toBe(1_000_000);
+  });
+
+  it("degenerate fps falls back to raw seconds", () => {
+    expect(presetTransitionDurationUs(0.5, 0, 1)).toBe(500_000);
+  });
+});
+
 // ── chip geometry ────────────────────────────────────────────────────────────
 
 describe("transitionChipsForTrack", () => {
@@ -331,6 +364,77 @@ describe("buildTransitionKindArgs", () => {
     expect(buildTransitionKindArgs("Slide", null)).toEqual({
       kind: "Slide",
       direction: "left",
+    });
+  });
+});
+
+// ── chip-menu pick semantics ─────────────────────────────────────────────────
+// The chip menu's submenus commit through these; Base UI's hover-intent
+// submenu-open can't be driven in jsdom, so the contract is pinned here and
+// TransitionUi.test.tsx only asserts what the menu shows.
+
+describe("chip-menu update args", () => {
+  const wipeLeft = crossfade("tr-1", "a", "b", 500_000);
+  wipeLeft.kind = { kind: "Wipe", direction: "left" };
+  const xfade = crossfade("tr-2", "a", "b", 500_000);
+
+  describe("transitionKindUpdateArgs", () => {
+    it("Wipe→Slide keeps the current direction", () => {
+      expect(transitionKindUpdateArgs(wipeLeft, "Slide")).toEqual({
+        transitionId: "tr-1",
+        kind: "Slide",
+        direction: "left",
+      });
+    });
+
+    it("switching to Crossfade drops the direction from the wire args", () => {
+      expect(transitionKindUpdateArgs(wipeLeft, "Crossfade")).toEqual({
+        transitionId: "tr-1",
+        kind: "Crossfade",
+      });
+    });
+
+    it("switching out of Crossfade takes the 'left' default", () => {
+      expect(transitionKindUpdateArgs(xfade, "Wipe")).toEqual({
+        transitionId: "tr-2",
+        kind: "Wipe",
+        direction: "left",
+      });
+    });
+
+    it("picking the current kind is a no-op", () => {
+      expect(transitionKindUpdateArgs(wipeLeft, "Wipe")).toBeNull();
+    });
+  });
+
+  describe("transitionDirectionUpdateArgs", () => {
+    it("dispatches kind + direction together (the wire contract pairs them)", () => {
+      expect(transitionDirectionUpdateArgs(wipeLeft, "up")).toEqual({
+        transitionId: "tr-1",
+        kind: "Wipe",
+        direction: "up",
+      });
+    });
+
+    it("picking the current direction is a no-op", () => {
+      expect(transitionDirectionUpdateArgs(wipeLeft, "left")).toBeNull();
+    });
+
+    it("refuses a direction on Crossfade — belt to the hidden-submenu suspender", () => {
+      expect(transitionDirectionUpdateArgs(xfade, "up")).toBeNull();
+    });
+  });
+
+  describe("transitionDurationUpdateArgs", () => {
+    it("dispatches the preset µs", () => {
+      expect(transitionDurationUpdateArgs(wipeLeft, 2_000_000)).toEqual({
+        transitionId: "tr-1",
+        durationUs: 2_000_000,
+      });
+    });
+
+    it("picking the matching (checkmarked) preset is a no-op", () => {
+      expect(transitionDurationUpdateArgs(wipeLeft, 500_000)).toBeNull();
     });
   });
 });

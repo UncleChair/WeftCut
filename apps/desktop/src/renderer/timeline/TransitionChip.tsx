@@ -21,6 +21,7 @@ export function TransitionChip({
   bladeMode,
   fpsNum,
   fpsDen,
+  onContextMenu,
 }: {
   chip: TrackTransitionChip;
   pxPerSec: number;
@@ -34,6 +35,9 @@ export function TransitionChip({
   bladeMode: boolean;
   fpsNum: number;
   fpsDen: number;
+  /// Right-click hook — the Timeline shows the chip menu (kind / direction /
+  /// duration / delete) at the cursor.
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const { t } = useTranslation();
   const left = (chip.startUs / 1_000_000) * pxPerSec;
@@ -80,11 +84,12 @@ export function TransitionChip({
         e.stopPropagation();
       }}
       onContextMenu={(e) => {
-        // No chip context menu; still swallow it so the layer menu
-        // underneath doesn't open detached from what the user clicked.
+        // Swallow so the layer menu underneath doesn't open too; select
+        // first so the menu always describes the chip it visibly targets.
         e.preventDefault();
         e.stopPropagation();
         setTransitionSelection(chip.transition.id);
+        onContextMenu(e);
       }}
     >
       {width >= 18 && (

@@ -10,7 +10,10 @@ import {
 import { computeLayerSlices } from "./geometry";
 import { formatTimecode } from "../frames";
 import { TransitionChip } from "./TransitionChip";
-import { transitionChipsForTrack } from "./transitions";
+import {
+  transitionChipsForTrack,
+  type TrackTransitionChip,
+} from "./transitions";
 import type {
   AnimTrack,
   LayerSummary,
@@ -52,6 +55,7 @@ export function TrackLane({
   onDragStart,
   onMediaDrop,
   onContextMenu,
+  onChipContextMenu,
   onCommitLabel,
   onCommitParamTrack,
   isGroupStart,
@@ -105,6 +109,9 @@ export function TrackLane({
     layerKind: string,
     layerEnabled: boolean,
   ) => void;
+  /// Transition-chip counterpart of `onContextMenu` — the Timeline anchors
+  /// the chip menu at the cursor for this chip's transition.
+  onChipContextMenu: (e: React.MouseEvent, chip: TrackTransitionChip) => void;
   onCommitLabel: (layerId: string, label: string) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   isGroupStart: boolean;
@@ -549,6 +556,7 @@ export function TrackLane({
               bladeMode={bladeMode}
               fpsNum={fpsNum}
               fpsDen={fpsDen}
+              onContextMenu={(e) => onChipContextMenu(e, chip)}
             />,
           );
         }

@@ -22,6 +22,7 @@ import {
   updateLayer,
   updateLayerParamTrack,
   updateLayerParamTracks,
+  updateTransition,
   type AnimTrack,
   type GroupSummary,
   type KeybindingsMap,
@@ -108,9 +109,12 @@ import {
   CUT_CLICK_TOLERANCE_PX,
   defaultTransitionDurationUs,
   findCutNear,
+  type TrackTransitionChip,
   type TransitionCut,
   type TransitionKindName,
+  type TransitionUpdateArgs,
 } from "./transitions";
+import { TransitionChipMenu } from "./TransitionChipMenu";
 
 interface TimelineProps {
   tracks: TrackSummary[];
@@ -195,6 +199,14 @@ export function Timeline({
     layerKind: string;
     layerEnabled: boolean;
     cut: TransitionCut | null;
+  } | null>(null);
+  // Transition-chip context-menu state — the chip counterpart of
+  // `contextMenu`, holding the full TransitionSummary so the menu can render
+  // current kind/direction/duration checkmarks without a re-lookup.
+  const [chipMenu, setChipMenu] = useState<{
+    x: number;
+    y: number;
+    transition: TransitionSummary;
   } | null>(null);
   const primaryLayerId = usePrimaryLayerId();
   const selectedLayerIds = useSelectedLayerIds();
@@ -761,6 +773,44 @@ export function Timeline({
     [fpsNum, fpsDen, onMutated],
   );
 
+  // Chip context menu (right-click on a transition chip). The chip has
+  // already selected itself; the menu's update commits ride the same
+  // `updateTransition` wrapper as the inspector, and delete matches the
+  // Delete-key path below (remove + clear selection).
+  const onChipContextMenu = useCallback(
+    (e: React.MouseEvent, chip: TrackTransitionChip) => {
+      setChipMenu({ x: e.clientX, y: e.clientY, transition: chip.transition });
+    },
+    [],
+  );
+
+  const onChipMenuUpdate = useCallback(
+    async (args: TransitionUpdateArgs) => {
+      setChipMenu(null);
+      try {
+        await updateTransition(args);
+        await onMutated();
+      } catch (err) {
+        logMutationFailure(err, "Update transition");
+      }
+    },
+    [onMutated],
+  );
+
+  const onChipMenuDelete = useCallback(
+    async (transitionId: string) => {
+      setChipMenu(null);
+      try {
+        await removeTransition(transitionId);
+        clearTransitionSelection();
+        await onMutated();
+      } catch (err) {
+        logMutationFailure(err, "Remove transition");
+      }
+    },
+    [onMutated],
+  );
+
   // Delete/Backspace removes the selected transition chip. Capture phase +
   // stopImmediatePropagation preempts the app-level delete-selected-layer
   // shortcut (same pattern as the keyframe-diamond Delete in LayerBlock);
@@ -840,16 +890,19 @@ export function Timeline({
     [onMutated],
   );
 
-  // Close the context menu when the timeline scrolls under it — the
-  // popup is anchored to fixed cursor coordinates, so it would float
+  // Close the context menus when the timeline scrolls under them — the
+  // popups are anchored to fixed cursor coordinates, so they would float
   // detached over moving content. Outside-click and Escape closing belong
   // to Base UI.
   useEffect(() => {
-    if (!contextMenu) return;
-    const onScroll = () => setContextMenu(null);
+    if (!contextMenu && !chipMenu) return;
+    const onScroll = () => {
+      setContextMenu(null);
+      setChipMenu(null);
+    };
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
-  }, [contextMenu]);
+  }, [contextMenu, chipMenu]);
 
   const onSeparateAudio = useCallback(
     async (layerId: string) => {
@@ -1118,6 +1171,7 @@ export function Timeline({
                 onSelectFromClick={selectFromClick}
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
+                onChipContextMenu={onChipContextMenu}
                 onCommitLabel={onCommitLabel}
                 onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
@@ -1172,6 +1226,18 @@ export function Timeline({
         onAddTransition={(cut, kind, direction) =>
           void onAddTransition(cut, kind, direction)
         }
+      />
+    )}
+    {chipMenu && (
+      <TransitionChipMenu
+        x={chipMenu.x}
+        y={chipMenu.y}
+        transition={chipMenu.transition}
+        fpsNum={fpsNum}
+        fpsDen={fpsDen}
+        onClose={() => setChipMenu(null)}
+        onUpdate={(args) => void onChipMenuUpdate(args)}
+        onDelete={(id) => void onChipMenuDelete(id)}
       />
     )}
     </>

@@ -146,19 +146,34 @@ export function findNearestCut(
   return pick(false);
 }
 
-/// Default duration: 1 second snapped DOWN to a whole composition-frame
-/// count, minimum 1 frame. Hardcoded — no settings entry.
+/// The chip menu's quick-duration ladder, in seconds. Arbitrary values stay
+/// with edge drag and the inspector timecode field — these are the common
+/// grabs, not a complete range.
+export const TRANSITION_DURATION_PRESETS_SEC = [0.5, 1, 2] as const;
+
+/// `seconds` snapped DOWN to a whole composition-frame count, minimum
+/// 1 frame.
 ///
 /// The µs value comes from `timeUsAtFrame`, not local arithmetic, so the UI
 /// proposes a whole-frame duration that `applyAddTransition`'s own grid snap
-/// accepts unchanged.
+/// accepts unchanged — which is also what makes the preset checkmark a plain
+/// `===` against the stored `duration_us`.
+export function presetTransitionDurationUs(
+  seconds: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  if (fpsNum <= 0 || fpsDen <= 0) return Math.round(seconds * US_PER_SEC);
+  const wholeFrames = Math.max(1, Math.floor((seconds * fpsNum) / fpsDen));
+  return timeUsAtFrame(wholeFrames, fpsNum, fpsDen);
+}
+
+/// Default duration: the 1 s preset. Hardcoded — no settings entry.
 export function defaultTransitionDurationUs(
   fpsNum: number,
   fpsDen: number,
 ): number {
-  if (fpsNum <= 0 || fpsDen <= 0) return US_PER_SEC;
-  const wholeFrames = Math.max(1, Math.floor(fpsNum / fpsDen));
-  return timeUsAtFrame(wholeFrames, fpsNum, fpsDen);
+  return presetTransitionDurationUs(1, fpsNum, fpsDen);
 }
 
 /// One chip on a track lane. Start-at-cut alignment: the window is the
@@ -239,6 +254,53 @@ export function transitionDirectionOf(
   kind: TransitionKindView,
 ): TransitionDirection | null {
   return kind.kind === "Crossfade" ? null : kind.direction;
+}
+
+/// `update_transition` wire args, as assembled by the chip menu's three
+/// submenus. Pure so the menu semantics get unit tests — Base UI's
+/// submenu-open is hover-intent machinery jsdom can't drive, so the component
+/// test stops at "the submenu triggers render" and these carry the contract.
+export interface TransitionUpdateArgs {
+  transitionId: string;
+  durationUs?: number;
+  kind?: TransitionKindName;
+  direction?: TransitionDirection;
+}
+
+/// Kind pick: Wipe↔Slide keeps the current direction; switching to Crossfade
+/// drops it; switching out of Crossfade takes the 'left' default — all of
+/// which is `buildTransitionKindArgs`'s contract. Null = picked the current
+/// kind, nothing to commit.
+export function transitionKindUpdateArgs(
+  transition: TransitionSummary,
+  next: TransitionKindName,
+): TransitionUpdateArgs | null {
+  if (next === transition.kind.kind) return null;
+  return {
+    transitionId: transition.id,
+    ...buildTransitionKindArgs(next, transitionDirectionOf(transition.kind)),
+  };
+}
+
+/// Direction pick: kind rides along (the wire contract pairs them). Null =
+/// picked the current direction, or the kind is Crossfade (which the menu
+/// prevents by hiding the submenu — this is the belt to that suspender).
+export function transitionDirectionUpdateArgs(
+  transition: TransitionSummary,
+  direction: TransitionDirection,
+): TransitionUpdateArgs | null {
+  if (transition.kind.kind === "Crossfade") return null;
+  if (direction === transitionDirectionOf(transition.kind)) return null;
+  return { transitionId: transition.id, kind: transition.kind.kind, direction };
+}
+
+/// Duration pick. Null = the preset already matches (the checkmarked row).
+export function transitionDurationUpdateArgs(
+  transition: TransitionSummary,
+  durationUs: number,
+): TransitionUpdateArgs | null {
+  if (durationUs === transition.duration_us) return null;
+  return { transitionId: transition.id, durationUs };
 }
 
 // Structured backend errors are parsed by the app-wide

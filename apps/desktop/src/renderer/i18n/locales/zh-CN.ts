@@ -435,6 +435,12 @@ const zhCN: Resources = {
     add_transition_wipe: "添加划像 · {{direction}}",
     add_transition_slide: "添加滑动 · {{direction}}",
     transition_chip_title: "{{kind}}转场 · {{start}} → {{end}}",
+    // chip 右键菜单的子菜单触发项；类型/方向值复用 `transitions.*`，
+    // 删除复用 `property_panel.transition_delete`。
+    transition_menu_kind: "类型",
+    transition_menu_direction: "方向",
+    transition_menu_duration: "时长",
+    transition_menu_duration_preset: "{{seconds}} 秒",
     // 时间标尺下半区标记的悬停文案；标记无名称时调用处退回 `$t(kinds.marker)`。
     marker_tooltip_point: "{{label}} · {{timecode}}",
     marker_tooltip_region: "{{label}} · {{start}} – {{end}}",

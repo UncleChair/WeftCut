@@ -18,6 +18,7 @@ import { setActiveRegion } from "../focus/focusRegionStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addTransition: vi.fn().mockResolvedValue("new-transition"),
+  updateTransition: vi.fn().mockResolvedValue(undefined),
   removeTransition: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   logEmit: vi.fn().mockResolvedValue(undefined),
@@ -38,6 +39,7 @@ vi.mock("../ipc", async (importOriginal) => {
   return {
     ...actual,
     addTransition: ipcMocks.addTransition,
+    updateTransition: ipcMocks.updateTransition,
     removeTransition: ipcMocks.removeTransition,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     logEmit: ipcMocks.logEmit,
@@ -127,6 +129,7 @@ beforeEach(() => {
   // for tests that never meant to exercise the keyboard.
   setActiveRegion(null);
   ipcMocks.addTransition.mockClear();
+  ipcMocks.updateTransition.mockClear();
   ipcMocks.removeTransition.mockClear();
   ipcMocks.logEmit.mockClear();
   useAppSettingsStore.setState((s) => ({
@@ -279,3 +282,89 @@ describe("cut context menu", () => {
     });
   });
 });
+
+describe("chip context menu", () => {
+  // Fixture: `transition` is Wipe·left, 0.5 s, at the 2 s cut (see top of
+  // file).
+  //
+  // Coverage split: submenu CONTENT interactions are not exercised here —
+  // Base UI opens a submenu through hover-intent machinery (pointerType
+  // detection → the parent popup's `allowMouseEnter` → open delay) that jsdom
+  // cannot drive. The pick semantics live as pure functions in transitions.ts
+  // (`transitionKindUpdateArgs` & co.), unit-tested in transitions.test.ts;
+  // this suite pins what the menu SHOWS and the flat-item paths.
+  function openChipMenu(container: HTMLElement) {
+    const chip = container.querySelector(
+      '[data-testid="transition-chip"]',
+    ) as HTMLElement;
+    fireEvent.contextMenu(chip, { clientX: 170, clientY: 30 });
+  }
+
+  it("right-click opens the chip menu (not the layer menu) with all four entries", async () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    openChipMenu(container);
+
+    await screen.findByTestId("transition-chip-menu");
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    // Swallowed before the layer surface underneath saw it.
+    expect(screen.queryByText("Rename")).toBeNull();
+    expect(screen.getByText("Kind")).toBeTruthy();
+    expect(screen.getByText("Direction")).toBeTruthy();
+    expect(screen.getByText("Duration")).toBeTruthy();
+    expect(screen.getByText("Delete transition")).toBeTruthy();
+  });
+
+  it("hides the Direction submenu entirely for a Crossfade transition", async () => {
+    const crossfadeTr: TransitionSummary = {
+      ...transition,
+      kind: { kind: "Crossfade" },
+    };
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [crossfadeTr],
+    });
+    openChipMenu(container);
+
+    await screen.findByTestId("transition-chip-menu");
+    expect(screen.getByText("Kind")).toBeTruthy();
+    expect(screen.queryByText("Direction")).toBeNull();
+  });
+
+  it("Delete transition removes and clears the chip selection", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+      onMutated,
+    });
+    openChipMenu(container);
+
+    fireEvent.click(await screen.findByText("Delete transition"));
+    await waitFor(() => {
+      expect(ipcMocks.removeTransition).toHaveBeenCalledWith("tr-1");
+      expect(onMutated).toHaveBeenCalled();
+    });
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("the menu closes when the timeline scrolls under it", async () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    openChipMenu(container);
+    await screen.findByTestId("transition-chip-menu");
+
+    fireEvent.scroll(window);
+    await waitFor(() => {
+      expect(screen.queryByTestId("transition-chip-menu")).toBeNull();
+    });
+    // Closing must not have committed anything.
+    expect(ipcMocks.updateTransition).not.toHaveBeenCalled();
+    expect(ipcMocks.removeTransition).not.toHaveBeenCalled();
+  });
+});
+
