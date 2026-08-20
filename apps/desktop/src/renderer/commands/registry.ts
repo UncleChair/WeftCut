@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ActionId } from "../shortcuts/defs";
+import { runCommandWithLogging } from "../shortcuts/useShortcuts";
 
 /// The unified user-invocable command surface: providers registered here are
 /// the one catalog the search palette reads. Module-level, playbackStore-style:
@@ -66,7 +67,14 @@ export function listCommands(): CommandDef[] {
         continue;
       }
       seen.add(d.id);
-      out.push(d);
+      // Every registry dispatch logs one `Shortcut` row — the same row the
+      // keyboard and native-menu dispatchers emit — so a palette-chosen Save
+      // reads like the Ctrl+S that would have run it. Wrapped here, not in the
+      // surfaces (palette / in-app menu bar / Quick Actions), so a new surface
+      // or provider is covered with nothing to remember. No double-log:
+      // providers hand in raw handlers, and the keyboard path dispatches from
+      // its own HandlerMap without consulting the registry.
+      out.push({ ...d, run: () => runCommandWithLogging(d.id, d.labelKey, d.run) });
     }
   }
   return out;

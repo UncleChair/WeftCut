@@ -3,9 +3,15 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  logEmit: vi.fn(() => Promise.resolve()),
+}));
+
 // Real i18n (same side-effect import AppMenuBar pulls in): the assertions
 // below run against the en-US strings, so a missing key fails here.
 import "../i18n";
+import { logEmit } from "../ipc";
 import {
   registerCommandProvider,
   type CommandDef,
@@ -88,7 +94,8 @@ describe("CommandMenu", () => {
     expect(screen.queryByText("Redo")).toBeNull();
   });
 
-  it("runs the command on activation", async () => {
+  it("runs the command on activation and logs one Shortcut row", async () => {
+    vi.mocked(logEmit).mockClear();
     const run = vi.fn();
     provide([{ id: "openMotifPicker", labelKey: "actions.motifs", run }]);
     render(<CommandMenu section={SECTION} />);
@@ -96,6 +103,13 @@ describe("CommandMenu", () => {
 
     fireEvent.click(screen.getByText("Motifs…"));
     expect(run).toHaveBeenCalledOnce();
+    // The in-app menu bar is a command surface: choosing an item must log
+    // exactly like the chord that would have run it (registry funnel).
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logEmit).mock.calls[0]![0]).toMatchObject({
+      category: { kind: "Shortcut" },
+      message: "Shortcut: openMotifPicker",
+    });
   });
 
   it("fills in when a provider registers after first render", async () => {

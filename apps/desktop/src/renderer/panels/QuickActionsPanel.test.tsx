@@ -13,6 +13,12 @@ vi.mock("../settings/appSettingsStore", () => ({
   useMarkersVisible: () => settings.markersVisible,
 }));
 
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  logEmit: vi.fn(() => Promise.resolve()),
+}));
+
+import { logEmit } from "../ipc";
 import { registerCommandProvider, type CommandDef } from "../commands/registry";
 import { setTool, useToolStore } from "../state/toolStore";
 import {
@@ -124,10 +130,18 @@ describe("QuickActionsPanel", () => {
     ]);
   });
 
-  it("runs the registry command behind a button", () => {
+  it("runs the registry command behind a button and logs one Shortcut row", () => {
+    vi.mocked(logEmit).mockClear();
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     fireEvent.click(button("toggleBladeMode"));
     expect(runs).toEqual(["toggleBladeMode"]);
+    // The strip is a command surface: a button press must log exactly like
+    // the chord that would have run it (registry funnel).
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logEmit).mock.calls[0]![0]).toMatchObject({
+      category: { kind: "Shortcut" },
+      message: "Shortcut: toggleBladeMode",
+    });
   });
 
   // Tool buttons are radios inside a radiogroup; the display toggle is an

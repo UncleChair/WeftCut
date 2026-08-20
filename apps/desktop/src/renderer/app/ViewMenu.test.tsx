@@ -3,8 +3,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-afterEach(cleanup);
-
 vi.mock("react-i18next", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-i18next")>()),
   useTranslation: () => ({
@@ -26,24 +24,39 @@ vi.mock("react-i18next", async (importOriginal) => ({
 
 const prefs = vi.hoisted(() => ({
   markersVisible: true,
-  toggleMarkersVisible: vi.fn(),
 }));
 
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => "AbRoll",
-  toggleDisplayMode: vi.fn(),
   useFollowPlayheadEnabled: () => true,
-  toggleFollowPlayhead: vi.fn(),
   useMarkersVisible: () => prefs.markersVisible,
-  toggleMarkersVisible: prefs.toggleMarkersVisible,
 }));
 
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  logEmit: vi.fn(() => Promise.resolve()),
+}));
+
+import { logEmit } from "../ipc";
+import { registerCommandProvider, type CommandDef } from "../commands/registry";
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
 import {
   EMPTY_DOCK_WORKSPACE_SNAPSHOT,
   type DockWorkspaceController,
 } from "../workspace/dockWorkspaceAdapter";
 import { EDITING_WORKSPACE_ID } from "../../shared/workspace";
+
+const unregisters: Array<() => void> = [];
+
+function provide(defs: CommandDef[]): void {
+  unregisters.push(registerCommandProvider(() => defs));
+}
+
+afterEach(() => {
+  cleanup();
+  for (const un of unregisters.splice(0)) un();
+  vi.mocked(logEmit).mockClear();
+});
 
 function controller(): DockWorkspaceController {
   return {
@@ -100,7 +113,6 @@ describe("ViewMenu workspace controls", () => {
       <ViewMenu
         workspaceController={workspaceController}
         workspaceProfiles={null}
-        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={{
           openPanels: new Set(["preview", "timeline"]),
           activePanel: "preview",
@@ -134,7 +146,6 @@ describe("ViewMenu workspace controls", () => {
       <ViewMenu
         workspaceController={controller()}
         workspaceProfiles={profiles}
-        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
       />,
     );
@@ -173,7 +184,6 @@ describe("ViewMenu workspace controls", () => {
       <ViewMenu
         workspaceController={controller()}
         workspaceProfiles={profiles}
-        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
       />,
     );
@@ -199,14 +209,12 @@ describe("ViewMenu marker display", () => {
       <ViewMenu
         workspaceController={controller()}
         workspaceProfiles={null}
-        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
       />,
     );
 
   afterEach(() => {
     prefs.markersVisible = true;
-    prefs.toggleMarkersVisible.mockClear();
   });
 
   it("sits immediately below Follow playhead", async () => {
@@ -223,7 +231,15 @@ describe("ViewMenu marker display", () => {
     expect(labels).toContain("Follow playhead");
   });
 
-  it("flips the setting and reflects it, both ways", async () => {
+  it("flips the setting through the registry command and reflects it, both ways", async () => {
+    const run = vi.fn();
+    provide([
+      {
+        id: "toggleMarkersVisible",
+        labelKey: "actions.toggle_markers_visible",
+        run,
+      },
+    ]);
     renderMenu();
     openView();
     const item = await screen.findByText("Show markers");
@@ -232,7 +248,7 @@ describe("ViewMenu marker display", () => {
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).not.toBeNull();
     fireEvent.click(item);
-    expect(prefs.toggleMarkersVisible).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledOnce();
 
     cleanup();
     prefs.markersVisible = false;
@@ -242,5 +258,52 @@ describe("ViewMenu marker display", () => {
     expect(
       off.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
+  });
+});
+
+// The registry funnel: an item with a command form must log the same
+// `Shortcut` row the chord would (commands/registry.ts).
+describe("ViewMenu registry dispatch", () => {
+  const renderMenu = () =>
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={null}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+
+  it("dispatches a toggle through the registry: one run, one Shortcut row", async () => {
+    const run = vi.fn();
+    provide([
+      {
+        id: "toggleFollowPlayhead",
+        actionId: "toggleFollowPlayhead",
+        labelKey: "actions.toggle_follow_playhead",
+        run,
+      },
+    ]);
+    renderMenu();
+    openView();
+
+    fireEvent.click(await screen.findByText("Follow playhead"));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(logEmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: { kind: "Shortcut" },
+        message: "Shortcut: toggleFollowPlayhead",
+      }),
+    );
+  });
+
+  it("an unregistered command id is a silent no-op (absent-id policy)", async () => {
+    renderMenu();
+    openView();
+
+    // No provider registered: same stand-down as the native menu's absent-id
+    // projection — no throw, no row.
+    fireEvent.click(await screen.findByText("Show markers"));
+    expect(logEmit).not.toHaveBeenCalled();
   });
 });

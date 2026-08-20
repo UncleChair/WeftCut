@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
+
+vi.mock("../ipc", () => ({ logEmit: vi.fn(() => Promise.resolve()) }));
+
+import { logEmit } from "../ipc";
 import {
   getCommand,
   listCommands,
@@ -51,6 +55,51 @@ describe("command registry", () => {
     expect(listCommands()[0]!.enabled!()).toBe(false);
     enabled = true;
     expect(listCommands()[0]!.enabled!()).toBe(true);
+    un();
+  });
+});
+
+// The registry-level funnel: any surface that dispatches through
+// listCommands/getCommand (palette, in-app menu bar, Quick Actions) logs the
+// same `Shortcut` row the keyboard dispatcher emits — with nothing for the
+// surface to remember. Guards the wrap in listCommands.
+describe("registry dispatch logging", () => {
+  beforeEach(() => {
+    vi.mocked(logEmit).mockClear();
+  });
+
+  it("one dispatch → one Shortcut row keyed by the command id", () => {
+    const run = vi.fn();
+    const un = registerCommandProvider(() => [{ ...def("createCheckpoint"), run }]);
+    getCommand("createCheckpoint")!.run();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logEmit).mock.calls[0]![0]).toMatchObject({
+      level: "info",
+      category: { kind: "Shortcut" },
+      source: { kind: "User" },
+      message: "Shortcut: createCheckpoint",
+      i18n_args: { actionId: "createCheckpoint", label_key: "actions.createCheckpoint" },
+    });
+    un();
+  });
+
+  it("a throwing handler logs one error row instead of escaping", () => {
+    const un = registerCommandProvider(() => [
+      {
+        ...def("save"),
+        run: () => {
+          throw new Error("disk full");
+        },
+      },
+    ]);
+    expect(() => getCommand("save")!.run()).not.toThrow();
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logEmit).mock.calls[0]![0]).toMatchObject({
+      level: "error",
+      category: { kind: "Shortcut" },
+      message: "Shortcut save failed: Error: disk full",
+    });
     un();
   });
 });

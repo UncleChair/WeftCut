@@ -1,10 +1,8 @@
 import { useTranslation } from "react-i18next";
 
+import { getCommand } from "../commands/registry";
 import { Menu, MenuHeading, MenuItem, MenuSeparator, SubMenu } from "../menu/Menu";
 import {
-  toggleDisplayMode,
-  toggleFollowPlayhead,
-  toggleMarkersVisible,
   useDisplayMode,
   useFollowPlayheadEnabled,
   useMarkersVisible,
@@ -44,21 +42,22 @@ export interface ViewMenuWorkspaces {
 /// checkmark here reads the app-pref store, so it stays in sync however the
 /// value changed — whether from `T` / `Shift+F`, the Quick Actions strip, or the
 /// search palette.
+///
+/// Items with a command form dispatch through `getCommand(...).run()`: the
+/// registry funnel logs one `Shortcut` row per dispatch, same as the chord
+/// (commands/registry.ts). The panel and workspace items are parameterized
+/// per-row ops with no command form (see MENU_ONLY_COMMAND_IDS's reasoning in
+/// commands/appCommands.ts) and stay raw.
 interface ViewMenuProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
   workspaceProfiles: ViewMenuWorkspaces | null;
-  /// Local agent-mode entry. While a session is active the whole menu bar
-  /// is swapped out for AgentMode, so this item is the enter path only —
-  /// exit stays on AgentMode's "Exit to editor" button.
-  onEnterAgentMode: () => void;
 }
 
 export function ViewMenu({
   workspaceController,
   workspaceSnapshot,
   workspaceProfiles,
-  onEnterAgentMode,
 }: ViewMenuProps) {
   const { t } = useTranslation();
   const mode = useDisplayMode();
@@ -157,7 +156,7 @@ export function ViewMenu({
         })}
         checked={mode === "AbRoll"}
         onSelect={() => {
-          if (mode !== "AbRoll") void toggleDisplayMode();
+          if (mode !== "AbRoll") void getCommand("toggleDisplayMode")?.run();
         }}
       />
       <MenuItem
@@ -166,7 +165,7 @@ export function ViewMenu({
         })}
         checked={mode === "ShowAll"}
         onSelect={() => {
-          if (mode !== "ShowAll") void toggleDisplayMode();
+          if (mode !== "ShowAll") void getCommand("toggleDisplayMode")?.run();
         }}
       />
       <MenuSeparator />
@@ -176,7 +175,7 @@ export function ViewMenu({
           defaultValue: "Follow playhead",
         })}
         checked={followPlayhead}
-        onSelect={() => void toggleFollowPlayhead()}
+        onSelect={() => void getCommand("toggleFollowPlayhead")?.run()}
       />
       {/* Directly below Follow playhead: both are "how my timeline is
           displayed". No `actionId`, so no accelerator to right-align — see
@@ -185,12 +184,15 @@ export function ViewMenu({
       <MenuItem
         label={t("view.show_markers", { defaultValue: "Show markers" })}
         checked={markersVisible}
-        onSelect={() => void toggleMarkersVisible()}
+        onSelect={() => void getCommand("toggleMarkersVisible")?.run()}
       />
       <MenuSeparator />
+      {/* Enter path only: while a session is active the whole menu bar is
+          swapped out for AgentMode, so exit stays on AgentMode's "Exit to
+          editor" button. */}
       <MenuItem
         label={t("view.enter_agent_mode", { defaultValue: "Enter Agent Mode" })}
-        onSelect={onEnterAgentMode}
+        onSelect={() => void getCommand("enterAgentMode")?.run()}
       />
     </Menu>
   );

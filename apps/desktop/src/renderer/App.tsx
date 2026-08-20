@@ -884,7 +884,6 @@ export function App({ onCloseProject }: AppProps) {
         <AppMenuBar
           pong={pong}
           onOpenSearch={() => setPaletteOpen(true)}
-          onEnterAgentMode={handleEnterAgentMode}
           workspaceController={workspaceController}
           workspaceSnapshot={workspaceSnapshot}
           workspaceProfiles={viewMenuWorkspaces}

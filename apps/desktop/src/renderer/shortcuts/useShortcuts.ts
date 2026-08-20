@@ -206,10 +206,22 @@ export function useShortcuts({
   }, [entries]);
 }
 
-/// Run an action handler with its result in the activity log. Exported for the
-/// macOS native menu (`menu/nativeMenu.ts`), which dispatches the same actions
-/// through the same handler map — a menu-chosen Save must log exactly like the
-/// Cmd+S that would otherwise have run it.
+/// ActionId flavor of `runCommandWithLogging`: label resolved from the
+/// catalogue. Exported for the macOS native menu (`menu/nativeMenu.ts`), which
+/// dispatches the same actions through the same handler map — a menu-chosen
+/// Save must log exactly like the Cmd+S that would otherwise have run it.
+export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
+  runCommandWithLogging(actionId, ACTION_DEFS[actionId].labelKey, fn);
+}
+
+/// Run a command handler with its result in the activity log — the funnel
+/// behind the invariant "one dispatch → one `Shortcut` row, whatever surface
+/// invoked it". The keyboard dispatcher above and the native menu enter via
+/// `runWithLogging`; every other surface (palette, in-app menu bar, Quick
+/// Actions) enters via the command registry, which wraps each `CommandDef.run`
+/// in this (`commands/registry.ts`). `id` is not always an `ActionId` — the
+/// registry also carries menu-only command ids — so the label key travels as
+/// an argument instead of an `ACTION_DEFS` lookup.
 ///
 /// Three flavors of entry per dispatch:
 ///   * Synchronous handler → one `Info` entry on completion.
@@ -220,13 +232,16 @@ export function useShortcuts({
 ///     resolves.
 ///
 /// Errors always emit at `Error` level, regardless of timing.
-export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
-  const labelKey = ACTION_DEFS[actionId].labelKey;
+export function runCommandWithLogging(
+  id: string,
+  labelKey: string,
+  fn: () => void | Promise<void>,
+) {
   let result: void | Promise<void>;
   try {
     result = fn();
   } catch (err) {
-    emitActionFailure(actionId, labelKey, err);
+    emitActionFailure(id, labelKey, err);
     return;
   }
   if (!result || typeof (result as Promise<void>).then !== "function") {
@@ -234,9 +249,9 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
       level: "info",
       category: { kind: "Shortcut" },
       source: { kind: "User" },
-      message: `Shortcut: ${actionId}`,
+      message: `Shortcut: ${id}`,
       i18n_key: "log.shortcut_ok",
-      i18n_args: { actionId, label_key: labelKey },
+      i18n_args: { actionId: id, label_key: labelKey },
     });
     return;
   }
@@ -248,11 +263,11 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
       level: "info",
       category: { kind: "Shortcut" },
       source: { kind: "User" },
-      message: `Shortcut: ${actionId}`,
+      message: `Shortcut: ${id}`,
       op_id: opId,
       op_state: { state: "Started" },
       i18n_key: "log.shortcut_started",
-      i18n_args: { actionId, label_key: labelKey },
+      i18n_args: { actionId: id, label_key: labelKey },
     });
   }, 250);
   (result as Promise<void>).then(
@@ -263,17 +278,17 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
         level: "info",
         category: { kind: "Shortcut" },
         source: { kind: "User" },
-        message: `Shortcut: ${actionId}`,
+        message: `Shortcut: ${id}`,
         op_id: opId,
         op_state: { state: "Ok" },
         i18n_key: "log.shortcut_ok",
-        i18n_args: { actionId, label_key: labelKey },
+        i18n_args: { actionId: id, label_key: labelKey },
       });
     },
     (err) => {
       resolved = true;
       window.clearTimeout(startedTimer);
-      emitActionFailure(actionId, labelKey, err, opId);
+      emitActionFailure(id, labelKey, err, opId);
     },
   );
 }
@@ -285,7 +300,7 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
 /// out — the terminal `op_state` must follow even for a Debug line, or the
 /// running-ops spinner never clears.
 function emitActionFailure(
-  actionId: ActionId,
+  id: string,
   labelKey: string,
   err: unknown,
   opId?: string,
@@ -301,7 +316,7 @@ function emitActionFailure(
         ? { i18n_key: refusal.i18n_key, i18n_args: refusal.i18n_args ?? null }
         : {}),
       ...(opId ? { op_id: opId, op_state: { state: "Err" as const } } : {}),
-      details: { action: actionId, error: refusal.error },
+      details: { action: id, error: refusal.error },
     });
     return;
   }
@@ -309,10 +324,10 @@ function emitActionFailure(
     level: "error",
     category: { kind: "Shortcut" },
     source: { kind: "User" },
-    message: `Shortcut ${actionId} failed: ${String(err)}`,
+    message: `Shortcut ${id} failed: ${String(err)}`,
     ...(opId ? { op_id: opId, op_state: { state: "Err" as const } } : {}),
     i18n_key: "log.shortcut_failed",
-    i18n_args: { actionId, label_key: labelKey, error: String(err) },
+    i18n_args: { actionId: id, label_key: labelKey, error: String(err) },
   });
 }
 

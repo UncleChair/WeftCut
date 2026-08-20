@@ -9,6 +9,12 @@ vi.mock("../state/navigation", () => ({
   revealInMediaPool: vi.fn(() => true),
 }));
 
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  logEmit: vi.fn(() => Promise.resolve()),
+}));
+
+import { logEmit } from "../ipc";
 import i18n from "../i18n"; // also a side-effect: init global i18next (en-US fallback)
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
 import { registerCommandProvider } from "../commands/registry";
@@ -141,13 +147,20 @@ beforeEach(() => {
 });
 
 describe("SearchPalette", () => {
-  it("runs a command on Enter and closes", async () => {
+  it("runs a command on Enter, closes, and logs one Shortcut row", async () => {
     const onClose = vi.fn();
     render(<SearchPalette onClose={onClose} />);
     await userEvent.keyboard("save");
     await userEvent.keyboard("{Enter}");
     expect(runSpy).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalled();
+    // The palette is a command surface: activating an entry must log exactly
+    // like the chord that would have run it (registry funnel).
+    expect(logEmit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logEmit).mock.calls[0]![0]).toMatchObject({
+      category: { kind: "Shortcut" },
+      message: "Shortcut: save",
+    });
   });
 
   it("jumps to a caption matched via pinyin initials", async () => {
