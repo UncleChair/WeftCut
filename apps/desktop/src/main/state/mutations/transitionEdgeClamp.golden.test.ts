@@ -16,7 +16,13 @@ interface GoldenCase {
   name: string
   fps: { num: number; den: number }
   edge: 'left' | 'right'
-  setup: { mediaDurationUs: number | null; aStartUs: number; cutUs: number; bEnd0Us: number; addDurationUs: number }
+  setup: {
+    mediaDurationUs: number | null; aStartUs: number; cutUs: number; bEnd0Us: number; addDurationUs: number
+    // Optional extras for borrowed-geometry cases: an extend-placement add
+    // (e = duration), then an implicit-growth update (D5 keeps e, moves B
+    // left) — together they mint 0 < e < d without touching the drag itself.
+    placement?: 'extend'; growDurationUs?: number
+  }
   geometry: { aEndUs: number; bStartUs: number; bEndUs: number; extendedUs: number; aSrcOutUs: number | null }
   rawTargetUs: number
   clampedUs: number
@@ -32,7 +38,8 @@ const fixture = JSON.parse(
 
 /** Build the case's post-setup world through the actor: A (video when the
  *  fixture names a media duration, else color) adjacent to B at the cut, then
- *  the default overlap add. Returns the transition id. */
+ *  the add (default overlap unless the case pins `placement`), then the
+ *  optional implicit-growth update. Returns the transition id. */
 function buildCase(c: GoldenCase): { actor: ActorHandle; tid: string; a: string; b: string } {
   const gen = seededGen()
   const initial = blankProject(gen, 'golden')
@@ -48,9 +55,13 @@ function buildCase(c: GoldenCase): { actor: ActorHandle; tid: string; a: string;
     a = (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: c.setup.aStartUs, t_end_us: c.setup.cutUs }) as { ok: true; value: string }).value
   }
   const b = (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: c.setup.cutUs, t_end_us: c.setup.bEnd0Us }) as { ok: true; value: string }).value
-  const r = actor.dispatch('add_transition', { from: a, to: b, duration_us: c.setup.addDurationUs })
+  const placementArg = c.setup.placement === undefined ? {} : { placement: c.setup.placement }
+  const r = actor.dispatch('add_transition', { from: a, to: b, duration_us: c.setup.addDurationUs, ...placementArg })
   expect(r.ok).toBe(true)
-  return { actor, tid: (r as { ok: true; value: string }).value, a, b }
+  const tid = (r as { ok: true; value: string }).value
+  if (c.setup.growDurationUs !== undefined)
+    expect(actor.dispatch('update_transition', { transition: tid, duration_us: c.setup.growDurationUs }).ok).toBe(true)
+  return { actor, tid, a, b }
 }
 
 function layerOf(actor: ActorHandle, id: string) {

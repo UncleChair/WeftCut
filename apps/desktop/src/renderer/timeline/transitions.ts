@@ -281,16 +281,21 @@ export function transitionTailHandleUs(
 
 /// Left edge = B's timeline start; A.end is pinned. Snap the DESTINATION to
 /// the frame grid (never the delta), then clamp so
-/// d′ = A.end − L ∈ [1 frame, min(len_A, len_B)] — current layer spans, since
-/// this edge MOVES B without resizing anyone. All bounds are computed in frame
-/// indices between canonical boundaries (the fractional-rate discipline the
-/// mutation side documents on wholeFrameDurationUs).
+/// d′ = A.end − L ∈ [max(1 frame, e frames), min(len_A, len_B)] — current
+/// layer spans, since this edge MOVES B without resizing anyone. The e floor
+/// is the mutation's e′ ≤ d′ gate seen from this edge: the drag pins A.end by
+/// sending the CURRENT `extendedUs` explicitly, so a d′ below the live borrow
+/// would commit e′ > d′ — the ghost may never offer a target the commit
+/// refuses. All bounds are computed in frame indices between canonical
+/// boundaries (the fractional-rate discipline the mutation side documents on
+/// wholeFrameDurationUs).
 export function transitionLeftEdgeClampUs(args: {
   targetUs: number;
   aStartUs: number;
   aEndUs: number;
   bStartUs: number;
   bEndUs: number;
+  extendedUs: number;
   fpsNum: number;
   fpsDen: number;
 }): number {
@@ -301,10 +306,12 @@ export function transitionLeftEdgeClampUs(args: {
     frameIndexRound(args.bEndUs, num, den) -
       frameIndexRound(args.bStartUs, num, den),
   );
+  const eFrames =
+    endFrame - frameIndexRound(args.aEndUs - args.extendedUs, num, den);
   const target = frameIndexRound(args.targetUs, num, den);
   const frame = Math.max(
     endFrame - minLenFrames,
-    Math.min(endFrame - 1, target),
+    Math.min(endFrame - Math.max(1, eFrames), target),
   );
   return timeUsAtFrame(frame, num, den);
 }

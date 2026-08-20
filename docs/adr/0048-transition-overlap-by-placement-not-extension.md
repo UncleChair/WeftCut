@@ -29,7 +29,7 @@ not born from extension (the pre-positioned add branch already shipped).
 
 ### Overlap placement is the default
 
-`add_transition` moves the incoming layer left by the frame-floored duration
+`add_transition` moves the incoming layer left by the frame-rounded duration
 (measured backward from the cut between two canonical boundaries). Extension
 survives behind an explicit `placement: 'extend'` — an MCP parameter and the
 chip's right edge — never a default and never a silent fallback. The UI keeps

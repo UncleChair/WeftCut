@@ -1304,7 +1304,7 @@ export async function deleteLayer(layerId: string): Promise<void> {
 
 /// Add a transition at a hard cut between same-track adjacent visual layers.
 /// Overlap placement (the backend default — this wrapper sends no placement):
-/// the incoming layer moves left by the frame-floored `durationUs`, trimmed
+/// the incoming layer moves left by the frame-rounded `durationUs`, trimmed
 /// ranges preserved, no tail borrowed (ADR 0048). Crossfade must OMIT
 /// `direction`; Wipe/Slide must carry one — the backend rejects the other
 /// pairing. Throws structured refusals (shared group, t = 0 crossing,

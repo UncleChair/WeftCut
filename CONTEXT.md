@@ -102,7 +102,7 @@ _Avoid_: reveal side, wipe from, source edge
 
 **Overlap placement**:
 The default arrangement of every `add_transition`: the incoming layer moves
-left by the frame-floored duration (group siblings following on their own
+left by the frame-rounded duration (group siblings following on their own
 lattices), so both participants play exactly their trimmed ranges — no
 default touches the user's cut (ADR 0048). The vacated span stays a gap
 (groups, not ripple, express "these move together"), and a shifted sibling

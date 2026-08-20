@@ -151,7 +151,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("transition chip", () => {
-  it("renders over the incoming layer's head: left at the cut, width = duration", () => {
+  it("renders over the incoming layer's head: left at its start, width = duration", () => {
     const { container } = renderTimeline({
       tracks: [makeTrack([extendedA, layerB])],
       transitions: [transition],
@@ -496,10 +496,13 @@ describe("cut context menu", () => {
     expect(ipcMocks.addTransition).not.toHaveBeenCalled();
   });
 
-  it("TransitionInsufficientHandle surfaces available_us through the status log — never a silent clamp", async () => {
+  it("a structured add refusal surfaces through the status log — never a silent clamp", async () => {
+    // TransitionParticipantsShareGroup — a refusal this surface can actually
+    // spring (the overlap-default add never handle-checks; its reachable
+    // refusals are shared group and a moved member crossing t = 0).
     ipcMocks.addTransition.mockRejectedValueOnce(
       new Error(
-        '{"error":"TransitionInsufficientHandle","layer":"layer-a","available_us":433333}',
+        '{"error":"TransitionParticipantsShareGroup","from":"layer-a","to":"layer-b"}',
       ),
     );
     const { getByText } = renderTimeline({});
@@ -511,9 +514,9 @@ describe("cut context menu", () => {
       expect(ipcMocks.logEmit).toHaveBeenCalledWith(
         expect.objectContaining({
           level: "error",
-          // 433_333 µs rendered as seconds by the curated refusal copy
+          // The curated refusal copy names both participants
           // (errors/formatCommandError.ts).
-          message: expect.stringContaining("0.43s"),
+          message: expect.stringContaining("same group"),
         }),
       );
     });

@@ -116,7 +116,7 @@ describe('applyAddTransition', () => {
     // Window adjacency: [B.start, A.end] and overlap === duration (validate's rule).
     expect(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us).toBe(1_000_000)
   })
-  it("explicit placement 'extend': the v1 borrow — from_layer extends, positions untouched, full-borrow provenance", () => {
+  it("explicit placement 'extend': the tail borrow — from_layer extends, positions untouched, full-borrow provenance", () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend') // #6
     expect(layerOf(p, a1).t_end_us).toBe(3_000_000) // extended by 1M
@@ -348,7 +348,7 @@ describe('applyUpdateTransition', () => {
     const err = expectCmdErr(() => applyUpdateTransition(p, tid, { extended_us: 1_500_000 }))
     expect([err.error, err.field]).toEqual(['InvalidArgument', 'extended_us'])
     expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([3_000_000, 2_000_000])
-    // −1 µs is a LEGAL explicit target now (spec D6): it rounds to frame 0, so
+    // −1 µs is a LEGAL explicit target (spec D6): it rounds to frame 0, so
     // e′ = 0 — A.end returns to S and B follows left to keep d. The negative
     // request never lands negative in the store.
     applyUpdateTransition(p, tid, { extended_us: -1 })

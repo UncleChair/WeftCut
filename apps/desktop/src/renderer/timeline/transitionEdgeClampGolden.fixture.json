@@ -80,6 +80,19 @@
       "beyondError": "InvalidArgument"
     },
     {
+      "name": "left edge with a live borrow (media kind, 30 fps): d' floors at e, so the ghost never offers a commit the e' <= d' gate refuses; A.end stays pinned",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "left",
+      "setup": { "mediaDurationUs": 3000000, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 4000000, "addDurationUs": 1000000, "placement": "extend", "growDurationUs": 1500000 },
+      "geometry": { "aEndUs": 3000000, "bStartUs": 1500000, "bEndUs": 3500000, "extendedUs": 1000000, "aSrcOutUs": 3000000 },
+      "rawTargetUs": 2600000,
+      "clampedUs": 2000000,
+      "commit": { "durationUs": 1000000, "extendedUs": 1000000 },
+      "after": { "aEndUs": 3000000, "bStartUs": 2000000, "durationUs": 1000000, "extendedUs": 1000000, "aSrcOutUs": 3000000 },
+      "beyond": { "durationUs": 966667, "extendedUs": 1000000 },
+      "beyondError": "InvalidArgument"
+    },
+    {
       "name": "fractional rate 30000/1001: right edge clamps at the tail handle on canonical NTSC boundaries",
       "fps": { "num": 30000, "den": 1001 },
       "edge": "right",

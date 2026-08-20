@@ -323,8 +323,8 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // extended_us-less build could write (its adds borrowed the outgoing tail by
   // the FULL duration); a pre-positioned add (MCP-only, layers hand-overlapped
   // first) would deserve 0, but no project containing one exists to load.
-  // This is the one backfill site
-  // ([[feedback_ts_parse_additive_field_defaults]]): a second one would let
+  // This is the one backfill site (docs/data-model.md § additive-field
+  // backfill — one pass in one place): a second one would let
   // `replaceState` and `project_open` disagree, and a consumer reading the field
   // as required (remove/update routing) would see `undefined` and shrink NaN µs.
   // AFTER repairGrid deliberately: the repair re-derives duration_us from

@@ -1,4 +1,4 @@
-// Transitions v1 determinism + WYSIWYG gate.
+// Transitions determinism + WYSIWYG gate.
 //
 // Solid RED → solid BLUE Color layers (no media files, no decode variance)
 // make every assertion mathematical: per transition kind the spec authors a

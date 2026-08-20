@@ -57,6 +57,7 @@ describe("transition edge clamp golden (renderer leg)", () => {
               aEndUs: g.aEndUs,
               bStartUs: g.bStartUs,
               bEndUs: g.bEndUs,
+              extendedUs: g.extendedUs,
               fpsNum: c.fps.num,
               fpsDen: c.fps.den,
             })

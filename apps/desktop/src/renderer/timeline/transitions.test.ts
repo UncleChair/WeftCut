@@ -360,7 +360,7 @@ describe("transitionChipsForTrack", () => {
   const b = visualLayer("b", 2_000_000, 4_000_000);
   const tr = crossfade("tr-1", "a", "b", 500_000);
 
-  it("chip window starts at the cut (incoming layer's head) and spans duration_us", () => {
+  it("chip window starts at the incoming layer's head and spans duration_us", () => {
     const chips = transitionChipsForTrack(track([a, b]), [tr]);
     expect(chips).toHaveLength(1);
     expect(chips[0]).toMatchObject({
@@ -403,13 +403,14 @@ describe("chipSliceSlot", () => {
 
 describe("transition edge clamp kernels", () => {
   const FPS = { fpsNum: 30, fpsDen: 1 };
-  const left = (targetUs: number) =>
+  const left = (targetUs: number, extendedUs = 0) =>
     transitionLeftEdgeClampUs({
       targetUs,
       aStartUs: 0,
       aEndUs: 2_500_000,
       bStartUs: 2_000_000,
       bEndUs: 4_000_000,
+      extendedUs,
       ...FPS,
     });
   const right = (targetUs: number, tailHandleUs: number) =>
@@ -433,6 +434,14 @@ describe("transition edge clamp kernels", () => {
     expect(left(-5_000_000)).toBe(500_000);
     // Ceiling: d′ ≥ 1 frame → L ≤ A.end − 1 frame.
     expect(left(9_000_000)).toBe(2_466_667); // frame 74
+  });
+
+  it("left edge with a live borrow floors d′ at e — the commit's e′ ≤ d′ gate seen from this edge", () => {
+    // e = 500k (15 frames), S = 2M: the drag sends extendedUs = e explicitly,
+    // so shrinking past d′ = e would commit e′ > d′; the ghost stops at L = S.
+    expect(left(9_000_000, 500_000)).toBe(2_000_000); // frame 60 = S
+    // Growth is unaffected by the floor.
+    expect(left(1_000_000, 500_000)).toBe(1_000_000);
   });
 
   it("right edge clamps between B.start + 1 frame and min(A.end + tail handle, B.end)", () => {

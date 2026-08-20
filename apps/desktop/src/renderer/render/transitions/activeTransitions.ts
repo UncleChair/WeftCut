@@ -2,8 +2,9 @@
 // two-input transition node (TransitionNodes.ts). Pure — the caller injects
 // the layer/track lookups, so this is unit-testable without a Compositor.
 //
-// Start-at-cut alignment: a transition's window IS the authorized overlap,
-// `[to.t_start_us, to.t_start_us + duration_us)`. Progress is fixed linear
+// Placement-independent (overlap or extend, ADR 0048): a transition's window
+// IS the authorized overlap, `[to.t_start_us, to.t_start_us + duration_us)`.
+// Progress is fixed linear
 // (easing is a future additive parameter, never a keyframe track).
 
 import type { TransitionSummary } from "../../ipc";

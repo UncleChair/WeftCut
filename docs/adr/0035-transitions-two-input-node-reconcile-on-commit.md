@@ -146,14 +146,14 @@ a truth table in `src/main/state/reconcile.test.ts`:
   shared predicate.
 - Deferred surface (Push, wipe softness, easing, alignment variants,
   freeze-frame handles, audio equal-power crossfade, Policy C) is tracked
-  post-v1. Authoring discoverability and chip drag-resize are v1 items —
-  adding a transition currently requires right-clicking exactly on a cut.
-  **Superseded in part by
+  post-v1. **Superseded in part by
   [ADR 0048](0048-transition-overlap-by-placement-not-extension.md):** the
   alignment variants dissolve (overlap placement is end-at-cut geometry;
   mixed `extended_us` covers center), Policy C dissolves at the gesture
   layer under the chip's pointer capture, and chip drag-resize ships as the
-  chip's two placement-independent edges.
+  chip's two placement-independent edges. Authoring surfaces (palette
+  command, Quick Actions, Transitions panel, cut context menu) add
+  argumentlessly against the nearest eligible cut.
 
 ## References
 

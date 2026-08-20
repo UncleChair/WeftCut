@@ -178,11 +178,12 @@ function bounceCollidingSiblings(p: Project, idGen: IdGen, memberIds: readonly U
 /** add_transition. Both layers must live on the SAME track. Cases:
  *
  *  - exact-adjacent cut, `placement: 'overlap'` (the default): the incoming
- *    layer (and its group siblings) moves LEFT by the frame-floored duration —
+ *    layer (and its group siblings) moves LEFT by the frame-rounded duration —
  *    both participants play exactly their trimmed ranges; `extended_us = 0`.
  *    Colliding shifted siblings bounce lanes (bounceCollidingSiblings); the
  *    vacated span stays a gap (no ripple).
- *  - exact-adjacent cut, `placement: 'extend'`: the v1 borrow — pre-checked
+ *  - exact-adjacent cut, `placement: 'extend'`: the explicit tail borrow —
+ *    pre-checked
  *    against the outgoing tail handle, positions untouched;
  *    `extended_us = duration`.
  *  - pre-overlapped by exactly duration: classifies as overlap under BOTH

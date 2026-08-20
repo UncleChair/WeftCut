@@ -79,11 +79,12 @@ sample lattice at write time too, so an audio envelope is no longer coarser than
 the mixer that renders it. Keyframe times remain unenforced by the validator for
 the reason below.
 
-Two fields are deliberately outside that rule. `transition.duration_us` is
-a *distance* between two canonical boundaries, and at 29.97 / 23.976 a
-distance is not itself a boundary time — so what is enforced is
-`overlap == duration_us`, and canonical participant endpoints then make the
-duration a whole frame count automatically. Keyframe `t_us` is snapped on
+Three fields are deliberately outside that rule. `transition.duration_us`
+and `transition.extended_us` are *distances* between canonical boundaries,
+and at 29.97 / 23.976 a distance is not itself a boundary time — so what is
+enforced is `overlap == duration_us` (plus `0 ≤ extended_us ≤ duration_us`
+structurally), and canonical participant endpoints then make both whole
+frame counts automatically. Keyframe `t_us` is snapped on
 write but not enforced: trim and split rebase keys by a delta, and
 re-snapping the shifted set would dedupe-merge two keys that landed on one
 frame, losing authored data.

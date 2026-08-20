@@ -27,7 +27,7 @@ function layerOf(p: Project, id: string): Layer {
 }
 
 /** Actor with a captured log seam and A1=[0,2M] → A2=[2M,4M] + a 1M crossfade
- *  on @A. The add is PINNED to placement 'extend' (A1 auto-extends to 3M;
+ *  on @A. The add is PINNED to placement 'extend' (A1's tail extends to 3M;
  *  overlap [2M,3M] === duration) so the truth-table rows below keep their
  *  authored geometry under the overlap-default add — the table's semantics are
  *  what this file gates, not the add's placement. */

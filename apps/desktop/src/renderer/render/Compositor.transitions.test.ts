@@ -47,7 +47,7 @@ function colorLayer(id: string, tStartUs: number, tEndUs: number): LayerSummary 
   };
 }
 
-// Start-at-cut shape: A extended over the overlap, window = [1s, 2s).
+// Pre-overlapped fixture (extended_us 0): window = [1s, 2s).
 const layerA = colorLayer("layer-a", 0, 2_000_000);
 const layerB = colorLayer("layer-b", 1_000_000, 3_000_000);
 

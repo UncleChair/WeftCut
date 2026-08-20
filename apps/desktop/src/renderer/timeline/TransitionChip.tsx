@@ -139,6 +139,7 @@ export function TransitionChip({
                 aEndUs,
                 bStartUs,
                 bEndUs,
+                extendedUs: chip.transition.extended_us,
                 fpsNum,
                 fpsDen,
               })
