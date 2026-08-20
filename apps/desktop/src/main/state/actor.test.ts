@@ -389,16 +389,32 @@ describe('dispatch: transitions', () => {
   const fromEnd = (actor: ReturnType<typeof createActor>, id: string) =>
     actor.snapshot().tracks[0].layers.find((l) => l.id === id)!.t_end_us
 
-  it('add_transition extends from_layer + records it; remove_transition shrinks back', () => {
+  const toStart = (actor: ReturnType<typeof createActor>, id: string) =>
+    actor.snapshot().tracks[0].layers.find((l) => l.id === id)!.t_start_us
+
+  it('add_transition defaults to overlap placement: B moves left, A untouched; remove_transition moves B back', () => {
     const { actor, a1, a2 } = setup()
     const t = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 })
     expect(t.ok).toBe(true)
     const tid = (t as { ok: true; value: string }).value
-    expect(fromEnd(actor, a1)).toBe(3_000_000)
+    expect(fromEnd(actor, a1)).toBe(2_000_000) // A's trimmed range is sacred
+    expect(toStart(actor, a2)).toBe(1_000_000) // B opened the overlap by moving left
     expect(actor.snapshot().transitions.map((x) => x.id)).toEqual([tid])
+    expect(actor.snapshot().transitions[0].extended_us).toBe(0)
     expect(actor.dispatch('remove_transition', { transition: tid }).ok).toBe(true)
+    expect(toStart(actor, a2)).toBe(2_000_000) // adjacency restored exactly
     expect(fromEnd(actor, a1)).toBe(2_000_000)
     expect(actor.snapshot().transitions).toEqual([])
+  })
+  it("add_transition placement 'extend' still borrows tail: from_layer extends and remove shrinks it back", () => {
+    const { actor, a1, a2 } = setup()
+    const t = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, placement: 'extend' })
+    expect(t.ok).toBe(true)
+    expect(fromEnd(actor, a1)).toBe(3_000_000)
+    expect(toStart(actor, a2)).toBe(2_000_000)
+    expect(actor.snapshot().transitions[0].extended_us).toBe(1_000_000)
+    expect(actor.dispatch('remove_transition', { transition: (t as { ok: true; value: string }).value }).ok).toBe(true)
+    expect(fromEnd(actor, a1)).toBe(2_000_000)
   })
   it('add_transition with cross-track to-layer fails LayerNotFound (no id burned)', () => {
     const { actor, a1 } = setup()
@@ -462,24 +478,25 @@ describe('dispatch: transitions', () => {
   function withCrossfade() {
     const s = setup()
     const tid = (s.actor.dispatch('add_transition', { from: s.a1, to: s.a2, duration_us: 1_000_000 }) as { ok: true; value: string }).value
-    return { ...s, tid } // a1 extended to 3M; overlap [2M,3M]
+    return { ...s, tid } // overlap add: a2 moved to [1M,3M], e = 0; window [1M,2M]
   }
-  it('update_transition duration patch moves the outgoing tail; ONE recorded entry (one undo)', () => {
-    const { actor, a1, tid } = withCrossfade()
+  it('update_transition duration patch moves the incoming layer (e = 0, nothing borrowed); ONE recorded entry (one undo)', () => {
+    const { actor, a1, a2, tid } = withCrossfade()
     const before = actor.historyStatus().len
     expect(actor.dispatch('update_transition', { transition: tid, duration_us: 500_000 }).ok).toBe(true)
     expect(actor.snapshot().transitions[0].duration_us).toBe(500_000)
-    expect(fromEnd(actor, a1)).toBe(2_500_000) // shrink rides the same commit
+    expect(fromEnd(actor, a1)).toBe(2_000_000) // sacred end never moves on an e = 0 shrink
+    expect(toStart(actor, a2)).toBe(1_500_000) // the shrink rides the same commit as B's move
     expect(actor.historyStatus().len).toBe(before + 1)
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot().transitions[0].duration_us).toBe(1_000_000)
-    expect(fromEnd(actor, a1)).toBe(3_000_000)
+    expect(toStart(actor, a2)).toBe(1_000_000)
   })
   it('update_transition kind patch (+direction) swaps kind without touching geometry', () => {
-    const { actor, a1, tid } = withCrossfade()
+    const { actor, a1, a2, tid } = withCrossfade()
     expect(actor.dispatch('update_transition', { transition: tid, kind: 'Wipe', direction: 'right' }).ok).toBe(true)
     expect(actor.snapshot().transitions[0].kind).toEqual({ kind: 'Wipe', direction: 'right' })
-    expect(fromEnd(actor, a1)).toBe(3_000_000) // untouched
+    expect([fromEnd(actor, a1), toStart(actor, a2)]).toEqual([2_000_000, 1_000_000]) // untouched
   })
   it('update_transition duration + kind together in one commit', () => {
     const { actor, a1, a2, tid } = withCrossfade()
@@ -488,8 +505,8 @@ describe('dispatch: transitions', () => {
     expect(actor.snapshot().transitions[0]).toMatchObject({ duration_us: 1_500_000, kind: { kind: 'Slide', direction: 'down' } })
     // Growth never borrows (ADR 0048): the outgoing tail stays put and the incoming
     // layer opens the extra overlap by moving left.
-    expect(fromEnd(actor, a1)).toBe(3_000_000)
-    expect(actor.snapshot().tracks[0].layers.find((l) => l.id === a2)!.t_start_us).toBe(1_500_000)
+    expect(fromEnd(actor, a1)).toBe(2_000_000)
+    expect(actor.snapshot().tracks[0].layers.find((l) => l.id === a2)!.t_start_us).toBe(500_000)
     expect(actor.historyStatus().len).toBe(before + 1)
   })
   it('update_transition direction without kind → InvalidArgument(direction)', () => {
@@ -505,12 +522,15 @@ describe('dispatch: transitions', () => {
 
   // ── dryRun ↔ commit alignment ──
   it('dryRun runs reconcile like commit: a trim over a transition edge predicts succeed-with-drop, not ValidationFailed', () => {
+    // a2 sits at [1M,3M] (overlap add); pulling its In edge to 2.5M — past
+    // a1's end — collapses the overlap to 0 ≠ duration 1M, so reconcile drops
+    // the transition.
     const { actor, a2 } = withCrossfade()
-    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 3_000_000, escape_group: false }])
+    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 2_500_000, escape_group: false }])
     expect(out[0].ok, 'dry-run must match the real succeed-with-drop outcome').toBe(true)
     expect(actor.snapshot().transitions).toHaveLength(1) // dry-run committed nothing
     // parity: the real command also succeeds and drops the transition
-    expect(actor.dispatch('trim_layer', { layer: a2, edge: 'in', new_t_us: 3_000_000 }).ok).toBe(true)
+    expect(actor.dispatch('trim_layer', { layer: a2, edge: 'in', new_t_us: 2_500_000 }).ok).toBe(true)
     expect(actor.snapshot().transitions).toEqual([])
   })
 })

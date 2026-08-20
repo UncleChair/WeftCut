@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, MCP_TOOLS } from '../mcp-commands'
+import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, MCP_TOOLS, mapCommandError } from '../mcp-commands'
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
@@ -190,20 +190,50 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(actor.snapshot().transitions).toEqual([])
   })
 
-  it('TransitionInsufficientHandle surfaces friendly prose + structured data (available_us)', () => {
+  it('the default (no placement arg) add is overlap: MCP moves the incoming layer instead of extending', () => {
     const { actor, track, a1, a2 } = withCut()
     // A video layer with ZERO tail media (src_out == media duration) as the
-    // outgoing participant: extending for the transition is impossible.
+    // outgoing participant: extending is impossible, but overlap needs no tail.
     const MID = '00000000-0000-7000-8000-0000000000aa'
     actor.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 2_000_000 })
     actor.dispatch('delete_layer', { layer: a1 }) // free [0,2M)
     const v1 = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: v1, to_layer_id: a2, duration_us: 1_000_000 }))
+    expect(r.ok).toBe(true)
+    const layers = actor.snapshot().tracks[0].layers
+    expect(layers.find((l) => l.id === v1)!.t_end_us).toBe(2_000_000) // A untouched
+    expect(layers.find((l) => l.id === a2)!.t_start_us).toBe(1_000_000) // B moved left
+    expect(actor.snapshot().transitions[0].extended_us).toBe(0)
+  })
+
+  it('TransitionInsufficientHandle surfaces friendly prose + structured data (available_us)', () => {
+    // Reached via explicit placement 'extend' — the dispatch arm accepts it now;
+    // the MCP def advertises it in the surface-flip ticket. The mapping under
+    // test is mapCommandError's, the exact JSON an MCP client would receive.
+    const { actor, track, a1, a2 } = withCut()
+    const MID = '00000000-0000-7000-8000-0000000000aa'
+    actor.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 2_000_000 })
+    actor.dispatch('delete_layer', { layer: a1 }) // free [0,2M)
+    const v1 = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+    const r = actor.dispatch('add_transition', { from: v1, to: a2, duration_us: 1_000_000, placement: 'extend' })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    const mapped = mapCommandError(r.error)
+    expect(mapped.code).toBe('invalid_params')
+    expect(mapped.message).toContain('µs remaining')
+    expect(mapped.data).toEqual({ error: 'TransitionInsufficientHandle', layer: v1, available_us: 0 })
+  })
+
+  it('TransitionParticipantsShareGroup surfaces prose + structured data with the two ways out', () => {
+    const { actor, a1, a2 } = withCut()
+    expect(actor.dispatch('groups_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
+    const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000 }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(r.error.message).toContain('µs remaining')
-    expect(r.error.data).toEqual({ error: 'TransitionInsufficientHandle', layer: v1, available_us: 0 })
+    expect(r.error.message).toContain('share a group')
+    expect(r.error.data).toMatchObject({ error: 'TransitionParticipantsShareGroup', from: a1, to: a2 })
+    expect(actor.snapshot().transitions).toEqual([])
   })
 
   it('audio participant → TransitionUnsupportedLayerKind prose + data', () => {

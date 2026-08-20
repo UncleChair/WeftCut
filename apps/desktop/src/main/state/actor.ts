@@ -22,7 +22,7 @@ import { applyDurationAutofit, locateLayer } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
-import { applyAddTransition, applyRemoveTransition, applyUpdateTransition } from './mutations/transitions'
+import { applyAddTransition, applyRemoveTransition, applyUpdateTransition, type TransitionBounce } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate,
   applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
@@ -34,7 +34,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStyle
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseRgba, parseTransitionKind, parseTransitionKindOpt, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -56,9 +56,15 @@ export type DryRunOp =
   | { kind: 'MoveLayer'; id: Uuid; new_track_id: Uuid; new_t_start_us: number; escape_group: boolean }
   | { kind: 'SplitLayer'; id: Uuid; at_t_us: number; escape_group: boolean }
   | { kind: 'TrimLayer'; id: Uuid; edge: LayerEdge; new_t_us: number; escape_group: boolean }
+  // `transition_kind`, not `kind`: the discriminant owns that name.
+  | { kind: 'AddTransition'; from: Uuid; to: Uuid; duration_us: number; transition_kind: TransitionKind; placement: 'overlap' | 'extend' }
 export type DryRunOutput =
   | { kind: 'AddLayer'; layer_id: Uuid }
   | { kind: 'SplitLayer'; left_id: Uuid; right_id: Uuid }
+  // The overlap add's side effects are the payload: `bounces` predicts sibling
+  // lane moves and lane spawns exactly as the wet command would perform (and
+  // log) them — same code path, produce-and-discard.
+  | { kind: 'AddTransition'; transition_id: Uuid; bounces: TransitionBounce[] }
   | { kind: 'Void' }
 
 /** Status-log row payload — structurally matches TsActorHostDeps.emitLog so the
@@ -194,6 +200,24 @@ export function createActor(opts: ActorOptions): ActorHandle {
           details: { kind: 'TransitionReconcileDrop', transition: d.id, from_layer: d.from_layer, to_layer: d.to_layer, reason: d.reason },
         })
       } catch (err) { console.warn('[actor] emitLog failed (transition reconcile)', err) }
+    }
+  }
+
+  /** One status-log row per overlap-add sibling bounce (same best-effort seam
+   *  as logDroppedTransitions: a throwing emit never aborts the already
+   *  recorded commit). */
+  function logTransitionBounces(bounces: TransitionBounce[]): void {
+    if (bounces.length === 0 || !opts.emitLog) return
+    for (const b of bounces) {
+      try {
+        opts.emitLog({
+          level: 'info',
+          category: { kind: 'Project' },
+          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          message: `Transition placement moved layer ${b.layer} to ${b.spawned ? `a new track ${b.to_track}` : `track ${b.to_track}`}: its lane was occupied after the shift`,
+          details: { kind: 'TransitionPlacementBounce', layer: b.layer, from_track: b.from_track, to_track: b.to_track, spawned: b.spawned },
+        })
+      } catch (err) { console.warn('[actor] emitLog failed (transition bounce)', err) }
     }
   }
 
@@ -590,6 +614,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_group); break
             case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_group); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
             case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_group); break
+            // The SAME apply the wet arm runs, so moves, bounces, spawns and
+            // refusals are predicted by one code path (bounces are primitives —
+            // safe to carry out of the discarded draft).
+            case 'AddTransition': { const r = applyAddTransition(d, idGen, op.from, op.to, op.duration_us, op.transition_kind, op.placement); value = { kind: 'AddTransition', transition_id: r.id, bounces: r.bounces }; break }
           }
           // Same point as commit(): after the recipe, before validate — so a
           // dry-run of an edit that breaks a transition predicts the real
@@ -777,10 +805,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'move_effect': commit(HISTORY_SUMMARY.effectReorder, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, parseNum(a.new_index, 'new_index'))); return { ok: true, value: null }
         case 'remove_effect': commit(HISTORY_SUMMARY.effectRemove, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
         case 'add_transition': {
-          // kind/direction parsed BEFORE commit — a bad enum combo burns no
-          // op_id. Absent kind defaults to Crossfade.
+          // kind/direction/placement parsed BEFORE commit — a bad enum combo
+          // burns no op_id. Absent kind defaults to Crossfade; absent placement
+          // to 'overlap' (spec D1).
           const kind = parseTransitionKind(a.kind ?? 'Crossfade', a.direction)
-          return { ok: true, value: commit(HISTORY_SUMMARY.transitionAdd, layerRefs([a.from as Uuid, a.to as Uuid]), { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind)) }
+          const placement = parseTransitionPlacement(a.placement)
+          // Bounce info rides out via closure, NOT commit's return value: the
+          // wire/MCP shape stays "the new transition id". Primitives only —
+          // the recipe's draft is revoked once produce returns.
+          let bounces: TransitionBounce[] = []
+          const id = commit(HISTORY_SUMMARY.transitionAdd, layerRefs([a.from as Uuid, a.to as Uuid]), { kind: 'Coarse' }, (d) => {
+            const r = applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind, placement)
+            bounces = r.bounces
+            return r.id
+          })
+          logTransitionBounces(bounces) // after commit — a rejected add logs nothing
+          return { ok: true, value: id }
         }
         case 'update_transition': {
           const kind = parseTransitionKindOpt(a.kind, a.direction)
@@ -1073,6 +1113,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
         return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_group: (spec.escape_group as boolean) ?? false }
       case 'delete_layer':
         return { kind: 'DeleteLayer', id: parseUuid(spec.layer_id, 'layer_id') }
+      case 'add_transition':
+        // Same gates as the wet tool's boundary: strict (kind, direction)
+        // pairing and the closed placement enum, so a dry-run's arg rejection
+        // matches the real call's. The transition kind rides as
+        // `transition_kind` — the OperationSpec's own `kind` names the op.
+        return { kind: 'AddTransition', from: parseUuid(spec.from_layer_id, 'from_layer_id'), to: parseUuid(spec.to_layer_id, 'to_layer_id'),
+          duration_us: parseNum(spec.duration_us, 'duration_us'),
+          transition_kind: parseTransitionKind(spec.transition_kind ?? 'Crossfade', spec.direction),
+          placement: parseTransitionPlacement(spec.placement) }
       default:
         throw new McpArgError(`unknown operation kind '${kind}'`)
     }

@@ -194,8 +194,9 @@ function applyOp(a: ActorT, op: Op): Res {
     case 'group': return layers.length >= 2 ? a.dispatch('groups_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null
     case 'addTransition': {
       if (layers.length < 2) return null
-      // Bias to adjacent same-track pairs — the geometry the extend path accepts,
-      // and the one whose auto-extension can push t_end_us off the grid.
+      // Bias to adjacent same-track pairs — the geometry the adjacent-cut adds
+      // accept, and the one whose backward-measured B-shift (overlap default)
+      // can push endpoints off the grid if mismeasured.
       const pairs: Array<[string, string]> = []
       for (const t of snap.tracks) for (const x of t.layers) for (const y of t.layers)
         if (x.id !== y.id && x.t_end_us === y.t_start_us) pairs.push([x.id, y.id])

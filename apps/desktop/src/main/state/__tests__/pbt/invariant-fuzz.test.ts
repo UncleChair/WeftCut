@@ -52,7 +52,7 @@ type Op =
   | { t: 'trim'; n: number; edge: 'in' | 'out'; to: number }
   | { t: 'delete'; n: number }
   | { t: 'group'; n: number; m: number }
-  | { t: 'addTransition'; pick: 'adjacent' | 'any'; n: number; m: number; dur: number; kindArg: KindArg }
+  | { t: 'addTransition'; pick: 'adjacent' | 'any'; n: number; m: number; dur: number; kindArg: KindArg; placement: 'overlap' | 'extend' | undefined }
   | { t: 'updateTransition'; n: number; unknownId: boolean; dur: number | undefined; ext: number | undefined; kindArg: KindArg | undefined }
   | { t: 'removeTransition'; n: number; unknownId: boolean }
   | { t: 'undo' } | { t: 'redo' }
@@ -111,7 +111,10 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   // part — only churns when live transitions meet the layer edits above.
   { arbitrary: fc.record({ t: fc.constant('addTransition' as const),
     pick: fc.oneof({ arbitrary: fc.constant('adjacent' as const), weight: 3 }, { arbitrary: fc.constant('any' as const), weight: 1 }),
-    n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }), dur: durArb, kindArg: kindArb }), weight: 4 },
+    n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }), dur: durArb, kindArg: kindArb,
+    // Both placements plus the absent-field default (= overlap), so the fuzz
+    // mixes B-moving adds, tail-borrowing adds, and the flipped default.
+    placement: fc.constantFrom<'overlap' | 'extend' | undefined>('overlap', 'extend', undefined) }), weight: 4 },
   { arbitrary: fc.record({ t: fc.constant('updateTransition' as const), n: fc.nat({ max: 8 }), unknownId: rareTrue,
     dur: fc.option(durArb, { nil: undefined }), ext: fc.option(extArb, { nil: undefined }), kindArg: fc.option(kindArb, { nil: undefined }) }), weight: 3 },
   { arbitrary: fc.record({ t: fc.constant('removeTransition' as const), n: fc.nat({ max: 8 }), unknownId: rareTrue }), weight: 2 },
@@ -147,7 +150,7 @@ function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
       let from = pickLayer(op.n), to = pickLayer(op.m)
       if (op.pick === 'adjacent') {
         // Plausible bias: adjacent same-track pairs (fromEnd === toStart) — the
-        // geometry the extend path accepts. Audio pairs stay in deliberately:
+        // geometry both placements accept. Audio pairs stay in deliberately:
         // realistic geometry into the audio-rejection path. Falls back to the
         // hostile arbitrary pick (cross-track / non-adjacent / self) when the
         // timeline has no cuts.
@@ -156,7 +159,8 @@ function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
           if (a.id !== b.id && a.t_end_us === b.t_start_us) pairs.push([a.id, b.id])
         if (pairs.length) [from, to] = pairs[op.n % pairs.length]
       }
-      return actor.dispatch('add_transition', { from, to, duration_us: op.dur, ...op.kindArg })
+      const placementArg = op.placement === undefined ? {} : { placement: op.placement }
+      return actor.dispatch('add_transition', { from, to, duration_us: op.dur, ...op.kindArg, ...placementArg })
     }
     case 'updateTransition': {
       const target = op.unknownId ? 'no-such-transition' : transitions.length ? transitions[op.n % transitions.length] : null
@@ -243,7 +247,7 @@ describe('rejected transition commands burn no ids (pre-mint failure paths)', ()
   // failing calls yields byte-identical state AND the same next minted id.
   // (Deliberately NOT covered: a downstream ValidationFailed burns one id by
   // design — the known keystone landmine, gated elsewhere.)
-  it('insufficient handle / audio participant / bad pairing / non-adjacent / unknown id consume no id', () => {
+  it('insufficient handle / audio participant / bad pairing / non-adjacent / shared group / zero-cross / over-length / unknown id consume no id', () => {
     type DispatchRes = ReturnType<ActorT['dispatch']>
     const err = (r: DispatchRes) => (r.ok ? null : r.error.error)
     const val = (r: DispatchRes) => (r.ok ? r.value : null) as string
@@ -254,15 +258,31 @@ describe('rejected transition commands burn no ids (pre-mint failure paths)', ()
       const v2 = actor.dispatch('add_layer', { track: vTrack, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 900_000, t_start_us: 900_000, t_end_us: 1_800_000 })
       const a1 = actor.dispatch('add_layer', { track: aTrack, kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 500_000, t_start_us: 0, t_end_us: 500_000 })
       const a2 = actor.dispatch('add_layer', { track: aTrack, kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 500_000, t_start_us: 500_000, t_end_us: 1_000_000 })
-      expect([v1.ok, v2.ok, a1.ok, a2.ok]).toEqual([true, true, true, true])
+      // Fixtures for the overlap-placement refusals, seeded in BOTH runs: a color
+      // cut whose incoming layer is grouped with a near-origin audio sibling
+      // (zero-cross), and the v1+v2 pair grouped (shared participants).
+      const c1 = actor.dispatch('add_layer', { track: vTrack, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+      const c2 = actor.dispatch('add_layer', { track: vTrack, kind: 'color', t_start_us: 3_000_000, t_end_us: 4_000_000 })
+      const tExtra = actor.dispatch('add_track', { label: null })
+      const aud = actor.dispatch('add_layer', { track: val(tExtra), kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 500_000, t_start_us: 200_000, t_end_us: 700_000 })
+      const g1 = actor.dispatch('groups_create', { layers: [val(v1), val(v2)], label: null, reassign: false })
+      const g2 = actor.dispatch('groups_create', { layers: [val(c2), val(aud)], label: null, reassign: false })
+      expect([v1.ok, v2.ok, a1.ok, a2.ok, c1.ok, c2.ok, tExtra.ok, aud.ok, g1.ok, g2.ok]).toEqual([true, true, true, true, true, true, true, true, true, true])
       if (withFailures) {
-        const [fv1, fv2, fa1, fa2] = [v1, v2, a1, a2].map(val)
-        // tail handle = 1_000_000 - 900_000 = 100_000 < 200_000 requested
-        const insufficient = actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 200_000 })
+        const [fv1, fv2, fa1, fa2, fc1, fc2] = [v1, v2, a1, a2, c1, c2].map(val)
+        // tail handle = 1_000_000 - 900_000 = 100_000 < 200_000 requested (extend-only check)
+        const insufficient = actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 200_000, placement: 'extend' })
         expect(err(insufficient)).toBe('TransitionInsufficientHandle')
         if (!insufficient.ok && insufficient.error.error === 'TransitionInsufficientHandle') expect(insufficient.error.available_us).toBe(100_000)
+        // Overlap default on the same grouped pair: participants share a group.
+        expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000 }))).toBe('TransitionParticipantsShareGroup')
+        // c2's audio sibling would cross t = 0 (200k − 1M) → pre-mint ValidationFailed(NegativeLayerStart).
+        expect(err(actor.dispatch('add_transition', { from: fc1, to: fc2, duration_us: 1_000_000 }))).toBe('ValidationFailed')
+        // d > min(len_A, len_B) → pre-mint ValidationFailed(TransitionDurationOutOfRange, transition: null).
+        expect(err(actor.dispatch('add_transition', { from: fc1, to: fc2, duration_us: 1_500_000 }))).toBe('ValidationFailed')
         expect(err(actor.dispatch('add_transition', { from: fa1, to: fa2, duration_us: 100_000 }))).toBe('TransitionUnsupportedLayerKind')
         expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000, kind: 'Wipe' }))).toBe('InvalidArgument') // direction missing
+        expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000, placement: 'diagonal' }))).toBe('InvalidArgument') // bad placement enum
         expect(err(actor.dispatch('add_transition', { from: fv2, to: fv1, duration_us: 100_000 }))).toBe('TransitionLayersNotAdjacent')
         expect(err(actor.dispatch('add_transition', { from: fv1, to: fa1, duration_us: 100_000 }))).toBe('LayerNotFound') // cross-track: `to` not on from's track
         expect(err(actor.dispatch('update_transition', { transition: 'no-such-transition', duration_us: 100_000 }))).toBe('TransitionNotFound')

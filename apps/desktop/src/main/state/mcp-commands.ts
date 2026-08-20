@@ -205,6 +205,16 @@ export function parseTransitionKind(kind: unknown, direction: unknown): Transiti
   return { kind: kind as 'Wipe' | 'Slide', direction: direction as TransitionDirection }
 }
 
+/** add_transition's placement — a closed two-value enum defaulting 'overlap'
+ *  (spec D1: overlap placement is the default; extend survives only as an
+ *  explicit request). Gated here like parseTransitionKind so a typo rejects at
+ *  the boundary instead of silently classifying as overlap. */
+export function parseTransitionPlacement(v: unknown): 'overlap' | 'extend' {
+  if (v === undefined || v === null) return 'overlap'
+  if (v !== 'overlap' && v !== 'extend') throw new McpArgError(`placement must be 'overlap' | 'extend', got ${String(v)}`, 'placement')
+  return v
+}
+
 /** update_transition's optional (kind, direction) pair → TransitionKind or
  *  undefined (no kind patch). direction rides INSIDE kind, so direction
  *  without kind is rejected — patch both together. */
@@ -323,16 +333,24 @@ export function dryRunErrorString(e: CommandError): string {
   }
   if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
   if (e.error === 'TransitionRestoreCollision') return `removing the transition would move layer ${e.layer} back onto occupied space`
+  if (e.error === 'TransitionParticipantsShareGroup') return `layers ${e.from} and ${e.to} share a group, so the incoming layer cannot move to open the overlap`
   if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
   return e.error
 }
 
 /** Dry-run response: per-op {index, status, output|error} flattened, plus
  *  halted_at (the first failing index, or null). DryRunOutput is kind-tagged,
- *  snake_case: add_layer{layer_id} / split_layer{left_id, right_id} / void.
- *  Wrapped in toolJson (sorted keys). */
+ *  snake_case: add_layer{layer_id} / split_layer{left_id, right_id} /
+ *  add_transition{transition_id, bounces} / void. `bounces` predicts the
+ *  overlap placement's sibling lane moves (spawned = a lane would be minted) —
+ *  the same info the wet add's LogBus rows carry. Wrapped in toolJson (sorted
+ *  keys). */
 export function shapeDryRunResponse(
-  results: Array<{ ok: true; value: { kind: 'AddLayer'; layer_id: string } | { kind: 'SplitLayer'; left_id: string; right_id: string } | { kind: 'Void' } } | { ok: false; error: CommandError }>,
+  results: Array<{ ok: true; value:
+    | { kind: 'AddLayer'; layer_id: string }
+    | { kind: 'SplitLayer'; left_id: string; right_id: string }
+    | { kind: 'AddTransition'; transition_id: string; bounces: Array<{ layer: string; from_track: string; to_track: string; spawned: boolean }> }
+    | { kind: 'Void' } } | { ok: false; error: CommandError }>,
 ): ToolResultJson {
   let haltedAt: number | null = null
   const entries = results.map((r, index) => {
@@ -340,6 +358,7 @@ export function shapeDryRunResponse(
       const o = r.value
       const output = o.kind === 'AddLayer' ? { kind: 'add_layer', layer_id: o.layer_id }
         : o.kind === 'SplitLayer' ? { kind: 'split_layer', left_id: o.left_id, right_id: o.right_id }
+        : o.kind === 'AddTransition' ? { kind: 'add_transition', transition_id: o.transition_id, bounces: o.bounces }
         : { kind: 'void' }
       return { index, status: 'ok', output }
     }
@@ -419,6 +438,15 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'TransitionRestoreCollision') {
     return { code: 'invalid_params', message: `removing the transition moves layer ${e.layer} back toward the cut, but its destination is occupied — the gap left by the transition placement has been filled; move or delete the blocking layer first (the system never makes room)`, data: {
       error: 'TransitionRestoreCollision', layer: e.layer,
+    } }
+  }
+  if (e.error === 'TransitionParticipantsShareGroup') {
+    return { code: 'invalid_params', message: `layers ${e.from} and ${e.to} share a group: overlap placement moves the incoming layer left, which would drag the outgoing layer along and the overlap would never open. Options: ungroup them (groups_remove_members) and retry; or pass placement 'extend' to borrow outgoing tail media instead (positions untouched).`, data: {
+      error: 'TransitionParticipantsShareGroup', from: e.from, to: e.to,
+      options: [
+        { action: 'ungroup_then_retry', layer_ids: [e.from, e.to] },
+        { action: 'retry_with_placement', placement: 'extend' },
+      ],
     } }
   }
   if (e.error === 'TransitionUnsupportedLayerKind') {
@@ -823,10 +851,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       track: parseAnimatedF64(a.track) }) },
   { name: 'dry_run', exec: 'dedicated',
-    description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layer. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
+    description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layer, add_transition (same args as the add_transition tool, except the transition kind rides as `transition_kind` — the spec\'s `kind` names the operation — plus optional `placement`: \'overlap\' default | \'extend\'; its output predicts the moved incoming layer\'s sibling lane bounces and lane spawns, and its refusals, identically to the real command). Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
     inputSchema: { type: 'object', properties: { operations: {
       type: 'array',
-      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\", ...that tool's snake_case args}." },
+      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\" | \"add_transition\", ...that tool's snake_case args (add_transition: the transition kind rides as \"transition_kind\" since \"kind\" names the operation, and it also takes \"placement\": \"overlap\" | \"extend\")}." },
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif', exec: 'dedicated',

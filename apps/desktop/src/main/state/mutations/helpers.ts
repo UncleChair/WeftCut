@@ -57,6 +57,23 @@ export function pruneEmptiedTrack(p: Project, trackId: Uuid): Uuid | null {
   return trackId
 }
 
+/** Scan tracks in reverse for the first non-reserved track with no layer
+ *  overlap in [t0, t1). Returns null if none found, which means the caller must
+ *  spawn a track via `applyAddTrack`. This IS ADR 0042's bounce policy ("no
+ *  free lane, so make one"); it lives here rather than commands.ts so the
+ *  transition mutations can share it without importing the command adapter
+ *  (commands.ts imports mutations — the reverse edge would cycle). commands.ts
+ *  re-exports it for its own consumers. */
+export function pickFreeOverlayTrack(p: Project, t0: number, t1: number): Uuid | null {
+  const tracks = [...p.tracks].reverse()
+  for (const t of tracks) {
+    if (t.role !== null) continue
+    const free = t.layers.every((l) => !(t0 < l.t_end_us && l.t_start_us < t1))
+    if (free) return t.id
+  }
+  return null
+}
+
 /** Remove a layer from every group; auto-dissolve below 2. */
 export function dropLayerFromGroups(p: Project, layerId: Uuid): void {
   let i = 0

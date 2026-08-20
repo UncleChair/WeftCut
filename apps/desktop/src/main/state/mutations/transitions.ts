@@ -2,8 +2,9 @@ import type { Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { frameIndexRound, gridForLayerKind, snapOnGrid, timeUsAtFrame } from '../snap'
-import { applyDurationAutofit } from './helpers'
-import { checkGroupLock, groupSiblingsExcluding } from './groups'
+import { applyDurationAutofit, pickFreeOverlayTrack } from './helpers'
+import { applyAddTrack } from './add'
+import { checkGroupLock, groupSiblingsExcluding, indexGroups } from './groups'
 
 // ── Geometry vocabulary (ADR 0048 — extended_us provenance and inverse-op routing) ──
 // A = from_layer (outgoing), B = to_layer (incoming); the window is
@@ -129,18 +130,74 @@ function incomingMoveSet(p: Project, toLayer: Uuid): Uuid[] {
   return [toLayer, ...siblings]
 }
 
-/** add_transition. Both layers must live on the SAME track.
- *  Three cases: adjacent (extend from — pre-checked against the outgoing tail
- *  handle; writes `extended_us = duration`), pre-overlapped by exactly duration
- *  (no extension — pure placement, `extended_us = 0`), or reject
- *  TransitionLayersNotAdjacent. `durationUs` is snapped to whole composition
- *  frames first, and every case — the handle pre-check, the overlap comparison,
- *  the stored field — reads the SNAPPED value, so the decision is made on what
- *  actually gets applied. The transition id is minted AFTER all checks (so
- *  LayerNotFound/TransitionUnsupportedLayerKind/TransitionInsufficientHandle/
- *  TransitionLayersNotAdjacent burn no id) but BEFORE commit's validate — so a
- *  downstream ValidationFailed burns it (the keystone landmine). */
-export function applyAddTransition(p: Project, idGen: IdGen, fromLayer: Uuid, toLayer: Uuid, durationUs: number, kind: Transition['kind']): Uuid {
+/** One sibling relocation performed by an overlap-placement add: `layer` left
+ *  `from_track` for `to_track` because its shifted span collided with a
+ *  non-moving layer; `spawned` marks a lane minted for the landing. Primitive
+ *  fields only — the actor arm carries these OUT of the immer recipe (a draft
+ *  reference would be revoked) and into LogBus rows. */
+export interface TransitionBounce { layer: Uuid; from_track: Uuid; to_track: Uuid; spawned: boolean }
+
+/** Bounce pass for an overlap add's moved GROUP SIBLINGS (ADR 0042: no free
+ *  lane, so make one). Runs AFTER the shift: a sibling whose lane now holds a
+ *  NON-moving layer of its own overlap class (audio vs visual — the lane law)
+ *  over its span moves to the first free overlay lane, spawning one when none
+ *  exists. Members of the moving set never collide with each other (same
+ *  delta, same relative order), so only non-movers are scanned. One sibling at
+ *  a time against CURRENT state, so an earlier bounce's landing blocks a later
+ *  one from claiming the same lane. The incoming layer itself never bounces —
+ *  an unauthorized overlap from ITS move is a whole-commit validate refusal.
+ *  No pruneEmptiedTrack: the blocking layer that caused the bounce stays on
+ *  the vacated lane, so a bounce can never empty it. */
+function bounceCollidingSiblings(p: Project, idGen: IdGen, memberIds: readonly Uuid[], toLayer: Uuid, out: TransitionBounce[]): void {
+  const moving = new Set(memberIds)
+  for (const id of memberIds) {
+    if (id === toLayer) continue
+    const loc = locate(p, id)
+    if (!loc) continue
+    const track = p.tracks[loc[0]]
+    const l = track.layers[loc[1]]
+    const cls = l.params.kind === 'Audio' ? 'audio' : 'visual'
+    const collides = track.layers.some((other) =>
+      !moving.has(other.id) && (other.params.kind === 'Audio' ? 'audio' : 'visual') === cls
+      && other.t_start_us < l.t_end_us && l.t_start_us < other.t_end_us)
+    if (!collides) continue
+    const free = pickFreeOverlayTrack(p, l.t_start_us, l.t_end_us)
+    // A track id minted for the landing is acceptable pre-transition-id use —
+    // the same discipline as applyMoveLayersToNewTrack's lane mint.
+    const destId = free ?? applyAddTrack(p, idGen, null)
+    const dest = p.tracks.find((t) => t.id === destId)!
+    track.layers.splice(track.layers.findIndex((x) => x.id === id), 1)
+    const at = dest.layers.findIndex((x) => x.t_start_us > l.t_start_us)
+    dest.layers.splice(at < 0 ? dest.layers.length : at, 0, l)
+    out.push({ layer: id, from_track: track.id, to_track: destId, spawned: free === null })
+  }
+}
+
+/** add_transition. Both layers must live on the SAME track. Cases:
+ *
+ *  - exact-adjacent cut, `placement: 'overlap'` (the default): the incoming
+ *    layer (and its group siblings) moves LEFT by the frame-floored duration —
+ *    both participants play exactly their trimmed ranges; `extended_us = 0`.
+ *    Colliding shifted siblings bounce lanes (bounceCollidingSiblings); the
+ *    vacated span stays a gap (no ripple).
+ *  - exact-adjacent cut, `placement: 'extend'`: the v1 borrow — pre-checked
+ *    against the outgoing tail handle, positions untouched;
+ *    `extended_us = duration`.
+ *  - pre-overlapped by exactly duration: classifies as overlap under BOTH
+ *    placements — nothing moves, `extended_us = 0`.
+ *  - anything else: TransitionLayersNotAdjacent.
+ *
+ *  Every refusal is pre-id-mint (LayerNotFound / TransitionUnsupportedLayerKind
+ *  / TransitionInsufficientHandle / TransitionLayersNotAdjacent / the overlap
+ *  branch's TransitionDurationOutOfRange, TransitionParticipantsShareGroup,
+ *  NegativeLayerStart and group-lock refusals burn no id); the transition id is
+ *  minted after them all but BEFORE commit's validate — a downstream
+ *  ValidationFailed burns it (the keystone landmine). A bounce-spawned track id
+ *  is minted before the transition id by design. */
+export function applyAddTransition(
+  p: Project, idGen: IdGen, fromLayer: Uuid, toLayer: Uuid, durationUs: number,
+  kind: Transition['kind'], placement: 'overlap' | 'extend' = 'overlap',
+): { id: Uuid; bounces: TransitionBounce[] } {
   const fromLoc = locate(p, fromLayer)
   if (!fromLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: fromLayer })
   const [trackIdx, fromIdx] = fromLoc
@@ -154,22 +211,68 @@ export function applyAddTransition(p: Project, idGen: IdGen, fromLayer: Uuid, to
 
   const fromEnd = fromLayerObj.t_end_us
   const toStart = toLayerObj.t_start_us
-  const durUs = wholeFrameDurationUs(p, toStart, durationUs)
   const curOverlap = Math.max(fromEnd - toStart, 0)
+  const bounces: TransitionBounce[] = []
+  let durUs: number
   let extendedUs: number
   if (curOverlap === 0 && fromEnd === toStart) {
-    const available = tailHandleUs(p, fromLayerObj)
-    if (available < durUs)
-      throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: fromLayer, available_us: available })
-    extendLayerTEnd(fromLayerObj, durUs)
-    extendedUs = durUs // the whole overlap is borrowed tail
+    if (placement === 'extend') {
+      durUs = wholeFrameDurationUs(p, toStart, durationUs)
+      const available = tailHandleUs(p, fromLayerObj)
+      if (available < durUs)
+        throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: fromLayer, available_us: available })
+      extendLayerTEnd(fromLayerObj, durUs)
+      extendedUs = durUs // the whole overlap is borrowed tail
+    } else {
+      // The window is [B.start′, C] with the cut C = A.end already canonical, so
+      // the duration is measured BACKWARD from the cut: B.start′ is the canonical
+      // boundary `frames` below it and d is that distance. Same fractional-rate
+      // why as wholeFrameDurationUs, mirrored — at 1001-denominator rates a bare
+      // "n frames in µs" differs from the boundary distance by up to 1 µs, which
+      // would put B.start′ off the grid or break validate's overlap === duration.
+      const { num, den } = p.composition.fps
+      const frames = requestedFrames(p, durationUs, 'duration_us')
+      const newStartUs = timeUsAtFrame(frameIndexRound(fromEnd, num, den) - frames, num, den)
+      durUs = fromEnd - newStartUs
+      // d ≤ min(len_A, len_B): both participants must exist for the whole window
+      // (layer spans in µs; NO tail-handle check — no source material is touched).
+      // This bound also keeps B.start′ ≥ A.start ≥ 0, so B itself can never cross
+      // t = 0 below. `transition: null` — refused before any id exists.
+      const maxDur = Math.min(fromEnd - fromLayerObj.t_start_us, toLayerObj.t_end_us - toStart)
+      if (durUs > maxDur)
+        throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration: durUs } })
+      // Participants sharing a group: moving B would drag A along and the
+      // overlap never opens. Structured refusal, never a silent extend fallback.
+      const groupIdx = indexGroups(p.groups)
+      const fromGroup = groupIdx.get(fromLayer)
+      if (fromGroup !== undefined && fromGroup === groupIdx.get(toLayer))
+        throw new CommandFailure({ error: 'TransitionParticipantsShareGroup', from: fromLayer, to: toLayer })
+      const moveSet = incomingMoveSet(p, toLayer) // group-lock refusal inside
+      // Zero-cross pre-check over the whole moving set, mirroring shiftLayerSet's
+      // own-lattice snap: B cannot cross (see maxDur), but an earlier-starting
+      // group sibling can. Pre-mint and pre-mutation, like every refusal here.
+      for (const id of moveSet) {
+        const loc = locate(p, id)
+        if (!loc) continue
+        const l = p.tracks[loc[0]].layers[loc[1]]
+        const destStart = snapOnGrid(l.t_start_us - durUs, gridForLayerKind(l.params.kind, p.composition.fps))
+        if (destStart < 0)
+          throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: id, t_start: destStart } })
+      }
+      shiftLayerSet(p, moveSet, -durUs)
+      bounceCollidingSiblings(p, idGen, moveSet, toLayer, bounces)
+      extendedUs = 0
+    }
+    applyDurationAutofit(p) // both adjacent branches retime an edge (A.end grows / B's set moves)
+  } else {
+    durUs = wholeFrameDurationUs(p, toStart, durationUs)
+    if (curOverlap === durUs) { extendedUs = 0 /* pre-positioned; pure placement — overlap under BOTH placements; nothing moves, no autofit */ }
+    else throw new CommandFailure({ error: 'TransitionLayersNotAdjacent', from: fromLayer, to: toLayer, duration: durUs })
   }
-  else if (curOverlap === durUs) { extendedUs = 0 /* pre-positioned; pure placement overlap */ }
-  else throw new CommandFailure({ error: 'TransitionLayersNotAdjacent', from: fromLayer, to: toLayer, duration: durUs })
 
-  const id = idGen() // after the checks, before commit's validate (keystone)
+  const id = idGen() // after ALL checks, before commit's validate (keystone)
   p.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durUs, kind, extended_us: extendedUs })
-  return id
+  return { id, bounces }
 }
 
 /** update_transition — patch { duration_us?, kind?, extended_us? } on one

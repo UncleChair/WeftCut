@@ -29,7 +29,10 @@ export type ValidationError =
   | { rule: 'TransitionLayerMissing'; transition: Uuid; layer: Uuid }
   | { rule: 'TransitionCrossTrack'; transition: Uuid; from: Uuid; to: Uuid }
   | { rule: 'TransitionUnsupportedLayerKind'; transition: Uuid; layer: Uuid }
-  | { rule: 'TransitionDurationOutOfRange'; transition: Uuid; duration: TimeUs }
+  // `transition` is null when an overlap-placement add refuses `d > min(len_A,
+  // len_B)` BEFORE the transition id is minted (the id contract: a refused add
+  // burns no id, so there is no id to name yet). validate.ts always names one.
+  | { rule: 'TransitionDurationOutOfRange'; transition: Uuid | null; duration: TimeUs }
   | { rule: 'TransitionDurationMismatch'; transition: Uuid; duration: TimeUs; overlap: TimeUs }
   // The borrowed-tail counter out of its lane: `0 ≤ extended_us ≤ duration_us`.
   // Structural (validate-only) — no layer edit can corrupt the counter, so
@@ -84,6 +87,11 @@ export type CommandError =
   // non-moving layer occupies it — the user may have filled the vacated gap,
   // and the system never makes room.
   | { error: 'TransitionRestoreCollision'; layer: Uuid }
+  // Overlap-placement add refused: the participants share a group, so moving
+  // the incoming layer would drag the outgoing one along and the overlap never
+  // opens. Never falls back to extend silently — the caller ungroup-s or asks
+  // for placement 'extend' explicitly.
+  | { error: 'TransitionParticipantsShareGroup'; from: Uuid; to: Uuid }
   | { error: 'CheckpointNotFound'; checkpoint: Uuid }
   | { error: 'MediaNotFound'; media: Uuid }
   | { error: 'MediaInUse'; media: Uuid; referenced_by: Uuid[] }

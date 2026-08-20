@@ -27,7 +27,10 @@ function layerOf(p: Project, id: string): Layer {
 }
 
 /** Actor with a captured log seam and A1=[0,2M] → A2=[2M,4M] + a 1M crossfade
- *  on @A (start-at-cut: A1 auto-extends to 3M; overlap [2M,3M] === duration). */
+ *  on @A. The add is PINNED to placement 'extend' (A1 auto-extends to 3M;
+ *  overlap [2M,3M] === duration) so the truth-table rows below keep their
+ *  authored geometry under the overlap-default add — the table's semantics are
+ *  what this file gates, not the add's placement. */
 function withTransition() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'rt')
@@ -37,7 +40,7 @@ function withTransition() {
   const bRoll = initial.tracks[1].id
   const a1 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
   const a2 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }))
-  const tid = val(actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 }))
+  const tid = val(actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, placement: 'extend' }))
   return { actor, logged, aRoll, bRoll, a1, a2, tid }
 }
 
@@ -108,8 +111,8 @@ describe('reconcile-on-commit: drops', () => {
     const l1 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
     const l2 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }))
     const l3 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 4_000_000, t_end_us: 6_000_000 }))
-    const t1 = val(actor.dispatch('add_transition', { from: l1, to: l2, duration_us: 1_000_000 })) // l1 → 3M
-    const t2 = val(actor.dispatch('add_transition', { from: l2, to: l3, duration_us: 1_000_000 })) // l2 → 5M
+    const t1 = val(actor.dispatch('add_transition', { from: l1, to: l2, duration_us: 1_000_000, placement: 'extend' })) // l1 → 3M
+    const t2 = val(actor.dispatch('add_transition', { from: l2, to: l3, duration_us: 1_000_000, placement: 'extend' })) // l2 → 5M
     expect(actor.snapshot().transitions).toHaveLength(2)
     expect(actor.dispatch('delete_layer', { layer: l2 }).ok).toBe(true) // shared participant
     expect(actor.snapshot().transitions).toEqual([])
@@ -208,8 +211,8 @@ describe('reconcileTransitions (direct, plain object)', () => {
     const l1 = applyAddLayer(p, gen, track, color(), 0, 2_000_000)
     const l2 = applyAddLayer(p, gen, track, color(), 2_000_000, 4_000_000)
     const l3 = applyAddLayer(p, gen, track, color(), 4_000_000, 6_000_000)
-    const t1 = applyAddTransition(p, gen, l1, l2, 1_000_000, { kind: 'Crossfade' }) // l1 → 3M
-    const t2 = applyAddTransition(p, gen, l2, l3, 1_000_000, { kind: 'Crossfade' }) // l2 → 5M
+    const t1 = applyAddTransition(p, gen, l1, l2, 1_000_000, { kind: 'Crossfade' }, 'extend').id // l1 → 3M
+    const t2 = applyAddTransition(p, gen, l2, l3, 1_000_000, { kind: 'Crossfade' }, 'extend').id // l2 → 5M
     expect(reconcileTransitions(p)).toEqual([]) // both healthy → no-op
     // Break t1 only: hand-shrink l1's tail (edit-shaped geometry change).
     const l1Obj = p.tracks[0].layers.find((l) => l.id === l1)!

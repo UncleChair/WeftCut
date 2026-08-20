@@ -532,6 +532,8 @@ const zhCN: Resources = {
       "“{{layer}}”的素材余量只有 {{available}}，不足以放置该转场。",
     transition_restore_collision:
       "移除转场需要把“{{layer}}”移回剪切点，但该位置已被占用。",
+    transition_participants_share_group:
+      "“{{from}}”与“{{to}}”在同一分组——移动其中一个会带动另一个，重叠无法打开。请先解除分组。",
     transition_layers_not_adjacent: "“{{from}}”与“{{to}}”必须相邻才能添加转场。",
     fps_locked_by_content:
       "帧率保持 {{current}} fps——时间线上仍有 {{layers}} 个片段。",

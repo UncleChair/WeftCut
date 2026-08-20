@@ -99,18 +99,10 @@ export function resolveDurationUs(durationUs: number | undefined): number {
   return Math.max(durationUs ?? 5_000_000, 100_000)
 }
 
-/** Scan tracks in reverse for the first non-reserved track with no layer
- *  overlap in [t0, t1). Returns null if none found, which means the caller must
- *  spawn a track via `applyAddTrack`. */
-export function pickFreeOverlayTrack(project: Project, t0: number, t1: number): string | null {
-  const tracks = [...project.tracks].reverse()
-  for (const t of tracks) {
-    if (t.role !== null) continue
-    const free = t.layers.every((l) => !(t0 < l.t_end_us && l.t_start_us < t1))
-    if (free) return t.id
-  }
-  return null
-}
+// Free-lane scan (ADR 0042's bounce policy). Home is mutations/helpers.ts so
+// the transition mutations can share it; re-exported here so existing
+// command-adapter consumers keep their './commands' import path.
+export { pickFreeOverlayTrack } from './mutations/helpers'
 
 /** Mechanical channels: pure camelCase→snake renaming, no param construction.
  *  Returns null for channels not in this table. */

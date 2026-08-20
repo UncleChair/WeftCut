@@ -35,12 +35,16 @@ import { PNG } from 'pngjs'
 import { launchApp, newProject, invokeCmd, driveExport, tmpDir } from './helpers/driver'
 
 // ── Composition + timeline shape ─────────────────────────────────────────────
-// RED [0, 2s] + BLUE [2s, 4s] on ONE track; add_transition (start-at-cut)
-// extends RED to 3s, window = [2s, 3s). 30 fps ⇒ the sampled times land on
-// exact output frame indices (frameTimeUs(i) = round(i·1e6/30)).
+// RED [0, 2s] + BLUE authored [2s, 4s] on ONE track; add_transition (overlap
+// placement, the default) MOVES BLUE left by the duration to [1s, 3s] — RED's
+// trimmed range is sacred and never extends. Window = [BLUE.start, RED.end) =
+// [1s, 2s); composition duration autofits to BLUE's new end, 3s. 30 fps ⇒ the
+// sampled times land on exact output frame indices
+// (frameTimeUs(i) = round(i·1e6/30)).
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 const CUT_US = 2_000_000
 const TRANSITION_US = 1_000_000
+const WINDOW_START_US = CUT_US - TRANSITION_US // BLUE's post-add start
 const RED = { r: 255, g: 0, b: 0 }
 const BLUE = { r: 0, g: 0, b: 255 }
 const MIX = { r: 128, g: 0, b: 128 } // mix(RED, BLUE, 0.5) in encoded space
@@ -49,9 +53,9 @@ const TOL = 40
 // Sampled composition times: window midpoint (progress exactly 0.5) plus one
 // point before and one after the window.
 const TIMES = {
-  before: 1_500_000, // RED only (window starts at 2s)
-  mid: 2_500_000, // progress = (2.5s − 2s) / 1s = 0.5
-  after: 3_500_000, // BLUE only (window ends at 3s; RED tail ends at 3s)
+  before: 500_000, // RED only (window starts at 1s)
+  mid: 1_500_000, // progress = (1.5s − 1s) / 1s = 0.5
+  after: 2_500_000, // BLUE only (window ends at 2s = RED's end; BLUE runs to 3s)
 } as const
 type TimeName = keyof typeof TIMES
 const frameIndexAt = (us: number) => Math.round((us * CANVAS.fpsNum) / (1_000_000 * CANVAS.fpsDen))
@@ -295,16 +299,19 @@ for (const variant of VARIANTS) {
       const transitionId = toolText(addRes)
       expect(transitionId.length).toBeGreaterThan(0)
 
-      // State sanity: start-at-cut extended RED's tail by the duration and the
-      // transition is in the read surface with its full shape.
+      // State sanity: overlap placement moved BLUE left by the duration, RED's
+      // trimmed end is untouched, and the transition is in the read surface
+      // with its full shape.
       const summary = (await invokeCmd(page, 'project_summary', {})) as {
-        tracks: Array<{ layers: Array<{ id: string; t_end_us: number }> }>
+        tracks: Array<{ layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>
         transitions: Array<{ id: string; from_layer: string; to_layer: string; duration_us: number; kind: Record<string, unknown> }>
       }
-      const red = summary.tracks.flatMap((t) => t.layers).find((l) => l.id === redId)
-      expect(red?.t_end_us, 'add_transition extends the outgoing layer by duration (start-at-cut)').toBe(
-        CUT_US + TRANSITION_US,
-      )
+      const layers = summary.tracks.flatMap((t) => t.layers)
+      const red = layers.find((l) => l.id === redId)
+      const blue = layers.find((l) => l.id === blueId)
+      expect(red?.t_end_us, "add_transition never extends the outgoing layer (overlap placement is the default)").toBe(CUT_US)
+      expect(blue?.t_start_us, 'add_transition moves the incoming layer left by duration (overlap placement)').toBe(WINDOW_START_US)
+      expect(blue?.t_end_us, "the incoming layer's whole span shifts — its trimmed length is preserved").toBe(CUT_US + TRANSITION_US)
       expect(summary.transitions).toHaveLength(1)
       expect(summary.transitions[0]).toMatchObject({
         id: transitionId,
@@ -332,12 +339,13 @@ for (const variant of VARIANTS) {
       const exp = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline', timeout: 150_000 })
       if (!exp.done.ok) throw new Error(`exportTimeline failed (${variant.name}): ${exp.done.error}`)
 
-      // Duration autofit ⇒ 4s @ 30fps ⇒ exactly 120 planned frames.
+      // Duration autofit follows BLUE's shifted end ⇒ 3s @ 30fps ⇒ exactly 90
+      // planned frames.
       const perf = (await page.evaluate(() => (window as any).__weftcutExportPerf ?? null)) as
         | { totalFrames: number }
         | null
       expect(perf, '__weftcutExportPerf must be set after export (E2E build)').not.toBeNull()
-      expect(perf!.totalFrames, '4s composition at 30fps plans 120 frames').toBe(120)
+      expect(perf!.totalFrames, '3s composition at 30fps plans 90 frames').toBe(90)
 
       const exportFrames = {} as Record<TimeName, FrameSamples>
       for (const timeName of Object.keys(TIMES) as TimeName[]) {

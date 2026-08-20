@@ -141,6 +141,11 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.transition_restore_collision",
     args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
   },
+  TransitionParticipantsShareGroup: {
+    tier: "curated",
+    key: "errors.transition_participants_share_group",
+    args: (e, ctx) => ({ from: ctx.layer(e.from), to: ctx.layer(e.to) }),
+  },
   CheckpointNotFound: { tier: "generic" },
   MediaNotFound: { tier: "generic" },
   // Curated PRESENTATION already exists: MediaPool's RemoveMediaDialog turns
