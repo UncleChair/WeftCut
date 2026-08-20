@@ -112,6 +112,7 @@ import {
   type TrackTransitionChip,
   type TransitionCut,
   type TransitionKindName,
+  type TransitionResizeArgs,
   type TransitionUpdateArgs,
 } from "./transitions";
 import { TransitionChipMenu } from "./TransitionChipMenu";
@@ -805,6 +806,22 @@ export function Timeline({
     [onMutated],
   );
 
+  // Chip edge-drag commit (spec D6): the chip assembled the exact
+  // (durationUs, extendedUs) pair for the dragged edge; this only lowers the
+  // ONE pointerup patch. A backend refusal (e.g. B's move landing on an
+  // occupied span) surfaces through the status log, never a silent clamp.
+  const onChipResize = useCallback(
+    async (args: TransitionResizeArgs) => {
+      try {
+        await updateTransition(args);
+        await onMutated();
+      } catch (err) {
+        logMutationFailure(err, "Resize transition");
+      }
+    },
+    [onMutated],
+  );
+
   const onChipMenuDelete = useCallback(
     async (transitionId: string) => {
       setChipMenu(null);
@@ -1180,6 +1197,7 @@ export function Timeline({
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
                 onChipContextMenu={onChipContextMenu}
+                onChipResize={(args) => void onChipResize(args)}
                 onCommitLabel={onCommitLabel}
                 onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}

@@ -1331,7 +1331,9 @@ export async function addTransition(args: {
 /// include a direction. Omitting `extendedUs` keeps the routing
 /// sanctity-preferring (ADR 0048): growth moves the incoming layer left and
 /// never borrows; shrink returns borrowed tail first. Only an explicit
-/// `extendedUs` (the chip's right edge) grows the borrow.
+/// `extendedUs` (the chip's right edge) grows the borrow — and only an
+/// explicit NEGATIVE one trims the outgoing layer's real tail past its
+/// sacred exit frame (the right edge dragged left past S, spec D6).
 export async function updateTransition(args: {
   transitionId: string;
   durationUs?: number;

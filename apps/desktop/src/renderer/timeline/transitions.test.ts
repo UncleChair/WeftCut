@@ -12,6 +12,11 @@ import {
   transitionDirectionUpdateArgs,
   transitionDurationUpdateArgs,
   transitionKindUpdateArgs,
+  transitionLeftEdgeClampUs,
+  transitionLeftEdgeDragArgs,
+  transitionRightEdgeClampUs,
+  transitionRightEdgeDragArgs,
+  transitionTailHandleUs,
 } from "./transitions";
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
@@ -362,6 +367,7 @@ describe("transitionChipsForTrack", () => {
       startUs: 2_000_000,
       endUs: 2_500_000,
     });
+    expect(chips[0]!.fromLayer.id).toBe("a"); // edge drags read A's spans/tail
     expect(chips[0]!.toLayer.id).toBe("b");
     expect(chips[0]!.transition.id).toBe("tr-1");
   });
@@ -386,6 +392,96 @@ describe("chipSliceSlot", () => {
     // interior 48 → half = floor(47/2) = 23; bottom = 48 - 23 - 1 = 24.
     expect(chipSliceSlot(56, "top")).toEqual({ top: 4, height: 23 });
     expect(chipSliceSlot(56, "bottom")).toEqual({ top: 28, height: 24 });
+  });
+});
+
+// ── chip edge-drag kernels (spec D6) ─────────────────────────────────────────
+// Cross-leg parity with the mutation lives in transitionEdgeClamp.golden.test.ts
+// (fixture-driven); this suite pins the kernel-local behaviors — destination
+// snapping and all four clamp ends — on the extend-fixture geometry:
+// A [0, 2.5M], B [2M, 4M], window [2M, 2.5M], e = 500k, 30 fps.
+
+describe("transition edge clamp kernels", () => {
+  const FPS = { fpsNum: 30, fpsDen: 1 };
+  const left = (targetUs: number) =>
+    transitionLeftEdgeClampUs({
+      targetUs,
+      aStartUs: 0,
+      aEndUs: 2_500_000,
+      bStartUs: 2_000_000,
+      bEndUs: 4_000_000,
+      ...FPS,
+    });
+  const right = (targetUs: number, tailHandleUs: number) =>
+    transitionRightEdgeClampUs({
+      targetUs,
+      bStartUs: 2_000_000,
+      bEndUs: 4_000_000,
+      aEndUs: 2_500_000,
+      tailHandleUs,
+      ...FPS,
+    });
+
+  it("snaps the DESTINATION to the frame grid (never the delta)", () => {
+    // 1.7M + 9µs is off-grid; the destination rounds to frame 51 = 1.7M.
+    expect(left(1_700_009)).toBe(1_700_000);
+    expect(right(2_866_660, Infinity)).toBe(2_866_667); // frame 86
+  });
+
+  it("left edge clamps between min(len_A, len_B) and 1 frame", () => {
+    // min(len_A 2.5M, len_B 2M) = 2M = 60 frames → floor L = A.end − 2M.
+    expect(left(-5_000_000)).toBe(500_000);
+    // Ceiling: d′ ≥ 1 frame → L ≤ A.end − 1 frame.
+    expect(left(9_000_000)).toBe(2_466_667); // frame 74
+  });
+
+  it("right edge clamps between B.start + 1 frame and min(A.end + tail handle, B.end)", () => {
+    expect(right(-5_000_000, Infinity)).toBe(2_033_333); // frame 61
+    // Finite tail floors onto the canonical grid (raw media µs, not a boundary).
+    expect(right(9_000_000, 250_000)).toBe(2_733_333); // ≤ 2.75M → frame 82
+    // Free-duration outgoing: no tail cap — in-range targets snap freely...
+    expect(right(3_500_000, Infinity)).toBe(3_500_000); // frame 105
+    // ...but B.end still binds (validate's d′ ≤ len_B seen from this edge).
+    expect(right(9_000_000, Infinity)).toBe(4_000_000); // frame 120 = B.end
+  });
+
+  it("transitionTailHandleUs mirrors the mutation's tailHandleUs", () => {
+    expect(transitionTailHandleUs("VideoClip", 2_000_000, 2_500_000)).toBe(500_000);
+    expect(transitionTailHandleUs("VideoClip", 2_000_000, 1_500_000)).toBe(0); // saturates
+    expect(transitionTailHandleUs("VideoClip", 2_000_000, null)).toBe(Infinity); // unknowable
+    expect(transitionTailHandleUs("Audio", 1_000_000, undefined)).toBe(Infinity);
+    expect(transitionTailHandleUs("Color", 0, 123)).toBe(Infinity); // free-duration
+    expect(transitionTailHandleUs("Text", 0, null)).toBe(Infinity);
+  });
+});
+
+describe("edge-drag commit args", () => {
+  const tr = crossfade("tr-1", "a", "b", 500_000);
+  tr.extended_us = 500_000; // extend-fixture provenance: S = 2.5M − 0.5M = 2M
+
+  it("left edge pins A.end by sending the CURRENT extended_us explicitly", () => {
+    expect(transitionLeftEdgeDragArgs(tr, 2_500_000, 1_500_000)).toEqual({
+      transitionId: "tr-1",
+      durationUs: 1_000_000,
+      extendedUs: 500_000,
+    });
+  });
+
+  it("right edge derives (d′, e′) from one formula: borrow above S, return below, NEGATIVE past it", () => {
+    // Grow the borrow: R = 3M > S.
+    expect(transitionRightEdgeDragArgs(tr, 2_500_000, 2_000_000, 3_000_000)).toEqual({
+      transitionId: "tr-1",
+      durationUs: 1_000_000,
+      extendedUs: 1_000_000,
+    });
+    // Genuine trim on a pure-placement window (e = 0, S = A.end): R < S goes
+    // negative — A's real tail rides the same commit.
+    const pure = crossfade("tr-2", "a", "b", 1_000_000); // B.start 1M, A.end 2M
+    expect(transitionRightEdgeDragArgs(pure, 2_000_000, 1_000_000, 1_700_000)).toEqual({
+      transitionId: "tr-2",
+      durationUs: 700_000,
+      extendedUs: -300_000,
+    });
   });
 });
 

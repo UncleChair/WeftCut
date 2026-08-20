@@ -83,8 +83,9 @@ const durArb = fc.oneof(
   { arbitrary: fc.constantFrom(0, -100_000, 7_777, 60_000_000), weight: 1 },
 )
 // extended_us patch values: mostly small plausible borrows (0 included — the
-// give-it-all-back edge), hostile tail (negative, off-grid, over any plausible
-// duration) so the [0, d′] request gate and the routing both run.
+// give-it-all-back edge), plus a tail of negative (a LEGAL explicit tail trim
+// now — spec D6 — that must land e = 0 or refuse atomically), off-grid, and
+// over-any-plausible-duration values so the e′ ≤ d′ gate and the routing run.
 const extArb = fc.oneof(
   { arbitrary: fc.integer({ min: 0, max: 5 }).map((x) => x * 100_000), weight: 4 },
   { arbitrary: fc.constantFrom(-100_000, 7_777, 60_000_000), weight: 1 },

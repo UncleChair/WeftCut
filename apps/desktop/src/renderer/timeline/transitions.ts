@@ -11,7 +11,7 @@ import type {
   TransitionKindView,
   TransitionSummary,
 } from "../ipc";
-import { timeUsAtFrame } from "../frames";
+import { frameIndexFloor, frameIndexRound, timeUsAtFrame } from "../frames";
 import { VISUAL_LAYER_KINDS } from "../render/transitions/activeTransitions";
 import type { LayerSlice } from "./geometry";
 
@@ -201,10 +201,14 @@ export function defaultTransitionDurationUs(
 /// chip spans exactly the overlap the transition renders (ADR 0048).
 export interface TrackTransitionChip {
   transition: TransitionSummary;
+  /// Outgoing participant (A) — the right edge's subject: its spans bound the
+  /// left-edge clamp and its media tail bounds the right-edge ghost.
+  fromLayer: LayerSummary;
   toLayer: LayerSummary;
   /// Window start == `toLayer.t_start_us`.
   startUs: number;
-  /// `startUs + duration_us`.
+  /// `startUs + duration_us` — equals `fromLayer.t_end_us` by validate's
+  /// overlap === duration rule.
   endUs: number;
 }
 
@@ -220,9 +224,11 @@ export function transitionChipsForTrack(
   for (const tr of transitions) {
     const toLayer = track.layers.find((l) => l.id === tr.to_layer);
     if (!toLayer) continue;
-    if (!track.layers.some((l) => l.id === tr.from_layer)) continue;
+    const fromLayer = track.layers.find((l) => l.id === tr.from_layer);
+    if (!fromLayer) continue;
     out.push({
       transition: tr,
+      fromLayer,
       toLayer,
       startUs: toLayer.t_start_us,
       endUs: toLayer.t_start_us + tr.duration_us,
@@ -249,6 +255,127 @@ export function chipSliceSlot(
       height: interiorHeight - halfHeight - 1,
     };
   return { top: interiorTop, height: interiorHeight };
+}
+
+// ── chip edge-drag kernels (spec D6) ─────────────────────────────────────────
+// Renderer twins of the main-process geometry in
+// `main/state/mutations/transitions.ts` (applyUpdateTransition + tailHandleUs),
+// pinned against it by transitionEdgeClampGolden.fixture.json — both legs read
+// the ONE fixture, so a drift on either side fails a test. Backend validation
+// stays the correctness layer; these only shape the ghost and the one commit.
+// Vocabulary as over there: window [B.start, A.end], d = duration_us,
+// e = extended_us, S = A.end − e (A's sacred end).
+
+/// Tail handle of the outgoing layer: source media remaining past src_out_us
+/// for media-bearing kinds; free-duration kinds and unknown durations are
+/// unlimited (mirrors the mutation's null-duration tolerance).
+export function transitionTailHandleUs(
+  kind: string,
+  srcOutUs: number,
+  mediaDurationUs: number | null | undefined,
+): number {
+  if (kind !== "VideoClip" && kind !== "Audio") return Infinity;
+  if (mediaDurationUs === null || mediaDurationUs === undefined) return Infinity;
+  return Math.max(mediaDurationUs - srcOutUs, 0);
+}
+
+/// Left edge = B's timeline start; A.end is pinned. Snap the DESTINATION to
+/// the frame grid (never the delta), then clamp so
+/// d′ = A.end − L ∈ [1 frame, min(len_A, len_B)] — current layer spans, since
+/// this edge MOVES B without resizing anyone. All bounds are computed in frame
+/// indices between canonical boundaries (the fractional-rate discipline the
+/// mutation side documents on wholeFrameDurationUs).
+export function transitionLeftEdgeClampUs(args: {
+  targetUs: number;
+  aStartUs: number;
+  aEndUs: number;
+  bStartUs: number;
+  bEndUs: number;
+  fpsNum: number;
+  fpsDen: number;
+}): number {
+  const { fpsNum: num, fpsDen: den } = args;
+  const endFrame = frameIndexRound(args.aEndUs, num, den);
+  const minLenFrames = Math.min(
+    endFrame - frameIndexRound(args.aStartUs, num, den),
+    frameIndexRound(args.bEndUs, num, den) -
+      frameIndexRound(args.bStartUs, num, den),
+  );
+  const target = frameIndexRound(args.targetUs, num, den);
+  const frame = Math.max(
+    endFrame - minLenFrames,
+    Math.min(endFrame - 1, target),
+  );
+  return timeUsAtFrame(frame, num, den);
+}
+
+/// Right edge = A's actual end; B.start is pinned. Snapped destination,
+/// clamped to R ∈ [B.start + 1 frame, min(A.end + tailHandle, B.end)] — pass
+/// `Infinity` tail for free-duration outgoing kinds (no tail cap; B.end still
+/// binds). The B.end term is validate's d′ ≤ len_B seen from this edge
+/// (R − B.start ≤ B.end − B.start): without it the ghost would knowingly
+/// offer a target the commit refuses. The tail bound floors onto the
+/// canonical grid because the tail is raw media µs, not a boundary; B.end is
+/// already a boundary.
+export function transitionRightEdgeClampUs(args: {
+  targetUs: number;
+  bStartUs: number;
+  bEndUs: number;
+  aEndUs: number;
+  tailHandleUs: number;
+  fpsNum: number;
+  fpsDen: number;
+}): number {
+  const { fpsNum: num, fpsDen: den } = args;
+  const lower = frameIndexRound(args.bStartUs, num, den) + 1;
+  const target = frameIndexRound(args.targetUs, num, den);
+  const tailUpper = Number.isFinite(args.tailHandleUs)
+    ? frameIndexFloor(args.aEndUs + args.tailHandleUs, num, den)
+    : Infinity;
+  const upper = Math.min(tailUpper, frameIndexRound(args.bEndUs, num, den));
+  const frame = Math.max(lower, Math.min(upper, target));
+  return timeUsAtFrame(frame, num, den);
+}
+
+/// The single commit a chip edge drag sends at pointerup (one undo step).
+/// Distinct from `TransitionUpdateArgs`: both fields are REQUIRED — the
+/// explicit pair is what gives the edges their invariant semantics.
+export interface TransitionResizeArgs {
+  transitionId: string;
+  durationUs: number;
+  extendedUs: number;
+}
+
+/// Left-edge patch for clamped target L: d′ = A.end − L with the CURRENT `e`
+/// sent explicitly — that is what pins A.end (omitting it would let the D5
+/// shrink routing return borrow and move A.end left: the wrong edge).
+export function transitionLeftEdgeDragArgs(
+  transition: TransitionSummary,
+  aEndUs: number,
+  newStartUs: number,
+): TransitionResizeArgs {
+  return {
+    transitionId: transition.id,
+    durationUs: aEndUs - newStartUs,
+    extendedUs: transition.extended_us,
+  };
+}
+
+/// Right-edge patch for clamped target R — ONE formula for the whole travel:
+/// R > S grows the borrow (the one consented breach), S ≥ R returns it, and
+/// R < S goes negative — a genuine tail trim of A riding the same commit.
+export function transitionRightEdgeDragArgs(
+  transition: TransitionSummary,
+  aEndUs: number,
+  bStartUs: number,
+  newEndUs: number,
+): TransitionResizeArgs {
+  const sacredEndUs = aEndUs - transition.extended_us;
+  return {
+    transitionId: transition.id,
+    durationUs: newEndUs - bStartUs,
+    extendedUs: newEndUs - sacredEndUs,
+  };
 }
 
 /// Flat (kind, direction) wire args for add/update_transition. The backend

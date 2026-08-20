@@ -9,7 +9,9 @@ import { checkGroupLock, groupSiblingsExcluding, indexGroups } from './groups'
 // ── Geometry vocabulary (ADR 0048 — extended_us provenance and inverse-op routing) ──
 // A = from_layer (outgoing), B = to_layer (incoming); the window is
 // [B.t_start_us, A.t_end_us]; d = duration_us = A.end − B.start (validate's
-// overlap === duration equality); e = extended_us with 0 ≤ e ≤ d; and
+// overlap === duration equality); e = extended_us with 0 ≤ e ≤ d STORED (an
+// explicit update may TARGET e′ < 0 — the deliberate tail trim past S — but
+// what lands is clamped back to 0 because the trim moves S itself); and
 // S = A.end − e is A's SACRED end — the exit frame the user cut, always a
 // canonical frame boundary. Endpoint moves are computed in FRAME INDICES
 // between canonical boundaries (never bare rate-derived µs — see
@@ -280,15 +282,18 @@ export function applyAddTransition(
  *  exposes it as ONE recorded command (one undo step). Mints no ids.
  *
  *  The targets (d′, e′) fully determine both window edges, anchored on A's
- *  sacred end S (which never moves here): A.end′ = S + e′ frames and
- *  B.start′ = A.end′ − d′ frames, all on canonical boundaries. Requested µs
- *  values round to whole frames first, so a request that rounds to the current
- *  values stays a full no-op. When `extended_us` is OMITTED the routing is
- *  sanctity-preferring (ADR 0048): growth never borrows (e′ = e, B moves left);
- *  shrink returns borrowed handle first (e′ = max(0, e − Δd)) and moves B right
- *  by the remainder. Only an explicit `extended_us` can grow the borrow, and
- *  ONLY that path (e′ > e) gets the tail-handle pre-check — shrinking and
- *  pure-placement growth touch no source material.
+ *  sacred end S: A.end′ = S + e′ frames and B.start′ = A.end′ − d′ frames, all
+ *  on canonical boundaries. An explicit NEGATIVE e′ is legal and aims A.end′
+ *  LEFT of S — return all borrow, then trim A's real tail by the remainder
+ *  (the chip's right edge dragged past S, spec D6); it is the only operation
+ *  that moves the sacred end. Requested µs values round to whole frames first,
+ *  so a request that rounds to the current values stays a full no-op. When
+ *  `extended_us` is OMITTED the routing is sanctity-preferring (ADR 0048):
+ *  growth never borrows (e′ = e, B moves left); shrink returns borrowed handle
+ *  first (e′ = max(0, e − Δd)) and moves B right by the remainder. Only an
+ *  explicit `extended_us` can grow the borrow, and ONLY that path (e′ > e)
+ *  gets the tail-handle pre-check — shrinking and pure-placement growth touch
+ *  no source material.
  *
  *  B's move takes its group siblings along on their own lattices (shiftLayerSet).
  *  Collisions from B's move and a negative B start are deliberately NOT checked
@@ -324,14 +329,17 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
     const dTargetFrames = requestedDur !== undefined ? requestedFrames(p, requestedDur, 'duration_us') : dFrames
     let eTargetFrames: number
     if (requestedExt !== undefined) {
-      // Explicit borrow target: the only path that can GROW e. 0 ≤ e′ ≤ d′ is a
-      // request-shape constraint, checked on the frame-rounded values the apply
-      // will use (validate's structural rule is the post-commit backstop).
-      if (requestedExt < 0)
-        throw new CommandFailure({ error: 'InvalidArgument', field: 'extended_us', detail: `${requestedExt}µs is negative; extended_us is the borrowed outgoing tail and lies in [0, duration_us]` })
+      // Explicit target: the only path that can GROW e, and — when negative —
+      // the only path that can move the sacred end LEFT (the genuine tail trim;
+      // the frame formulas below already land A.end′ at S + e′ for e′ < 0, and
+      // shrinkLayerTEnd keeps src_out in sync). D5 routing never produces
+      // either direction, so who touched A's material is always attributable to
+      // a deliberate act. e′ ≤ d′ is a request-shape constraint on the
+      // frame-rounded values the apply will use; the stored counter clamps at 0
+      // below, so validate's structural rule stays intact.
       eTargetFrames = frameIndexRound(requestedExt, num, den)
       if (eTargetFrames > dTargetFrames)
-        throw new CommandFailure({ error: 'InvalidArgument', field: 'extended_us', detail: `${requestedExt}µs exceeds the transition duration; extended_us lies in [0, duration_us]` })
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'extended_us', detail: `${requestedExt}µs exceeds the transition duration; extended_us is at most duration_us (a negative value is a deliberate tail trim)` })
     } else {
       // Sanctity-preferring routing (ADR 0048): growth keeps e′ = e; shrink returns
       // the borrow first and moves B right only for the remainder. Both stay in
@@ -356,7 +364,9 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
       } else if (endDelta < 0) shrinkLayerTEnd(fromLayerObj, -endDelta)
       shiftLayerSet(p, moveSet, startDelta)
       tr.duration_us = newEndUs - newStartUs
-      tr.extended_us = newEndUs - timeUsAtFrame(sFrame, num, den)
+      // Negative e′ (tail trim) stores 0, never a negative counter: the trim
+      // moved the sacred end itself, so post-commit NOTHING is borrowed.
+      tr.extended_us = Math.max(0, newEndUs - timeUsAtFrame(sFrame, num, den))
       applyDurationAutofit(p)
     }
   }

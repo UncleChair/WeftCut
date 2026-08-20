@@ -13,6 +13,7 @@ import { TransitionChip } from "./TransitionChip";
 import {
   transitionChipsForTrack,
   type TrackTransitionChip,
+  type TransitionResizeArgs,
 } from "./transitions";
 import type {
   AnimTrack,
@@ -56,6 +57,7 @@ export function TrackLane({
   onMediaDrop,
   onContextMenu,
   onChipContextMenu,
+  onChipResize,
   onCommitLabel,
   onCommitParamTrack,
   isGroupStart,
@@ -112,6 +114,9 @@ export function TrackLane({
   /// Transition-chip counterpart of `onContextMenu` — the Timeline anchors
   /// the chip menu at the cursor for this chip's transition.
   onChipContextMenu: (e: React.MouseEvent, chip: TrackTransitionChip) => void;
+  /// Chip edge-drag commit — the Timeline lowers the assembled patch through
+  /// `updateTransition` (one commit per gesture, spec D6).
+  onChipResize: (args: TransitionResizeArgs) => void;
   onCommitLabel: (layerId: string, label: string) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   isGroupStart: boolean;
@@ -557,6 +562,7 @@ export function TrackLane({
               fpsNum={fpsNum}
               fpsDen={fpsDen}
               onContextMenu={(e) => onChipContextMenu(e, chip)}
+              onResize={onChipResize}
             />,
           );
         }

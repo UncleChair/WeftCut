@@ -1,0 +1,96 @@
+{
+  "comment": "Chip edge-drag golden vectors (spec D6). Single source for TWO legs: the renderer clamp/commit kernels (timeline/transitionEdgeClamp.golden.test.ts) and the main-process mutation driven through the actor (main/state/mutations/transitionEdgeClamp.golden.test.ts). setup builds the geometry: A = [aStartUs, cutUs] (a VideoClip with src [0, span] when mediaDurationUs is non-null, else a Color layer), B pre-add = [cutUs, bEnd0Us], then an overlap add of addDurationUs moves B left. geometry is the post-setup state both legs assert/consume. rawTargetUs -> clampedUs pins the ghost clamp; commit is the exact pointerup patch; after is the accepted geometry; beyond is one step past the clamp and must refuse with beyondError.",
+  "cases": [
+    {
+      "name": "left edge clamps at 1 frame (30 fps): far-right drag pins d' = 1 frame, A.end never moves",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "left",
+      "setup": { "mediaDurationUs": null, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 4000000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 2000000, "bStartUs": 1000000, "bEndUs": 3000000, "extendedUs": 0, "aSrcOutUs": null },
+      "rawTargetUs": 5000000,
+      "clampedUs": 1966667,
+      "commit": { "durationUs": 33333, "extendedUs": 0 },
+      "after": { "aEndUs": 2000000, "bStartUs": 1966667, "durationUs": 33333, "extendedUs": 0, "aSrcOutUs": null },
+      "beyond": { "durationUs": 0, "extendedUs": 0 },
+      "beyondError": "ValidationFailed"
+    },
+    {
+      "name": "left edge clamps at min(len_A, len_B) (30 fps): B lands flush inside the shorter participant",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "left",
+      "setup": { "mediaDurationUs": null, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 3500000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 2000000, "bStartUs": 1000000, "bEndUs": 2500000, "extendedUs": 0, "aSrcOutUs": null },
+      "rawTargetUs": -4000000,
+      "clampedUs": 500000,
+      "commit": { "durationUs": 1500000, "extendedUs": 0 },
+      "after": { "aEndUs": 2000000, "bStartUs": 500000, "durationUs": 1500000, "extendedUs": 0, "aSrcOutUs": null },
+      "beyond": { "durationUs": 1533333, "extendedUs": 0 },
+      "beyondError": "ValidationFailed"
+    },
+    {
+      "name": "right edge clamps at the tail handle (media kind, 30 fps): the borrow stops where the source ends",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "right",
+      "setup": { "mediaDurationUs": 2500000, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 4000000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 2000000, "bStartUs": 1000000, "bEndUs": 3000000, "extendedUs": 0, "aSrcOutUs": 2000000 },
+      "rawTargetUs": 6000000,
+      "clampedUs": 2500000,
+      "commit": { "durationUs": 1500000, "extendedUs": 500000 },
+      "after": { "aEndUs": 2500000, "bStartUs": 1000000, "durationUs": 1500000, "extendedUs": 500000, "aSrcOutUs": 2500000 },
+      "beyond": { "durationUs": 1533333, "extendedUs": 533333 },
+      "beyondError": "TransitionInsufficientHandle"
+    },
+    {
+      "name": "right edge has no tail cap for a free-duration outgoing kind (30 fps): an in-range target snaps freely; the 1-frame floor above B.start still holds",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "right",
+      "setup": { "mediaDurationUs": null, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 6000000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 2000000, "bStartUs": 1000000, "bEndUs": 5000000, "extendedUs": 0, "aSrcOutUs": null },
+      "rawTargetUs": 4000007,
+      "clampedUs": 4000000,
+      "commit": { "durationUs": 3000000, "extendedUs": 2000000 },
+      "after": { "aEndUs": 4000000, "bStartUs": 1000000, "durationUs": 3000000, "extendedUs": 2000000, "aSrcOutUs": null },
+      "beyond": { "durationUs": 0, "extendedUs": -1000000 },
+      "beyondError": "ValidationFailed"
+    },
+    {
+      "name": "right edge clamps at B.end when it binds before the tail (free-duration outgoing, 30 fps): validate's d' <= len_B seen from this edge",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "right",
+      "setup": { "mediaDurationUs": null, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 6000000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 2000000, "bStartUs": 1000000, "bEndUs": 5000000, "extendedUs": 0, "aSrcOutUs": null },
+      "rawTargetUs": 9000000,
+      "clampedUs": 5000000,
+      "commit": { "durationUs": 4000000, "extendedUs": 3000000 },
+      "after": { "aEndUs": 5000000, "bStartUs": 1000000, "durationUs": 4000000, "extendedUs": 3000000, "aSrcOutUs": null },
+      "beyond": { "durationUs": 4033333, "extendedUs": 3033333 },
+      "beyondError": "ValidationFailed"
+    },
+    {
+      "name": "right edge in the genuine-trim region (R < S, media kind, 30 fps): negative extendedUs trims A's real tail in the same commit",
+      "fps": { "num": 30, "den": 1 },
+      "edge": "right",
+      "setup": { "mediaDurationUs": 2500000, "aStartUs": 0, "cutUs": 2000000, "bEnd0Us": 4000000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 2000000, "bStartUs": 1000000, "bEndUs": 3000000, "extendedUs": 0, "aSrcOutUs": 2000000 },
+      "rawTargetUs": 1499990,
+      "clampedUs": 1500000,
+      "commit": { "durationUs": 500000, "extendedUs": -500000 },
+      "after": { "aEndUs": 1500000, "bStartUs": 1000000, "durationUs": 500000, "extendedUs": 0, "aSrcOutUs": 1500000 },
+      "beyond": { "durationUs": 16666, "extendedUs": -983334 },
+      "beyondError": "InvalidArgument"
+    },
+    {
+      "name": "fractional rate 30000/1001: right edge clamps at the tail handle on canonical NTSC boundaries",
+      "fps": { "num": 30000, "den": 1001 },
+      "edge": "right",
+      "setup": { "mediaDurationUs": 3503000, "aStartUs": 0, "cutUs": 3003000, "bEnd0Us": 6006000, "addDurationUs": 1000000 },
+      "geometry": { "aEndUs": 3003000, "bStartUs": 2002000, "bEndUs": 5005000, "extendedUs": 0, "aSrcOutUs": 3003000 },
+      "rawTargetUs": 9000000,
+      "clampedUs": 3470133,
+      "commit": { "durationUs": 1468133, "extendedUs": 467133 },
+      "after": { "aEndUs": 3470133, "bStartUs": 2002000, "durationUs": 1468133, "extendedUs": 467133, "aSrcOutUs": 3470133 },
+      "beyond": { "durationUs": 1501500, "extendedUs": 500500 },
+      "beyondError": "TransitionInsufficientHandle"
+    }
+  ]
+}

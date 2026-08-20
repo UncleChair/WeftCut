@@ -342,15 +342,18 @@ describe('applyUpdateTransition', () => {
     expect(layerOf(p, a2).t_start_us).toBe(1_500_000)
     expect(p.transitions[0]).toMatchObject({ duration_us: 1_000_000, extended_us: 500_000 })
   })
-  it('explicit extended_us out of [0, duration] → InvalidArgument, state untouched', () => {
+  it('explicit extended_us above duration → InvalidArgument; a small negative rounds to frame 0 and returns the whole borrow', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend')
-    for (const extended_us of [-1, 1_500_000]) {
-      const err = expectCmdErr(() => applyUpdateTransition(p, tid, { extended_us }))
-      expect([err.error, err.field]).toEqual(['InvalidArgument', 'extended_us'])
-    }
+    const err = expectCmdErr(() => applyUpdateTransition(p, tid, { extended_us: 1_500_000 }))
+    expect([err.error, err.field]).toEqual(['InvalidArgument', 'extended_us'])
     expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([3_000_000, 2_000_000])
-    expect(p.transitions[0]).toMatchObject({ duration_us: 1_000_000, extended_us: 1_000_000 })
+    // −1 µs is a LEGAL explicit target now (spec D6): it rounds to frame 0, so
+    // e′ = 0 — A.end returns to S and B follows left to keep d. The negative
+    // request never lands negative in the store.
+    applyUpdateTransition(p, tid, { extended_us: -1 })
+    expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([2_000_000, 1_000_000])
+    expect(p.transitions[0]).toMatchObject({ duration_us: 1_000_000, extended_us: 0 })
   })
   it('kind-only patch is a pure field swap — geometry untouched', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
@@ -405,6 +408,42 @@ describe('applyUpdateTransition', () => {
   it('unknown id → TransitionNotFound', () => {
     const { p } = twoAdjacent()
     expectCmd(() => applyUpdateTransition(p, 'ghost', { duration_us: 500_000 }), 'TransitionNotFound')
+  })
+})
+
+// The chip's right edge dragged left past S sends (d′ = R − B.start,
+// e′ = R − S < 0) in one patch — the genuine tail trim of spec D6.
+describe('applyUpdateTransition explicit negative extended_us (right-edge tail trim)', () => {
+  it('trims A to exactly R with src_out in sync; B.start untouched; stored e′ = 0; d′ = R − B.start', () => {
+    const { p, gen, a1, a2 } = videoThenColor(2_500_000)
+    const tid = addT(p, gen, a1, a2, 1_000_000) // overlap: B [1M,3M], S = A.end = 2M, e = 0
+    applyUpdateTransition(p, tid, { duration_us: 500_000, extended_us: -500_000 }) // R = 1.5M < S
+    expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1)]).toEqual([1_500_000, 1_500_000])
+    expect(layerOf(p, a2).t_start_us).toBe(1_000_000)
+    expect(p.transitions[0]).toMatchObject({ duration_us: 500_000, extended_us: 0 })
+  })
+  it('a negative e′ whose paired d′ rounds under 1 frame refuses (InvalidArgument on duration_us), state untouched', () => {
+    const { p, gen, a1, a2 } = videoThenColor(2_500_000)
+    const tid = addT(p, gen, a1, a2, 1_000_000)
+    const err = expectCmdErr(() => applyUpdateTransition(p, tid, { duration_us: 10_000, extended_us: -990_000 }))
+    expect([err.error, err.field]).toEqual(['InvalidArgument', 'duration_us'])
+    expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1), layerOf(p, a2).t_start_us]).toEqual([2_000_000, 2_000_000, 1_000_000])
+    expect(p.transitions[0]).toMatchObject({ duration_us: 1_000_000, extended_us: 0 })
+  })
+  it('round-trip: right-edge borrow → trim past S → remove restores adjacency at the NEW sacred end', () => {
+    const { p, gen, a1, a2 } = videoThenColor(4_000_000)
+    const tid = addT(p, gen, a1, a2, 1_000_000) // B [1M,3M], S = 2M
+    applyUpdateTransition(p, tid, { duration_us: 1_500_000, extended_us: 500_000 }) // borrow: A.end → 2.5M
+    expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1)]).toEqual([2_500_000, 2_500_000])
+    applyUpdateTransition(p, tid, { duration_us: 800_000, extended_us: -200_000 }) // trim past S: R = 1.8M
+    expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1)]).toEqual([1_800_000, 1_800_000])
+    expect(p.transitions[0]).toMatchObject({ duration_us: 800_000, extended_us: 0 })
+    // The trim moved the sacred end itself, so remove does NOT undo it: e = 0
+    // routes the whole restore through B, landing flush on the NEW end.
+    applyRemoveTransition(p, tid)
+    expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1)]).toEqual([1_800_000, 1_800_000])
+    expect(layerOf(p, a2).t_start_us).toBe(1_800_000)
+    expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us) // adjacency exact
   })
 })
 

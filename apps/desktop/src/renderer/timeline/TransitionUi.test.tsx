@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// Timeline transition UI: chip render/selection/Delete, the cut context menu,
-// and the insufficient-handle error surface. Geometry math is unit-tested in
-// transitions.test.ts; this covers the wiring (same style as
-// Timeline.interaction.test.tsx).
+// Timeline transition UI: chip render/selection/Delete, the chip's two-edge
+// drag (spec D6), the cut context menu, and the insufficient-handle error
+// surface. Geometry math is unit-tested in transitions.test.ts (+ the golden
+// pair); this covers the wiring (same style as Timeline.interaction.test.tsx).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
@@ -15,11 +15,17 @@ import {
   useSelectionStore,
 } from "../state/selectionStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
+import { registerTransport, releaseTransport } from "../state/playbackStore";
+import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addTransition: vi.fn().mockResolvedValue("new-transition"),
   updateTransition: vi.fn().mockResolvedValue(undefined),
   removeTransition: vi.fn().mockResolvedValue(undefined),
+  // Layer mutations mocked only to PIN that chip gestures never reach them
+  // (the window-capture contract).
+  moveLayer: vi.fn().mockResolvedValue(undefined),
+  trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   logEmit: vi.fn().mockResolvedValue(undefined),
   viewStateGet: vi
@@ -41,6 +47,8 @@ vi.mock("../ipc", async (importOriginal) => {
     addTransition: ipcMocks.addTransition,
     updateTransition: ipcMocks.updateTransition,
     removeTransition: ipcMocks.removeTransition,
+    moveLayer: ipcMocks.moveLayer,
+    trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     logEmit: ipcMocks.logEmit,
     viewStateGet: ipcMocks.viewStateGet,
@@ -133,6 +141,8 @@ beforeEach(() => {
   ipcMocks.addTransition.mockClear();
   ipcMocks.updateTransition.mockClear();
   ipcMocks.removeTransition.mockClear();
+  ipcMocks.moveLayer.mockClear();
+  ipcMocks.trimLayer.mockClear();
   ipcMocks.logEmit.mockClear();
   useAppSettingsStore.setState((s) => ({
     settings: { ...s.settings, display_mode: "ShowAll" },
@@ -209,6 +219,211 @@ describe("transition chip", () => {
     });
     fireEvent.keyDown(window, { key: "Delete" });
     expect(ipcMocks.removeTransition).not.toHaveBeenCalled();
+  });
+});
+
+describe("chip two-edge drag (spec D6)", () => {
+  // Extend fixture (top of file): window [2M, 2.5M] at 80 px/s → chip left
+  // 160px, width 40px; A [0, 2.5M], B [2M, 4M], e = 500k → S = 2M. Color
+  // participants → infinite tail (the finite-tail clamp is golden-pinned).
+  // The drag maps by pointer DELTA, so no getBoundingClientRect mock is needed
+  // (zones are real children; jsdom's zero-rects never enter the math).
+  const zone = (container: HTMLElement, side: "left" | "right") =>
+    container.querySelector(
+      `[data-testid="transition-chip-edge-${side}"]`,
+    ) as HTMLElement;
+  const chipEl = (container: HTMLElement) =>
+    container.querySelector('[data-testid="transition-chip"]') as HTMLElement;
+
+  it("left edge commits ONCE with (d′ = A.end − L, current e explicit) — and no layer mutation ever fires", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+      onMutated,
+    });
+    // Grabbing "B's head" (the 6px band at the window start) gets the chip's
+    // left edge — the window-capture contract for bare participant edges.
+    fireEvent.pointerDown(zone(container, "left"), { button: 0, clientX: 160 });
+    fireEvent.pointerMove(window, { clientX: 140, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 30 }); // L → 1.5M (frame 45)
+    fireEvent.pointerUp(window, { clientX: 120, clientY: 30 });
+    await waitFor(() => {
+      expect(ipcMocks.updateTransition).toHaveBeenCalledTimes(1);
+      expect(onMutated).toHaveBeenCalled();
+    });
+    expect(ipcMocks.updateTransition).toHaveBeenCalledWith({
+      transitionId: "tr-1",
+      durationUs: 1_000_000, // A.end 2.5M − L 1.5M
+      extendedUs: 500_000, // the CURRENT e — what pins A.end
+    });
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+  });
+
+  it("right edge dragged right commits ONCE with the explicit borrow (R − B.start, R − S)", async () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    fireEvent.pointerDown(zone(container, "right"), { button: 0, clientX: 200 });
+    fireEvent.pointerMove(window, { clientX: 240, clientY: 30 }); // R → 3M (frame 90)
+    fireEvent.pointerUp(window, { clientX: 240, clientY: 30 });
+    await waitFor(() => {
+      expect(ipcMocks.updateTransition).toHaveBeenCalledTimes(1);
+    });
+    expect(ipcMocks.updateTransition).toHaveBeenCalledWith({
+      transitionId: "tr-1",
+      durationUs: 1_000_000, // R 3M − B.start 2M
+      extendedUs: 1_000_000, // R − S(2M): the borrow grows
+    });
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+  });
+
+  it("right edge dragged left past S sends a NEGATIVE extendedUs — the genuine tail trim rides the same commit", async () => {
+    // Overlap fixture: pure placement, window [1M, 2M], S = A.end = 2M.
+    const overlapA = colorLayer("layer-a", "Clip A", 0, 2_000_000);
+    const overlapB = colorLayer("layer-b", "Clip B", 1_000_000, 3_000_000);
+    const overlapTr: TransitionSummary = {
+      ...transition,
+      duration_us: 1_000_000,
+      extended_us: 0,
+    };
+    const { container } = renderTimeline({
+      tracks: [makeTrack([overlapA, overlapB])],
+      transitions: [overlapTr],
+    });
+    fireEvent.pointerDown(zone(container, "right"), { button: 0, clientX: 160 });
+    fireEvent.pointerMove(window, { clientX: 136, clientY: 30 }); // R → 1.7M (frame 51)
+    fireEvent.pointerUp(window, { clientX: 136, clientY: 30 });
+    await waitFor(() => {
+      expect(ipcMocks.updateTransition).toHaveBeenCalledTimes(1);
+    });
+    expect(ipcMocks.updateTransition).toHaveBeenCalledWith({
+      transitionId: "tr-1",
+      durationUs: 700_000, // R 1.7M − B.start 1M
+      extendedUs: -300_000, // R − S(2M) < 0: trim A's real tail
+    });
+  });
+
+  it("the ghost never exceeds the clamps: a far-left left-edge drag renders at min(len_A, len_B) and commits the clamp", async () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    fireEvent.pointerDown(zone(container, "left"), { button: 0, clientX: 160 });
+    fireEvent.pointerMove(window, { clientX: -240, clientY: 30 }); // raw L = −3M
+    // Clamped ghost: L = A.end − min(2.5M, 2M) = 0.5M → left 40px, width 160px.
+    expect(chipEl(container).style.left).toBe("40px");
+    expect(chipEl(container).style.width).toBe("160px");
+    fireEvent.pointerUp(window, { clientX: -240, clientY: 30 });
+    await waitFor(() => {
+      expect(ipcMocks.updateTransition).toHaveBeenCalledWith({
+        transitionId: "tr-1",
+        durationUs: 2_000_000,
+        extendedUs: 500_000,
+      });
+    });
+    // Gesture over: the ghost collapses back to summary geometry.
+    expect(chipEl(container).style.left).toBe("160px");
+    expect(chipEl(container).style.width).toBe("40px");
+  });
+
+  it("a stationary pointer never commits — pointerup without movement and a sub-frame wiggle are both no-ops", () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    fireEvent.pointerDown(zone(container, "right"), { button: 0, clientX: 200 });
+    fireEvent.pointerUp(window, { clientX: 200, clientY: 30 });
+    // +1px = 12.5ms — rounds back to the starting frame boundary.
+    fireEvent.pointerDown(zone(container, "right"), { button: 0, clientX: 200 });
+    fireEvent.pointerMove(window, { clientX: 201, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 201, clientY: 30 });
+    expect(ipcMocks.updateTransition).not.toHaveBeenCalled();
+  });
+
+  it("pointerdown on the chip BODY over the window swallows the gesture: no layer trim/move/select, no commit", () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    // 180px = mid-window, over B's head material; the chip sits above both
+    // blocks, so only IT sees the pointer.
+    fireEvent.pointerDown(chipEl(container), { button: 0, clientX: 180 });
+    fireEvent.pointerMove(window, { clientX: 260, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 260, clientY: 30 });
+    expect(ipcMocks.updateTransition).not.toHaveBeenCalled();
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+  });
+
+  it("right edge drives the monitor to the LAST KEPT frame from the first effective move and restores on release", async () => {
+    const seek = vi.fn();
+    const pause = vi.fn();
+    const transport = { play() {}, pause, seek, isPlaying: () => false };
+    registerTransport(transport);
+    setPlayheadTimeUs(300_000);
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    fireEvent.pointerDown(zone(container, "right"), { button: 0, clientX: 200 });
+    fireEvent.pointerMove(window, { clientX: 240, clientY: 30 }); // R → 3M
+    // Out-style boundary: show the last kept frame (89 @ 30fps), not R itself.
+    expect(pause).toHaveBeenCalled();
+    expect(seek).toHaveBeenCalledWith(2_966_667);
+    fireEvent.pointerUp(window, { clientX: 240, clientY: 30 });
+    // Playhead line AND monitor return to the park position.
+    expect(playheadTimeUs()).toBe(300_000);
+    expect(seek).toHaveBeenLastCalledWith(300_000);
+    await waitFor(() => expect(ipcMocks.updateTransition).toHaveBeenCalled());
+    releaseTransport(transport);
+  });
+
+  it("left edge drives the monitor to the boundary frame itself (in-style)", () => {
+    const seek = vi.fn();
+    const transport = { play() {}, pause() {}, seek, isPlaying: () => false };
+    registerTransport(transport);
+    setPlayheadTimeUs(300_000);
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    fireEvent.pointerDown(zone(container, "left"), { button: 0, clientX: 160 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 30 }); // L → 1.5M
+    expect(seek).toHaveBeenCalledWith(1_500_000);
+    fireEvent.pointerUp(window, { clientX: 120, clientY: 30 });
+    expect(playheadTimeUs()).toBe(300_000);
+    releaseTransport(transport);
+  });
+
+  it("blade mode makes the whole chip — zones included — transparent to pointer events", () => {
+    const { container } = render(
+      <Timeline
+        tracks={[makeTrack([extendedA, layerB])]}
+        groups={[]}
+        transitions={[transition]}
+        durationUs={5_000_000}
+        keybindings={{}}
+        fpsNum={30}
+        fpsDen={1}
+        bladeMode
+        media={[]}
+        importing={new Set()}
+        proxyState={new Map()}
+        previewDecodable={new Set()}
+        onExitBlade={vi.fn()}
+        onSeek={vi.fn()}
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    const chip = chipEl(container);
+    expect(chip.className).toContain("pointer-events-none");
   });
 });
 
