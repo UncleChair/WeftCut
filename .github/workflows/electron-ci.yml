@@ -256,12 +256,14 @@ jobs:
       - name: Build app (E2E mode)
         run: npm run build:e2e
 
-      # The analyzer-backed e2e gates shell `cargo run --bin media_conformance`
-      # per assertion (e2e/lib/analyze.mjs). Build it up front so the first
-      # gate's test timeout never absorbs a cold compile and concurrent workers
-      # never queue on the cargo target-dir lock for it.
+      # The analyzer-backed e2e gates exec this artifact per assertion
+      # (e2e/lib/analyze.mjs). Load-bearing, not an optimization: without it
+      # analyze.mjs falls back to `cargo run`, whose fingerprint check compiles
+      # the bin inside the first gate — silently, on the stderr it captures and
+      # drops. Same npm script a developer runs, so what CI prebuilds cannot
+      # drift from what the specs then look for.
       - name: Prebuild conformance analyzer
-        run: cargo build --manifest-path native/Cargo.toml --bin media_conformance --features jobs,export
+        run: npm run analyzer:build
 
       # The MAIN fixture matrix generates itself (playwright globalSetup →
       # ensureFixtures), but the two software-lane family gates read from the

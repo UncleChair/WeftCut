@@ -138,6 +138,19 @@ function wireDecodeGates(env, { platform, root }, notes) {
   )
 }
 
+/** The analyzer-backed gates (conformance, color-conformance, audio,
+ * export-range-audio, text-box-cjk-export) exec the prebuilt media_conformance
+ * bin instead of shelling `cargo run` — e2e/lib/analyze.mjs carries why. Absent,
+ * they still pass, paying a cold compile inside whichever gate runs first, so
+ * this is a note and not a fatal error. */
+function noteAnalyzerBin({ platform, root }, notes) {
+  const exe = platform === 'win32' ? 'media_conformance.exe' : 'media_conformance'
+  if (existsSync(path.join(root, 'native', 'target', 'debug', exe))) return
+  notes.push(
+    'no prebuilt conformance analyzer — the first analyzer-backed gate compiles it in-spec (minutes, silent); `npm run analyzer:build` moves that cost out of the run',
+  )
+}
+
 /** True when a built renderer chunk contains the `__weftcutTest` hook surface.
  * The marker is absent from a production build — every reference sits behind a
  * static VITE_WEFTCUT_E2E check and is tree-shaken (verified by grepping a
@@ -191,6 +204,7 @@ export function prepareE2EEnv(
   const notes = []
   wireFfmpeg(env, { platform, root, hasPathFfmpeg }, notes)
   wireDecodeGates(env, { platform, root }, notes)
+  noteAnalyzerBin({ platform, root }, notes)
   noteMatrixTier(env, notes)
   checkE2EBuild({ root }, errors)
   // CI wraps the run in xvfb-run (which sets DISPLAY for the child); locally a

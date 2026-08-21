@@ -32,6 +32,7 @@
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "napi:build:decode": "node scripts/napi-build-decode.mjs",
+    "analyzer:build": "cargo build --manifest-path native/Cargo.toml --bin media_conformance --features jobs,export",
     "mcp:catalog:snapshot": "node scripts/snapshot-mcp-catalog.mjs",
     "mcp:catalog:check": "node scripts/snapshot-mcp-catalog.mjs && git diff --exit-code fixtures/mcp/rust-catalog-snapshot.json",
     "e2e": "node scripts/run-e2e.mjs",

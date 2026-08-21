@@ -54,13 +54,16 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
   memory-ratchet cell and `preview-gpu-order` also read this dir but stay out
   of CI: the first is a ~3.5 GB fixture driving a memory measurement a shared
   runner cannot hold steady, the second needs a GPU that d3d11va-decodes HEVC.
-- **The analyzer-backed gates need a buildable `cargo`.** `lib/analyze.mjs`
-  shells `cargo run --bin media_conformance --features jobs,export`; the first
-  invocation compiles it (slow), later runs reuse the binary. These gates
-  (`conformance`, `color-conformance`, `audio`, `export-range-audio`,
-  `text-box-cjk-export`) run in CI too — electron-ci fetches ffmpeg (so
-  `globalSetup` generates fixtures) and prebuilds the analyzer so no spec pays
-  the cold compile. `text-box-cjk-export` is the one that needs no fixture
+- **The analyzer-backed gates need a built analyzer.** `lib/analyze.mjs` execs
+  `native/target/debug/media_conformance`, which `npm run analyzer:build` writes.
+  It is a build artifact like `out/` — rebuild it after changing the bin. Absent,
+  analyze.mjs falls back to `cargo run` and warns: that fallback compiles the bin
+  inside whichever gate runs first, and cargo's progress goes to a captured
+  stderr, so the wait reads as a hung spec. These gates (`conformance`,
+  `color-conformance`, `audio`, `export-range-audio`, `text-box-cjk-export`) run
+  in CI too — electron-ci fetches ffmpeg (so `globalSetup` generates fixtures)
+  and runs the same `analyzer:build` so no spec pays the compile.
+  `text-box-cjk-export` is the one that needs no fixture
   media and no calibrated SSIM floor: it exports the same composition twice and
   compares the two outputs, so both legs share whatever raster the runner has.
 - **`export-native-wedges.spec.ts` (native export decode wedge gates) is gated

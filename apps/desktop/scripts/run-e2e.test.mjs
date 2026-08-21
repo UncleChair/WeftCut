@@ -149,9 +149,14 @@ after(() => {
   for (const root of tmpRoots) rmSync(root, { recursive: true, force: true })
 })
 
-function makeRoot({ ffmpeg = true, addon = true, out = true, hook = true } = {}) {
+function makeRoot({ ffmpeg = true, addon = true, out = true, hook = true, analyzer = true } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'weftcut-run-e2e-'))
   tmpRoots.push(root)
+  if (analyzer) {
+    const dir = path.join(root, 'native', 'target', 'debug')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path.join(dir, 'media_conformance'), '')
+  }
   if (ffmpeg) {
     const dir = path.join(root, 'resources', 'ffmpeg', 'linux')
     mkdirSync(dir, { recursive: true })
@@ -253,4 +258,15 @@ test('no ffmpeg anywhere degrades to a warning note, not an error', () => {
     LINUX(root, { hasPathFfmpeg: () => true }),
   )
   assert.ok(!onPath.notes.some((n) => n.includes('ffmpeg:fetch')))
+})
+
+test('a missing analyzer is announced, because the cost it hides is silent', () => {
+  // The gates still pass without it — they just compile it inside the first one,
+  // where cargo's progress is captured and dropped. The note is the only warning
+  // a reader gets before a spec absorbs minutes for no visible reason.
+  const built = prepareE2EEnv({ DISPLAY: ':0' }, LINUX(makeRoot()))
+  assert.ok(!built.notes.some((n) => n.includes('analyzer:build')))
+  const missing = prepareE2EEnv({ DISPLAY: ':0' }, LINUX(makeRoot({ analyzer: false })))
+  assert.deepEqual(missing.errors, [])
+  assert.match(missing.notes.join('\n'), /analyzer:build/)
 })
