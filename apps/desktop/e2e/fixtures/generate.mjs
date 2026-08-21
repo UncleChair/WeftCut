@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 
@@ -91,9 +91,9 @@ export function outputName({
   if (gradientH2644k) return 'test_2160p_gradient10_h264.mp4'
   if (h264Interframe) return 'test_1080p_h264.mp4'
   const container = format ?? 'mp4'
-  // Non-default durations are part of the name so a warm media dir can never
-  // satisfy an entry with a stale file of the old length (generation skips on
-  // existence alone).
+  // Non-default durations ride in the name because the name IS the entry's key
+  // — the fixture manifest is keyed on it — so two entries differing only in
+  // length must not collide on one file.
   const secondsSuffix = seconds ? `_${seconds}s` : ''
   if (container === 'prores') return `test_1080p_${fps}fps${secondsSuffix}_prores.mov`
   if (eostail) return `test_1080p_${fps}fps${secondsSuffix}_eostail.${container}`
@@ -188,10 +188,16 @@ function renameIntoPlace(tempPath, destPath) {
   }
 }
 
+/// A name fragment a concurrently running generator cannot collide with.
+function uniqueTag() {
+  return `${process.pid}-${randomUUID()}`
+}
+
 /// Write via a unique temp sibling + rename, so a racing (or crashing)
-/// generator can never leave a torn file at the final path.
-function writeFileAtomic(destPath, data) {
-  const tempPath = `${destPath}.tmp-${process.pid}-${randomUUID()}`
+/// generator can never leave a torn file at the final path. Exported so the
+/// fixture manifest does not grow a second atomic-write implementation.
+export function writeFileAtomic(destPath, data) {
+  const tempPath = `${destPath}.tmp-${uniqueTag()}`
   writeFileSync(tempPath, data)
   renameIntoPlace(tempPath, destPath)
 }
@@ -207,9 +213,25 @@ function writeManifest(outputDir, name, width, height, patches) {
   writeFileAtomic(path.join(outputDir, name), `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
-function writeColorChart(outputDir, width, height) {
-  const patches = writeChartPng(outputDir, 'color_chart.png', width, height)
-  writeManifest(outputDir, 'color_manifest.json', width, height, patches)
+/// Everything a recipe does apart from invoking ffmpeg: the chart/manifest
+/// writes that bypass `run`, the unique fragment for scratch inputs, and
+/// progress logging. Injectable as one object so `recipeOf` can *record* those
+/// writes instead of performing them — recording is how it learns the
+/// non-ffmpeg output filenames, so they are never restated in a hand-kept list.
+/// `writeChartPng` also takes a `transient` option marking a scratch input that
+/// generation deletes again, which `remove` is what deletes; the real writer
+/// ignores the option.
+const REAL_IO = {
+  writeChartPng,
+  writeManifest,
+  remove: (target) => rmSync(target, { force: true }),
+  unique: uniqueTag,
+  log: (message) => console.log(message),
+}
+
+function writeColorChart(io, outputDir, width, height) {
+  const patches = io.writeChartPng(outputDir, 'color_chart.png', width, height)
+  io.writeManifest(outputDir, 'color_manifest.json', width, height, patches)
   return 'color_chart.png'
 }
 
@@ -268,7 +290,7 @@ function atomicOutputs(run, outputDir) {
     // filename extension, so the unique marker has to go before it (a bare
     // `foo.mp4.tmp-…` suffix leaves ffmpeg unable to choose a format).
     const ext = path.extname(output)
-    const temp = `${output.slice(0, output.length - ext.length)}.tmp-${process.pid}-${randomUUID()}${ext}`
+    const temp = `${output.slice(0, output.length - ext.length)}.tmp-${uniqueTag()}${ext}`
     run([...args.slice(0, -1), temp], options)
     renameIntoPlace(path.join(cwd, temp), path.join(cwd, output))
   }
@@ -323,12 +345,12 @@ function appendToneInputs(args, seconds, startAt = 0) {
   return Array.from({ length: seconds }, (_, index) => `[${index + startAt}:a]`).join('')
 }
 
-function generateImageSet(outputDir, run) {
+function generateImageSet(outputDir, run, io) {
   const width = 320
   const height = 240
   const base = `test_chart_${width}x${height}`
-  const patches = writeChartPng(outputDir, `${base}.png`, width, height)
-  writeManifest(outputDir, `${base}_manifest.json`, width, height, patches)
+  const patches = io.writeChartPng(outputDir, `${base}.png`, width, height)
+  io.writeManifest(outputDir, `${base}_manifest.json`, width, height, patches)
 
   const conversions = [
     ['-q:v', '2', `${base}.jpg`],
@@ -343,10 +365,10 @@ function generateImageSet(outputDir, run) {
       { cwd: outputDir },
     )
   }
-  console.log('Done: still-image chart set')
+  io.log('Done: still-image chart set')
 }
 
-function generateAudioTones(entry, outputDir, run) {
+function generateAudioTones(entry, outputDir, run, io) {
   const seconds = 10
   const format = entry.aformat ?? 'wav'
   const output = `test_tones_${seconds}s.${format}`
@@ -354,10 +376,15 @@ function generateAudioTones(entry, outputDir, run) {
   const concatInputs = appendToneInputs(args, seconds)
   const withCover = format === 'mp3'
   // Unique per process: a racing generator's cleanup must not delete our input.
-  const cover = `tones_cover_${process.pid}_${randomUUID()}.png`
+  // It is also the one scratch name that reaches the argv (as an ffmpeg input),
+  // so `io.unique` is injectable — a real fragment here would move this entry's
+  // recipe hash on every call and regenerate the mp3 forever.
+  const cover = `tones_cover_${io.unique()}.png`
 
   if (withCover) {
-    writeChartPng(outputDir, cover, 320, 240)
+    // Transient: deleted in the `finally` below, so it is not an output the
+    // fixture manifest may claim.
+    io.writeChartPng(outputDir, cover, 320, 240, { transient: true })
     args.push('-i', cover)
   }
   args.push(
@@ -387,11 +414,11 @@ function generateAudioTones(entry, outputDir, run) {
   }
   args.push(output)
 
-  console.log(`Generating ${output} (${seconds}s tone steps, audio-only)`)
+  io.log(`Generating ${output} (${seconds}s tone steps, audio-only)`)
   try {
     run(args, { cwd: outputDir })
   } finally {
-    if (withCover) rmSync(path.join(outputDir, cover), { force: true })
+    if (withCover) io.remove(path.join(outputDir, cover))
   }
 }
 
@@ -406,7 +433,7 @@ function timingAudioInputs(args, segments, firstInputIndex) {
   return segments.map((_, index) => `[${index + firstInputIndex}:a]`).join('')
 }
 
-function generateAudioTiming(entry, outputDir, run) {
+function generateAudioTiming(entry, outputDir, run, io) {
   const offsetMs = entry.ptsOffsetMs ?? 0
   if (!Number.isInteger(offsetMs) || offsetMs < 0) {
     throw new Error('--pts-offset-ms must be a non-negative integer')
@@ -436,11 +463,11 @@ function generateAudioTiming(entry, outputDir, run) {
   if (offsetMs !== 0) args.push('-output_ts_offset', (offsetMs / 1000).toFixed(3))
   args.push('-shortest', output)
 
-  console.log(`Generating ${output} (sound at 1s, 3s, 5s; PTS offset ${offsetMs}ms)`)
+  io.log(`Generating ${output} (sound at 1s, 3s, 5s; PTS offset ${offsetMs}ms)`)
   run(args, { cwd: outputDir })
 }
 
-function generateLongAudioTiming(outputDir, run) {
+function generateLongAudioTiming(outputDir, run, io) {
   const duration = 125
   const output = 'test_audio_timing_long_125s.mkv'
   const segments = [
@@ -464,16 +491,16 @@ function generateLongAudioTiming(outputDir, run) {
     '-c:a', 'pcm_s16le', '-shortest', output,
   )
 
-  console.log(`Generating ${output} (500ms sound islands at 5s, 60s, 120s)`)
+  io.log(`Generating ${output} (500ms sound islands at 5s, 60s, 120s)`)
   run(args, { cwd: outputDir })
 }
 
-function generateColor(entry, outputDir, run) {
+function generateColor(entry, outputDir, run, io) {
   const encoding = COLOR_ENCODINGS[entry.color]
   if (!encoding) {
     throw new Error(`unknown --color ${JSON.stringify(entry.color)} (709ltd|601ltd|709full|601full)`)
   }
-  const chart = writeColorChart(outputDir, WIDTH, HEIGHT)
+  const chart = writeColorChart(io, outputDir, WIDTH, HEIGHT)
   const output = outputName(entry)
   const filter = `format=rgb24,scale=out_color_matrix=${encoding.matrix}:out_range=${encoding.outputRange},format=yuv420p`
   const args = [
@@ -486,12 +513,12 @@ function generateColor(entry, outputDir, run) {
     '-an', output,
   ]
 
-  console.log(`Generating ${output} (${entry.color})`)
+  io.log(`Generating ${output} (${entry.color})`)
   run(args, { cwd: outputDir })
-  console.log(`Done: ${output}`)
+  io.log(`Done: ${output}`)
 }
 
-function generateColorProres(entry, outputDir, run) {
+function generateColorProres(entry, outputDir, run, io) {
   const encoding = entry.colorProresEnc ?? '709ltd'
   const matrix = encoding === '709ltd'
     ? 'bt709'
@@ -501,7 +528,7 @@ function generateColorProres(entry, outputDir, run) {
   if (!matrix) {
     throw new Error(`unknown --color-prores-enc ${JSON.stringify(encoding)} (709ltd|601ltd)`)
   }
-  const chart = writeColorChart(outputDir, WIDTH, HEIGHT)
+  const chart = writeColorChart(io, outputDir, WIDTH, HEIGHT)
   const output = outputName({ ...entry, colorProresEnc: encoding })
   const filter = `format=rgb24,scale=out_color_matrix=${matrix}:out_range=tv,format=yuv422p10le`
   const args = [
@@ -513,9 +540,9 @@ function generateColorProres(entry, outputDir, run) {
     '-an', output,
   ]
 
-  console.log(`Generating ${output} (${encoding} chart, ProRes 422 HQ 10-bit)`)
+  io.log(`Generating ${output} (${encoding} chart, ProRes 422 HQ 10-bit)`)
   run(args, { cwd: outputDir })
-  console.log(`Done: ${output}`)
+  io.log(`Done: ${output}`)
 }
 
 function gradientArgs({
@@ -540,7 +567,7 @@ function gradientArgs({
   ]
 }
 
-function generateGradient(entry, outputDir, run) {
+function generateGradient(entry, outputDir, run, io) {
   let args
   let description
   const output = outputName(entry)
@@ -600,16 +627,16 @@ function generateGradient(entry, outputDir, run) {
     description = '10s animated 10-bit ramp, H.264 High10 long-GOP+B-frames'
   }
 
-  console.log(`Generating ${output} (${description})`)
+  io.log(`Generating ${output} (${description})`)
   run(args, { cwd: outputDir })
-  console.log(`Done: ${output}`)
+  io.log(`Done: ${output}`)
 }
 
 /// The interframe 8-bit H.264 clip the lane-parameterized preview HW
 /// conformance gates decode (preview-hw-conformance.spec.ts): 1080p30, 2 s,
 /// one-second GOPs so a mid-clip seek exercises real interframe decode on
 /// every HW lane (NVDEC/VAAPI/d3d11va/VideoToolbox).
-function generateH264Interframe(outputDir, run) {
+function generateH264Interframe(outputDir, run, io) {
   const output = 'test_1080p_h264.mp4'
   const args = [
     '-y', '-f', 'lavfi', '-i', `testsrc2=size=${WIDTH}x${HEIGHT}:rate=30:duration=2`,
@@ -618,9 +645,9 @@ function generateH264Interframe(outputDir, run) {
     '-an', output,
   ]
 
-  console.log(`Generating ${output} (8-bit interframe H.264, 1080p30, 2s)`)
+  io.log(`Generating ${output} (8-bit interframe H.264, 1080p30, 2s)`)
   run(args, { cwd: outputDir })
-  console.log(`Done: ${output}`)
+  io.log(`Done: ${output}`)
 }
 
 function drawtextFilters(fps, font) {
@@ -633,7 +660,7 @@ function drawtextFilters(fps, font) {
   ]
 }
 
-function generateVideo(entry, outputDir, run, fontOptions) {
+function generateVideo(entry, outputDir, run, fontOptions, io) {
   const fps = Number(entry.fps)
   if (!Number.isInteger(fps) || fps <= 0) {
     throw new Error('--fps must be a positive integer')
@@ -727,28 +754,33 @@ function generateVideo(entry, outputDir, run, fontOptions) {
       throw new Error(`unsupported --format ${JSON.stringify(format)} (supported: mp4, mkv, mov, webm, gif, prores)`)
   }
 
-  console.log(`Generating ${output} (${WIDTH}x${HEIGHT}, ${fps} fps, ${seconds}s)`)
+  io.log(`Generating ${output} (${WIDTH}x${HEIGHT}, ${fps} fps, ${seconds}s)`)
   run(args, { cwd: outputDir })
-  console.log(`Done: ${output}`)
+  io.log(`Done: ${output}`)
 }
 
 /// Generate one matrix entry in outputDir. `run` is injectable so every ffmpeg
 /// recipe and path boundary can be tested without encoding large media files.
+/// Under `dryRun` nothing is produced and `run` receives the argv unwrapped:
+/// `atomicOutputs` would rewrite each output to a process-unique temp name, and
+/// two calls would then never agree on the argv. See `recipeOf`.
 export function generateFixture(entry, {
   outputDir = process.cwd(),
   run = runFfmpeg,
   fontOptions,
+  dryRun = false,
+  io = dryRun ? recordingIo() : REAL_IO,
 } = {}) {
-  mkdirSync(outputDir, { recursive: true })
-  const atomicRun = atomicOutputs(run, outputDir)
+  if (!dryRun) mkdirSync(outputDir, { recursive: true })
+  const ffmpeg = dryRun ? run : atomicOutputs(run, outputDir)
 
-  if (entry.imageset) return generateImageSet(outputDir, atomicRun)
-  if (entry.audiotones) return generateAudioTones(entry, outputDir, atomicRun)
-  if (entry.audioTiming) return generateAudioTiming(entry, outputDir, atomicRun)
-  if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, atomicRun)
-  if (entry.color) return generateColor(entry, outputDir, atomicRun)
-  if (entry.colorProres) return generateColorProres(entry, outputDir, atomicRun)
-  if (entry.h264Interframe) return generateH264Interframe(outputDir, atomicRun)
+  if (entry.imageset) return generateImageSet(outputDir, ffmpeg, io)
+  if (entry.audiotones) return generateAudioTones(entry, outputDir, ffmpeg, io)
+  if (entry.audioTiming) return generateAudioTiming(entry, outputDir, ffmpeg, io)
+  if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, ffmpeg, io)
+  if (entry.color) return generateColor(entry, outputDir, ffmpeg, io)
+  if (entry.colorProres) return generateColorProres(entry, outputDir, ffmpeg, io)
+  if (entry.h264Interframe) return generateH264Interframe(outputDir, ffmpeg, io)
   if (
     entry.gradient
     || entry.gradientH264
@@ -756,9 +788,60 @@ export function generateFixture(entry, {
     || entry.gradientAv1
     || entry.gradientH2644k
   ) {
-    return generateGradient(entry, outputDir, atomicRun)
+    return generateGradient(entry, outputDir, ffmpeg, io)
   }
-  return generateVideo(entry, outputDir, atomicRun, fontOptions)
+  return generateVideo(entry, outputDir, ffmpeg, fontOptions, io)
+}
+
+/// Record a recipe's non-ffmpeg side effects instead of performing them, so a
+/// dry run stays pure and cheap — the real writers encode a 1920x1080 PNG per
+/// color entry.
+function recordingIo() {
+  const published = []
+  return {
+    published,
+    writeChartPng(outputDir, name, width, height, { transient = false } = {}) {
+      if (!transient) published.push(name)
+      return colorPatches(width, height)
+    },
+    writeManifest(outputDir, name) {
+      published.push(name)
+    },
+    remove: () => {},
+    unique: () => 'dry-run',
+    log: () => {},
+  }
+}
+
+/// A matrix entry's recipe identity: `hash` over the ffmpeg argv the entry would
+/// run, and `files` naming everything it publishes. Hashing the argv rather than
+/// a hand-written list of inputs is the point — any edit that changes what
+/// ffmpeg is told moves the hash, so a missed input is structurally impossible.
+/// `pickAv1Encoder`'s probe rides in deliberately: a different encoder is a
+/// different fixture.
+export function recipeOf(entry, { fontOptions } = {}) {
+  const io = recordingIo()
+  const invocations = []
+
+  generateFixture(entry, {
+    run: (args) => {
+      invocations.push([...args])
+    },
+    fontOptions,
+    dryRun: true,
+    io,
+  })
+
+  // The output is the argv's last element — `atomicOutputs` already rests on
+  // that invariant. Dedupe because an entry can both write a file itself and
+  // hand ffmpeg the same name (the imageset converts from its own chart PNG),
+  // then sort so the manifest does not churn on recipe order.
+  const outputs = invocations.map((args) => args.at(-1))
+
+  return {
+    files: [...new Set([...io.published, ...outputs])].sort(),
+    hash: createHash('sha256').update(JSON.stringify(invocations)).digest('hex'),
+  }
 }
 
 const VALUE_FLAGS = new Map([

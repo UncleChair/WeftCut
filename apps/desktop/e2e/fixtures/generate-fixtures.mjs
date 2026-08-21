@@ -1,16 +1,24 @@
 // Idempotent fixture generator: defines the matrix (single source of truth) and
-// generates missing clips through the dependency-free Node generator. Media is
+// brings the media on disk up to date with the recipes in generate.mjs. Media is
 // gitignored; both scripts are committed, so a checkout only needs Node +
 // ffmpeg to reproduce the fixtures.
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { generateFixture, outputName } from "./generate.mjs";
+import { generateFixture, outputName, recipeOf, writeFileAtomic } from "./generate.mjs";
 
 export { outputName } from "./generate.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+const MANIFEST_NAME = "manifest.json";
+/// Bump when the manifest's own shape changes: an unreadable version means
+/// nothing on disk is accounted for, so the whole matrix is regenerated.
+const MANIFEST_VERSION = 1;
+/// Committed to keep the gitignored media directory in the tree, so it is never
+/// an unclaimed file.
+const KEEP_FILE = ".gitkeep";
 
 // The fixture matrix. Output filenames MUST match what generate.mjs writes.
 export const MATRIX = [
@@ -63,8 +71,8 @@ export const MATRIX = [
   // VideoToolbox).
   { h264Interframe: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
-  // media-import.spec.ts. The png is the canonical existence check; the
-  // generator writes the whole set in one run.
+  // media-import.spec.ts. The generator writes the whole set in one run, and
+  // the manifest claims all seven, so losing any one of them regenerates it.
   { imageset: true },
   // audio-ONLY per-second tone files — audio.spec.ts. The mp3 embeds
   // attached_pic cover art (regression for the still-image/cover-art
@@ -88,26 +96,92 @@ export const MATRIX = [
   { fps: 10, format: "gif" },
 ];
 
-/// Generate any missing matrix clip into `mediaDir`. Existing files are skipped
-/// (fast no-op). Throws if a generation fails or produces no file.
+/// The `{ hash, files }` an earlier pass recorded per entry. Absent, truncated
+/// or version-mismatched all mean the same thing — nothing on disk is accounted
+/// for, so every entry is stale. There is deliberately no way to declare the
+/// media trustworthy instead: an escape hatch from this check would be reached
+/// for exactly when an unexplained regeneration is inconvenient, which is the
+/// case it exists to catch.
+function readManifest(manifestPath) {
+  try {
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (parsed?.version !== MANIFEST_VERSION || !parsed.entries) return {};
+    return parsed.entries;
+  } catch {
+    return {};
+  }
+}
+
+/// Bring `mediaDir` up to date with the recipes and record what it now holds.
+/// Existence is not evidence — an edited recipe leaves the old file in place
+/// under its old name, and an entry that writes seven files (the imageset) still
+/// has one canonical name — so each entry is checked against its `recipeOf`
+/// hash and its complete file set, and only the entries that disagree are
+/// deleted and regenerated. Throws if a generation fails or leaves a claimed
+/// file missing.
 export async function ensureFixtures(mediaDir, {
   matrix = MATRIX,
   generate = generateFixture,
 } = {}) {
   mkdirSync(mediaDir, { recursive: true });
+  const manifestPath = path.join(mediaDir, MANIFEST_NAME);
+  const recorded = readManifest(manifestPath);
+  const entries = {};
 
-  for (const entry of matrix) {
-    const name = outputName(entry);
-    const dest = path.join(mediaDir, name);
-    if (existsSync(dest)) {
-      console.log(`[fixtures] skip (exists): ${name}`);
-      continue;
+  try {
+    for (const entry of matrix) {
+      const name = outputName(entry);
+      const { hash, files } = recipeOf(entry);
+      const previous = recorded[name];
+      const missing = files.filter((file) => !existsSync(path.join(mediaDir, file)));
+
+      if (previous?.hash === hash && missing.length === 0) {
+        console.log(`[fixtures] skip (recipe matches): ${name}`);
+        entries[name] = { hash, files };
+        continue;
+      }
+
+      const reason = previous === undefined
+        ? "unrecorded"
+        : previous.hash === hash
+          ? `missing ${missing.join(", ")}`
+          : "recipe moved";
+      console.log(`[fixtures] generating ${name} (${reason}) ...`);
+      for (const file of files) rmSync(path.join(mediaDir, file), { force: true });
+      await generate(entry, { outputDir: mediaDir });
+
+      const absent = files.filter((file) => !existsSync(path.join(mediaDir, file)));
+      if (absent.length > 0) {
+        throw new Error(`generate.mjs ran but did not produce ${absent.join(", ")} in ${mediaDir}`);
+      }
+      entries[name] = { hash, files };
     }
-    console.log(`[fixtures] generating ${name} ...`);
-    await generate(entry, { outputDir: mediaDir });
-    if (!existsSync(dest)) {
-      throw new Error(`generate.mjs ran but did not produce ${dest}`);
-    }
+  } finally {
+    // Recorded even when an entry throws, so a failure halfway through a cold
+    // 4-minute pass does not cost the retry everything that already verified.
+    // An entry only reaches `entries` after its files are on disk, so a partial
+    // manifest is still only ever a claim about media that exists.
+    writeFileAtomic(
+      manifestPath,
+      `${JSON.stringify({ version: MANIFEST_VERSION, entries }, null, 2)}\n`,
+    );
+  }
+
+  reportUnclaimed(mediaDir, entries);
+}
+
+/// Name the files no entry claims. Reported, never deleted: a sweep would take
+/// the committed `.gitkeep`, and the value here is surfacing unregistered output
+/// (a recipe writing a file the manifest cannot see), not tidiness.
+function reportUnclaimed(mediaDir, entries) {
+  const claimed = new Set([MANIFEST_NAME, KEEP_FILE]);
+  for (const { files } of Object.values(entries)) {
+    for (const file of files) claimed.add(file);
+  }
+
+  const unclaimed = readdirSync(mediaDir).filter((name) => !claimed.has(name));
+  if (unclaimed.length > 0) {
+    console.log(`[fixtures] unclaimed, kept: ${unclaimed.join(", ")}`);
   }
 }
 
