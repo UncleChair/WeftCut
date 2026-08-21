@@ -645,7 +645,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const kind = a.kind as string
           let params: LayerParams
           switch (kind) {
-            case 'text': params = textParamsDefault('hello'); break
+            case 'text': params = textParamsDefault('hello', current().composition); break
             case 'color': params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080); break
             case 'video': params = videoClipParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             // Optional `role` override (default 'music'): mirrors the add-layer-site
@@ -919,7 +919,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
-          const params = prodTextParams(wireArgs)
+          const params = prodTextParams(wireArgs, current().composition)
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
@@ -1011,22 +1011,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_demo_text_layer': {
           // add_demo_text_layer:
           //   track=tracks.last() (spawn one if empty),
-          //   t_start=track.last_layer.t_end ?? 0, duration=3s,
-          //   content="TEXT", Arial 96 weight:700.
+          //   t_start=track.last_layer.t_end ?? 0, duration=3s.
+          // Params are textParamsDefault's, overriding only content and size —
+          // a demo op that minted its own family would be a fourth default.
+          const demoText = (comp: { width: number; height: number }): LayerParams => {
+            const p = textParamsDefault('TEXT', comp)
+            return { ...p, font: { ...p.font, size_px: 96 } }
+          }
           const snap = current()
           const lastTrack = snap.tracks.at(-1)
           if (lastTrack) {
             const t0 = lastTrack.layers.at(-1)?.t_end_us ?? 0
             const t1 = t0 + 3_000_000
-            const params: LayerParams = {
-              kind: 'Text', content: 'TEXT',
-              font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
-              color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-              align: 'Center', transform: defaultTransform(),
-              opacity: { mode: 'Static', value: 1 },
-              shadow: null, outline: null, intro: null, outro: null,
-              backend_hint: 'DrawText',
-            }
+            const params = demoText(snap.composition)
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, lastTrack.id, params, t0, t1))
             return { ok: true, value: id }
@@ -1034,16 +1031,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // No tracks at all — same unreachable single-commit case as add_demo_color_layer.
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, null)
-            const params: LayerParams = {
-              kind: 'Text', content: 'TEXT',
-              font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
-              color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-              align: 'Center', transform: defaultTransform(),
-              opacity: { mode: 'Static', value: 1 },
-              shadow: null, outline: null, intro: null, outro: null,
-              backend_hint: 'DrawText',
-            }
-            return applyAddLayer(d, idGen, newTrackId, params, 0, 3_000_000)
+            return applyAddLayer(d, idGen, newTrackId, demoText(d.composition), 0, 3_000_000)
           })
           return { ok: true, value: id }
         }

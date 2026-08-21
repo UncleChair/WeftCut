@@ -6,7 +6,7 @@
 // __tests__/prod.routing.test.ts and __tests__/commands.test.ts.
 
 import type { LayerParams, Project, Rgba } from './model'
-import { defaultTransform } from './mutations/add'
+import { textParamsDefault } from './mutations/add'
 import { videoClipParams, audioParams, imageOverlayParams } from './mutations/media'
 import { parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
 
@@ -34,19 +34,11 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
   }
 }
 
-/** Default text layer: "Text", Arial 72, DrawText. */
-export function prodTextParams(a: Record<string, unknown>): LayerParams {
-  return {
-    kind: 'Text',
-    content: parseStrOpt(a.content, 'content') ?? 'Text',
-    font: { family: 'Arial', size_px: 72, weight: 400, italic: false },
-    color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-    align: 'Center',
-    transform: defaultTransform(),
-    opacity: { mode: 'Static', value: 1 },
-    shadow: null, outline: null, intro: null, outro: null,
-    backend_hint: 'DrawText',
-  }
+/** Default text layer: `textParamsDefault`'s params, with "Text" as the body
+ *  when the caller names none. No local defaults — this arm exists only to read
+ *  the wire arg. */
+export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }): LayerParams {
+  return textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
 }
 
 /** Image layer span: still→3s, animated→duration_us. */

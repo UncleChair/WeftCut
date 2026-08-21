@@ -77,6 +77,7 @@ describe('history label keys', () => {
 })
 
 function fresh(): Project { return blankProject(seededGen(), 'labels') }
+const COMP = { width: 1920, height: 1080 }
 function mediaItem(id: string, path: string, label: string | null): MediaItem {
   return {
     id, label, path_abs: path, path_rel: null, kind: 'Video',
@@ -122,11 +123,11 @@ describe('resolveEntityLabels', () => {
   // has nothing to translate in the user's own words — and it arrives collapsed
   // to one line, because a history row is one line.
   it('names an unlabelled Text layer by its content, collapsed to one line', () => {
-    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault('first line\nsecond line')))
+    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault('first line\nsecond line', COMP)))
     expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ text: 'first line second line' }])
   })
   it('still reaches the kind KEY when the Text layer has no words yet', () => {
-    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault('   ')))
+    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault('   ', COMP)))
     expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ label_key: 'kinds.text' }])
   })
   // Both sides call shared/textSnippet at shared TEXT_NAME_MAX, so equal
@@ -135,7 +136,7 @@ describe('resolveEntityLabels', () => {
   // still hand one caption two names.
   it('caps a pasted paragraph through the shared rule, not a local slice', () => {
     const long = 'x'.repeat(500)
-    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault(long)))
+    const p = layer(fresh(), mkLayer('L1', null, textParamsDefault(long, COMP)))
     expect(labels(p, [{ kind: 'Layer', id: 'L1' }])).toEqual([{ text: textSnippet(long, TEXT_NAME_MAX) }])
   })
   // The track rungs are renderer/lib/trackName.ts's, so a history row names a

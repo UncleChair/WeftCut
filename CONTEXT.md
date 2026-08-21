@@ -130,6 +130,38 @@ clears it in the same commit, and re-linking snaps `scale_y` to a copy of
 `scale_x`.
 _Avoid_: uniform-scale mode, scale lock, third keyframe mode
 
+## Text box
+
+**Text box**:
+The rectangle a Text layer lays its glyphs out in (`TextParams.box_w`/`box_h`,
+composition pixels, local — before `scale`). Text is the only visual kind with
+no intrinsic size, and the box is what supplies one: the preview's resize
+handles write it, the transform anchor is taken over it, and the font size in
+the inspector is what reaches the frame at any box size. It lays out; it never
+magnifies — enlarging a title must not enlarge its letters. Whole-layer
+magnification is still `scale`, which is also the only animatable one of the two
+(ADR 0049).
+_Avoid_: text frame, bounding box, text bounds (those are the measured glyphs)
+
+**Resize mode**:
+Which of Auto width, Auto height or Fixed a Text layer is in — **read off**
+which box fields are set (`(null, null)`, `(set, null)`, `(set, set)`), never
+stored. Same discipline as linked scale: the state is its own consequences, so
+no flag can contradict them. `(null, set)` is not a fourth mode — a gesture
+backfills the width in the same commit, and a writer that cannot measure
+refuses.
+_Avoid_: resize enum, box mode, auto-size flag
+
+**Shrink-to-fit**:
+Fixed's answer to text that overruns its box: the largest font size whose
+measured block fits, with the outline width and shadow offsets multiplied by the
+same factor. Derived at render time and never written back — the layer keeps
+exactly one font size, the one the user set — and floored at 8 px absolute,
+below which the text overflows and is marked instead. Belongs to Fixed alone;
+Auto height overflows horizontally rather than shrinking.
+_Avoid_: auto-fit, scale-to-fit, effective font size (that is the derived
+number, not the behavior)
+
 ## Track placement
 
 **Track**:

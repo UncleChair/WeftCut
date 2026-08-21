@@ -1,7 +1,7 @@
 use super::Cue;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
-use crate::state::layer::{FontSpec, Outline, Shadow, TextAlign, TextBackend, TextParams};
+use crate::state::layer::{FontSpec, Outline, Shadow, TextAlign, TextParams, VAlign};
 use crate::state::transform::Transform;
 
 pub const DEFAULT_CAPTION_FONT: &str = "Liberation Sans, Noto Sans SC";
@@ -55,7 +55,11 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
         }),
         intro: None,
         outro: None,
-        backend_hint: TextBackend::DrawText,
+        box_w: None,
+        box_h: None,
+        valign: VAlign::default(),
+        line_height: 0.0,
+        letter_spacing: 0.0,
     }
 }
 

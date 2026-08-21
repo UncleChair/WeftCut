@@ -43,7 +43,7 @@ pub use ids::{
 };
 pub use layer::{
     AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, MotifParams,
-    Outline, Shadow, TextAlign, TextAnimPreset, TextBackend, TextParams, VideoClipParams,
+    Outline, Shadow, TextAlign, TextAnimPreset, TextParams, VAlign, VideoClipParams,
 };
 pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};

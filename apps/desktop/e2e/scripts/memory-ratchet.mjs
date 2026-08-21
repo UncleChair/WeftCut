@@ -99,7 +99,6 @@ const textLayers = () => [{
     },
     opacity: staticNum(1),
     shadow: null, outline: null, intro: null, outro: null,
-    backend_hint: 'DrawText',
   },
   effects: [],
 }];

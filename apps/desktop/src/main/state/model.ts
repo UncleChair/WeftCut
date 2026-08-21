@@ -48,10 +48,10 @@ export interface Rect { x: number; y: number; w: number; h: number }
 
 export interface FontSpec { family: string; size_px: number; weight: number; italic: boolean }
 export type TextAlign = 'Left' | 'Center' | 'Right'
+export type VAlign = 'Top' | 'Middle' | 'Bottom'
 export interface Shadow { color: Rgba; offset_x: number; offset_y: number; blur: number }
 export interface Outline { color: Rgba; width: number }
 export type TextAnimPreset = 'FadeIn' | 'FadeOut' | 'SlideUp' | 'SlideDown' | 'Typewriter'
-export type TextBackend = 'Auto' | 'DrawText' | 'Rasterized'
 
 export interface VideoClipParams {
   kind: 'VideoClip'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
@@ -66,7 +66,21 @@ export interface ImageOverlayParams {
 export interface TextParams {
   kind: 'Text'; content: string; font: FontSpec; color: Animated<Rgba>; align: TextAlign
   transform: Transform; opacity: Animated<number>; shadow: Shadow | null; outline: Outline | null
-  intro: TextAnimPreset | null; outro: TextAnimPreset | null; backend_hint: TextBackend
+  intro: TextAnimPreset | null; outro: TextAnimPreset | null
+  /** Layout box in composition px, LOCAL (pre-`scale`). Which fields are set IS
+   *  the resize mode — no enum to contradict them: (null, null) auto width,
+   *  (set, null) auto height (wraps), (set, set) fixed (wraps and shrinks to
+   *  fit). Plain scalars, NOT `Animated`: a keyframed box would move the shrink
+   *  factor every frame and rebuild the glyph atlas with it — `scale` is the
+   *  animation channel for a text layer's size. See ADR 0049. */
+  box_w: number | null
+  box_h: number | null
+  /** Where the text block sits INSIDE the box — orthogonal to
+   *  `transform.anchor_y`, which places the box against `x`/`y`. */
+  valign: VAlign
+  /** Line leading; 0 = auto (the font's own metrics). */
+  line_height: number
+  letter_spacing: number
 }
 export interface MotifParams {
   kind: 'Motif'; motif_id: string; motif_version: number; props: Record<string, unknown>

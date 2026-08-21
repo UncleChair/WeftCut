@@ -629,14 +629,39 @@ struct TextParams {
     outline: Option<Outline>,
     intro: Option<TextAnimPreset>,    // FadeIn, SlideUp, Typewriter, ...
     outro: Option<TextAnimPreset>,
-    backend_hint: TextBackend,        // Auto | DrawText | Rasterized (legacy schema field)
+    box_w: Option<f32>,               // layout box, composition px, LOCAL (pre-scale)
+    box_h: Option<f32>,
+    valign: VAlign,                   // Top | Middle | Bottom — the block inside the box
+    line_height: f32,                 // 0 = auto (the font's own metrics)
+    letter_spacing: f32,
 }
 ```
 
 Preview and export render text through PixiJS `TextSprite` (native canvas text,
-shadow/outline filters, intro/outro presets). The visual IR compiler that
-honored `backend_hint` was deleted with the Pixi migration; the field is still
-persisted for schema compatibility but does not change rendering today.
+shadow/outline filters, intro/outro presets).
+
+Text is the only visual kind with no intrinsic size, and the box is what gives it
+one. Which box fields are set **is** the resize mode — there is no mode enum to
+contradict them:
+
+| `(box_w, box_h)` | Mode | Wraps | Shrinks to fit |
+|---|---|---|---|
+| `(None, None)` | Auto width | no | no |
+| `(Some, None)` | Auto height | yes | no |
+| `(Some, Some)` | Fixed | yes | yes |
+
+`(None, Some)` is not a mode: a gesture that drags a top or bottom edge backfills
+`box_w` from the measured width in the same commit, the MCP boundary refuses it
+(the state layer has no canvas and so no way to measure), and the renderer
+coalesces it to Auto width rather than blanking a frame.
+
+Neither box field is `Animated`, deliberately: a keyframed box would move the
+shrink factor every frame and rebuild the glyph atlas with it. `scale_x`/`scale_y`
+remain the animation channel for a text layer's size, and they scale the rendered
+result — the box lays glyphs out instead of magnifying them. The shrink factor
+Fixed applies (and the outline/shadow scaling that follows it) is **derived in the
+renderer and never stored**: an MCP `content` edit never reaches the renderer, so
+a persisted effective size would be stale from the next word typed. See ADR 0049.
 
 ### `MotifParams`
 
@@ -705,7 +730,7 @@ kind, and the difference is deliberate:
 | Kind | `x`/`y` is | why |
 |---|---|---|
 | VideoClip, ImageOverlay, Motif | the **unrotated top-left** | natural size is fixed, so a corner is a stable origin — and it is what stored projects already mean |
-| Text | the **anchor point itself** | measured text bounds move with the content, so only an anchor-relative origin is stable (ASS `\an` import writes anchor + position together — `subtitles/layout.rs`) |
+| Text | the **anchor point itself**, taken over the layout box | measured text bounds move with the content, so only an anchor-relative origin is stable (ASS `\an` import writes anchor + position together — `subtitles/layout.rs`). With no `box_w` the box degenerates to those measured bounds, which is why Auto width behaves exactly as it did before the box existed |
 
 The media kinds get there by compensating the position for the pivot
 (`render/anchorPivot.ts`): the pivot goes at the anchor in texture space and the

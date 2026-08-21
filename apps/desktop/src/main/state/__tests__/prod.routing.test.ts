@@ -5,6 +5,7 @@
 // describe block per channel, tagged rich or mechanical.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
+import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,10 +75,11 @@ describe('production adapter routing — add_text_layer (rich)', () => {
     const track = a.snapshot().tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].params.kind).toBe('Text')
-    // Verify defaults: content='Text', font Arial 72
+    // Defaults come from the one factory (mutations/add.ts textParamsDefault) —
+    // the bundled family is what makes cross-OS determinism true here.
     const params = track.layers[0].params as { kind: 'Text'; content: string; font: { family: string; size_px: number } }
     expect(params.content).toBe('Text')
-    expect(params.font.family).toBe('Arial')
+    expect(params.font.family).toBe(DEFAULT_CAPTION_FONT_FAMILY)
     expect(params.font.size_px).toBe(72)
   })
 

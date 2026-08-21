@@ -119,8 +119,27 @@ pub struct TextParams {
     pub outline: Option<Outline>,
     pub intro: Option<TextAnimPreset>,
     pub outro: Option<TextAnimPreset>,
+    /// Layout box in composition px, LOCAL (before `scale`). Which fields are
+    /// set IS the resize mode — no mode enum to contradict them: `(None, None)`
+    /// auto width, `(Some, None)` auto height (wraps), `(Some, Some)` fixed
+    /// (wraps and shrinks to fit). See ADR 0049.
+    ///
+    /// Deliberately NOT `Animated`: a keyframed box would move the shrink
+    /// factor every frame and rebuild the glyph atlas with it. `scale` is the
+    /// animation channel for a text layer's size.
     #[serde(default)]
-    pub backend_hint: TextBackend,
+    pub box_w: Option<f32>,
+    #[serde(default)]
+    pub box_h: Option<f32>,
+    /// Where the text block sits INSIDE the box. Orthogonal to
+    /// `transform.anchor_y`, which places the box against `x`/`y`.
+    #[serde(default)]
+    pub valign: VAlign,
+    /// Line leading; `0` = auto (the font's own metrics).
+    #[serde(default)]
+    pub line_height: f32,
+    #[serde(default)]
+    pub letter_spacing: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -139,6 +158,14 @@ pub enum TextAlign {
     #[default]
     Center,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VAlign {
+    Top,
+    #[default]
+    Middle,
+    Bottom,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -162,15 +189,6 @@ pub enum TextAnimPreset {
     SlideUp,
     SlideDown,
     Typewriter,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum TextBackend {
-    /// Compiler picks DrawText for simple styles, Rasterized for animated/styled.
-    #[default]
-    Auto,
-    DrawText,
-    Rasterized,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
-import { blankProject, SCHEMA_VERSION, type Project } from './model'
+import { blankProject, SCHEMA_VERSION, type LayerParams, type Project } from './model'
 import { canonicalString } from './canonical'
 import { parseProject, serializeProject, type GridRepair } from './serialize'
 import { serializeProjectToJson } from './persistence'
 import { validate } from './validate'
 import { createActor } from './actor'
-import { applyAddLayer, colorParams } from './mutations/add'
+import { applyAddLayer, colorParams, textParamsDefault } from './mutations/add'
 import { isCommandFailure } from './errors'
 
 describe('serialize round-trip', () => {
@@ -255,5 +255,46 @@ describe('parseProject grid repair', () => {
     parseProject(wire, { onGridRepair: (r) => reported.push([...r]) })
     expect(reported).toEqual([])
     expect(wire.composition.duration_us).toBe(2_999_999)
+  })
+})
+
+// ── Text box additive-field default ──────────────────────────────────────────
+// `undefined` and `null` are different values for the box: nullability alone
+// encodes the resize mode, so an absent `box_w` that survived the load pass
+// would read as "wrap at width undefined" and blank a line that used to render.
+describe('parseProject text box defaults', () => {
+  /** A project saved before the box existed: a Text layer with none of the five
+   *  fields on the wire. */
+  function boxlessTextWire(): Wire {
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('caption', p.composition), 0, 1_000_000)
+    const wire = serializeProject(p) as Wire
+    const params = wire.tracks[1].layers[0].params as Record<string, unknown>
+    for (const k of ['box_w', 'box_h', 'valign', 'line_height', 'letter_spacing']) delete params[k]
+    return wire
+  }
+
+  it('turns an absent box into an explicit null, and fills valign/leading/tracking', () => {
+    const wire = boxlessTextWire()
+    const params = parseProject(wire, silent).tracks[1].layers[0].params as Extract<LayerParams, { kind: 'Text' }>
+    expect(params.box_w).toBeNull()
+    expect(params.box_h).toBeNull()
+    expect([params.valign, params.line_height, params.letter_spacing]).toEqual(['Middle', 0, 0])
+  })
+
+  it('leaves an authored box exactly as written', () => {
+    const wire = boxlessTextWire()
+    Object.assign(wire.tracks[1].layers[0].params as Record<string, unknown>, { box_w: 1600, box_h: 200, valign: 'Bottom', line_height: 72, letter_spacing: 3 })
+    const params = parseProject(wire, silent).tracks[1].layers[0].params as Extract<LayerParams, { kind: 'Text' }>
+    expect([params.box_w, params.box_h, params.valign, params.line_height, params.letter_spacing]).toEqual([1600, 200, 'Bottom', 72, 3])
+  })
+
+  it('does not grow box fields on a non-Text layer', () => {
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    applyAddLayer(p, g, p.tracks[0].id, colorParams(RED, 16, 9), 0, 1_000_000)
+    const parsed = parseProject(serializeProject(p) as Wire, silent)
+    expect('box_w' in parsed.tracks[0].layers[0].params).toBe(false)
   })
 })

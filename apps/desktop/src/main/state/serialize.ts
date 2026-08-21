@@ -246,18 +246,47 @@ function normalizeScaleLinked(o: Record<string, unknown>): void {
   })
 }
 
-/** Every transform object on the WIRE shape, for the repair above. One
- *  defensive walk, so a second transform-field pass can't disagree with this one
- *  about what counts as a layer. */
-function forEachWireTransform(o: Record<string, unknown>, fn: (transform: Record<string, unknown>) => void): void {
+/** `TextParams`' box/valign/leading fields (added WITHOUT a schema bump): absent
+ *  → the Auto-width defaults. A pure default, never a repair — a stored box is
+ *  authored data and is left exactly as written.
+ *
+ *  `undefined` and `null` are NOT interchangeable here, and that is the whole
+ *  reason this walk exists: nullability alone encodes the resize mode, so
+ *  `box_w !== null` means "wrap at this width". Absent passes that test too, and
+ *  a renderer wrapping every line of every pre-existing text layer at width
+ *  `undefined` is a blank frame where a caption used to be. See ADR 0049. */
+function normalizeTextParams(o: Record<string, unknown>): void {
+  forEachWireLayerParams(o, (params) => {
+    if (params.kind !== 'Text') return
+    if (params.box_w === undefined) params.box_w = null
+    if (params.box_h === undefined) params.box_h = null
+    if (params.valign === undefined) params.valign = 'Middle'
+    if (params.line_height === undefined) params.line_height = 0
+    if (params.letter_spacing === undefined) params.letter_spacing = 0
+  })
+}
+
+/** Every layer's params object on the WIRE shape. THE definition of "what counts
+ *  as a layer" for the normalize passes — both descend from here, so a second
+ *  pass cannot disagree with the first about which layers it visits. */
+function forEachWireLayerParams(o: Record<string, unknown>, fn: (params: Record<string, unknown>) => void): void {
   for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
     for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
       if (layer === null || typeof layer !== 'object') continue
-      const t = (layer.params as { transform?: unknown } | undefined)?.transform
-      if (t === null || typeof t !== 'object') continue
-      fn(t as Record<string, unknown>)
+      const p = layer.params
+      if (p === null || typeof p !== 'object') continue
+      fn(p as Record<string, unknown>)
     }
   }
+}
+
+/** Every transform object on the WIRE shape, for `normalizeScaleLinked`. */
+function forEachWireTransform(o: Record<string, unknown>, fn: (transform: Record<string, unknown>) => void): void {
+  forEachWireLayerParams(o, (params) => {
+    const t = params.transform
+    if (t === null || typeof t !== 'object') return
+    fn(t as Record<string, unknown>)
+  })
 }
 
 /** Validate + type a wire object as a Project, and normalize it.
@@ -312,6 +341,10 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // contradict → false (a repair). Never inferred from the tracks — see the
   // function.
   normalizeScaleLinked(o)
+  // Text box/valign/leading: absent → the Auto-width defaults, in THIS pass and
+  // nowhere else, because absent is not the same value as null here — see the
+  // function.
+  normalizeTextParams(o)
   // Grid repair belongs in THIS pass, beside the additive-field default above:
   // one normalize site, so the validator that `replaceState` shares with
   // `project_open` only ever sees already-canonical input. A second repair site is

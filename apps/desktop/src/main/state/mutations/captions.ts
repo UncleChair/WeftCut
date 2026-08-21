@@ -2,6 +2,7 @@ import type { Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { applyAddLayer, defaultTransform } from './add'
+import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
 /** subtitles/mod.rs CueStyle — per-cue style hints (all optional; absent ⇒
  *  the default caption look applies). `align` is the ASS 9-grid (1..9). */
@@ -20,7 +21,6 @@ export interface CueStyle {
 /** subtitles/mod.rs Cue — one subtitle cue (text keeps explicit '\n'). */
 export interface Cue { start_us: number; end_us: number; text: string; style?: CueStyle }
 
-const DEFAULT_CAPTION_FONT = 'Liberation Sans, Noto Sans SC'
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 }
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 }
 
@@ -42,14 +42,15 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
   const [x, y] = s.pos ?? [baseX, baseY]
   return {
     kind: 'Text', content: cue.text,
-    font: { family: s.font_family ?? DEFAULT_CAPTION_FONT, size_px: size, weight: s.bold ? 700 : 400, italic: s.italic ?? false },
+    font: { family: s.font_family ?? DEFAULT_CAPTION_FONT_FAMILY, size_px: size, weight: s.bold ? 700 : 400, italic: s.italic ?? false },
     color: { mode: 'Static', value: primary },
     align: alignFor(an),
     transform: { ...defaultTransform(), x: { mode: 'Static', value: x }, y: { mode: 'Static', value: y }, anchor_x: { mode: 'Static', value: anchorX }, anchor_y: { mode: 'Static', value: anchorY } },
     opacity: { mode: 'Static', value: 1 },
     shadow: { color: BLACK, offset_x: shadowOff, offset_y: shadowOff, blur: shadowOff },
     outline: { color: s.outline_color ?? BLACK, width: outlineW },
-    intro: null, outro: null, backend_hint: 'DrawText',
+    intro: null, outro: null,
+    box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }
 }
 

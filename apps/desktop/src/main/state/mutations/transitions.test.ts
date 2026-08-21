@@ -256,7 +256,7 @@ describe("applyAddTransition tail-handle pre-check (placement 'extend' only)", (
   it('free-duration outgoing (Text) has unlimited handle', () => {
     const gen = seededGen()
     const p = blankProject(gen, 't')
-    const a1 = applyAddLayer(p, gen, p.tracks[0].id, textParamsDefault('hi'), 0, 2_000_000)
+    const a1 = applyAddLayer(p, gen, p.tracks[0].id, textParamsDefault('hi', p.composition), 0, 2_000_000)
     const a2 = applyAddLayer(p, gen, p.tracks[0].id, color(), 2_000_000, 4_000_000)
     addT(p, gen, a1, a2, 1_000_000, 'extend')
     expect(layerOf(p, a1).t_end_us).toBe(3_000_000)

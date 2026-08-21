@@ -2,10 +2,12 @@
 // Unit tests for production param builders in commands.ts.
 import { describe, it, expect } from 'vitest'
 import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS, parseMechanical } from '../commands'
-import type { Project } from '../model'
+import type { LayerParams, Project } from '../model'
 import { createActor } from '../actor'
 import { blankProject, SCHEMA_VERSION } from '../model'
 import { seededGen } from '../ids'
+import { textParamsDefault } from '../mutations/add'
+import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
 // ── PRODUCTION_OPS coverage assertion ────────────────────────────────────────
 // Pins the exact set of renderer channels the production adapter handles.
@@ -141,19 +143,45 @@ describe('prodColorParams', () => {
 
 // ── prodTextParams ────────────────────────────────────────────────────────
 describe('prodTextParams', () => {
-  it('defaults to Arial 72 DrawText content="Text"', () => {
-    const p = prodTextParams({}) as Extract<ReturnType<typeof prodTextParams>, { kind: 'Text' }>
+  const COMP = { width: 1920, height: 1080 }
+  it('defaults to the bundled family at 72, centred in the frame, content="Text"', () => {
+    const p = prodTextParams({}, COMP) as Extract<ReturnType<typeof prodTextParams>, { kind: 'Text' }>
     expect(p.kind).toBe('Text')
     expect(p.content).toBe('Text')
-    expect(p.font).toEqual({ family: 'Arial', size_px: 72, weight: 400, italic: false })
-    expect(p.backend_hint).toBe('DrawText')
+    expect(p.font).toEqual({ family: DEFAULT_CAPTION_FONT_FAMILY, size_px: 72, weight: 400, italic: false })
     expect(p.color).toEqual({ mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } })
     expect(p.align).toBe('Center')
+    // x/y are the ANCHOR point for Text, so half the composition plus the 0.5
+    // default anchor is the layer centred; a 0/0 default would leave three
+    // quarters of it off-canvas at the top-left corner.
+    expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 960 }, { mode: 'Static', value: 540 }])
+    expect([p.box_w, p.box_h, p.valign]).toEqual([null, null, 'Middle'])
   })
 
   it('passes through explicit content', () => {
-    const p = prodTextParams({ content: 'Hello World' }) as Extract<ReturnType<typeof prodTextParams>, { kind: 'Text' }>
+    const p = prodTextParams({ content: 'Hello World' }, COMP) as Extract<ReturnType<typeof prodTextParams>, { kind: 'Text' }>
     expect(p.content).toBe('Hello World')
+  })
+
+  // One factory, or the bundled-font determinism guarantee stops holding: a
+  // local default here can name a family the renderer does not ship. This pins
+  // that the wire arm adds nothing to the factory but the content default.
+  it('is textParamsDefault with the content arg read off the wire', () => {
+    expect(prodTextParams({ content: 'x' }, COMP)).toEqual(textParamsDefault('x', COMP))
+    expect(prodTextParams({}, COMP)).toEqual(textParamsDefault('Text', COMP))
+  })
+
+  // Size is the demo op's only legitimate divergence from the factory — a family
+  // or a colour of its own there would be a second default.
+  it('the demo op differs from the factory in size alone', () => {
+    const gen = seededGen()
+    const a = createActor({ initial: blankProject(gen, 'demo'), idGen: gen, clock: () => '<TS>' })
+    expect(a.command('add_demo_text_layer', {}).ok).toBe(true)
+    const layers = a.snapshot().tracks.flatMap((t) => t.layers)
+    const demo = layers.find((l) => l.params.kind === 'Text')?.params as Extract<LayerParams, { kind: 'Text' }>
+    const base = textParamsDefault('TEXT', a.snapshot().composition)
+    expect(demo.font.size_px).toBe(96)
+    expect({ ...demo, font: { ...demo.font, size_px: base.font.size_px } }).toEqual(base)
   })
 })
 

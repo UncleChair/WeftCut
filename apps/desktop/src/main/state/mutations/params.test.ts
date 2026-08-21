@@ -25,7 +25,7 @@ function layerOf(p: Project, id: string): Layer {
 describe('applyUpdateLayerParams (field merge)', () => {
   it('Text patch sets content/opacity/x (animated fields → Static)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('hi'), 0, 1_000_000)
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('hi', p.composition), 0, 1_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Text', content: 'world', opacity: 0.5, x: 10 }, new MotifCatalog())
     const t = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Text' }>
     expect([t.content, t.opacity, t.transform.x]).toEqual(['world', { mode: 'Static', value: 0.5 }, { mode: 'Static', value: 10 }])
@@ -81,7 +81,7 @@ describe('applyUpdateLayerParamTrack', () => {
   ] })
   function textLayer(): { p: Project; id: string } {
     const g = seededGen(); const p = blankProject(g, 'kf')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t'), 0, 2_000_000)
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 2_000_000)
     return { p, id }
   }
   it('writes a keyframed track to opacity', () => {
@@ -153,7 +153,7 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
     const g = seededGen()
     const p = blankProject(g, 'gate')
     const params: LayerParams =
-      kind === 'Text' ? textParamsDefault('hi')
+      kind === 'Text' ? textParamsDefault('hi', p.composition)
       : kind === 'Color' ? colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9)
       : kind === 'Audio' ? audioParams('00000000-0000-0000-0000-0000000000a1', 0, 1_000_000)
       : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } } as LayerParams

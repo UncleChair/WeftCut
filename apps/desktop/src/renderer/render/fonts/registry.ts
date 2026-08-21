@@ -14,10 +14,9 @@ import liberationUrl from "../../../../assets/fonts/LiberationSans-Regular.woff2
 
 export const BUNDLED_FONT_FAMILIES = ["Liberation Sans", "Noto Sans SC"] as const;
 
-/// Default caption font: Latin glyphs from Liberation Sans, CJK from Noto.
-/// PixiJS passes this comma list straight to the canvas font shorthand, so
-/// the browser falls through to Noto for any glyph Liberation lacks.
-export const DEFAULT_CAPTION_FONT_FAMILY = "Liberation Sans, Noto Sans SC";
+// Re-exported, not defined here: the main process stamps this family onto every
+// new Text layer and cannot import from renderer/. See src/shared/fonts.ts.
+export { DEFAULT_CAPTION_FONT_FAMILY } from "../../../shared/fonts";
 
 const FONT_URLS: Record<string, string> = {
   "Liberation Sans": liberationUrl,

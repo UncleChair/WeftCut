@@ -27,7 +27,10 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect(p.transform.x).toEqual({ mode: 'Static', value: 960 }) // w/2
     expect((p.transform.y as { value: number }).value).toBeCloseTo(1080 - 1080 * 0.08, 5) // h - 8%
     expect(p.align).toBe('Center')
-    expect(p.backend_hint).toBe('DrawText')
+    // Nullability IS the resize mode, so a null pair means Auto width: an
+    // imported cue breaks only where its own '\n' says, never on measured width.
+    expect([p.box_w, p.box_h]).toEqual([null, null])
+    expect([p.valign, p.line_height, p.letter_spacing]).toEqual(['Middle', 0, 0])
   })
   it('an8 → top-center anchors top', () => {
     expect(staticAnchor(cueToTextParams(cue({ align: 8 }), 1920, 1080))).toEqual([0.5, 0.0])

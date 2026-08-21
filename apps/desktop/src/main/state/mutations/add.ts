@@ -1,21 +1,35 @@
-import type { Layer, LayerParams, Marker, Project, Rgba, TrackRole, Uuid } from '../model'
+import type { Layer, LayerParams, Marker, Project, Rgba, TextParams, TrackRole, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { applyDurationAutofit } from './helpers'
 import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
+import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
 export function colorParams(color: Rgba, width: number, height: number): LayerParams {
   return { kind: 'Color', color: { mode: 'Static', value: color }, width, height }
 }
-export function textParamsDefault(content: string): LayerParams {
-  // Defaults: Inter 48 / weight 400 / white / Center / default transform / opacity 1 / Auto.
+/** THE default Text params — `prodTextParams` and `add_demo_text_layer` both
+ *  delegate here. Three factories each naming their own family is how the
+ *  bundled-font determinism guarantee stopped holding on the default authoring
+ *  path, so there is one (ADR 0049).
+ *
+ *  `x`/`y` are the ANCHOR point for Text, so half the composition plus the
+ *  default 0.5 anchor lands the layer dead centre. No cascade offset for
+ *  successive text layers — they stack exactly on top of each other, the way
+ *  Premiere and After Effects place theirs, because an offset makes "duplicate a
+ *  title and keyframe it" land somewhere the user did not ask for. */
+export function textParamsDefault(content: string, comp: { width: number; height: number }): TextParams {
+  const s = (v: number) => ({ mode: 'Static' as const, value: v })
   return {
     kind: 'Text', content,
-    font: { family: 'Inter', size_px: 48, weight: 400, italic: false },
+    font: { family: DEFAULT_CAPTION_FONT_FAMILY, size_px: 72, weight: 400, italic: false },
     color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-    align: 'Center', transform: defaultTransform(), opacity: { mode: 'Static', value: 1 },
-    shadow: null, outline: null, intro: null, outro: null, backend_hint: 'Auto',
+    align: 'Center',
+    transform: { ...defaultTransform(), x: s(comp.width / 2), y: s(comp.height / 2) },
+    opacity: { mode: 'Static', value: 1 },
+    shadow: null, outline: null, intro: null, outro: null,
+    box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }
 }
 export function defaultTransform() {
