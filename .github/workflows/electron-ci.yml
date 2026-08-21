@@ -248,12 +248,16 @@ jobs:
         run: npm run build:e2e
 
       # The 232 MB fixture matrix every spec reads. Restored per OS, and per OS
-      # NOT as a cache-efficiency choice: generate.mjs picks the drawtext font
-      # per platform (Consolas / Menlo / DejaVuSansMono) and the three bundled
-      # ffmpeg builds differ (gyan / BtbN / evermeet), so one shared set would
-      # move the very pixels the SSIM floor and the per-channel colour ceiling
-      # (both set in the E2E step below) were calibrated against. The ffmpeg
-      # fetch script rides in the key for that same reason — it pins which build
+      # NOT as a cache-efficiency choice — the three platforms cannot produce the
+      # same bytes. Each takes its ffmpeg from a different builder at a different
+      # VERSION (fetch-ffmpeg.mjs §SOURCES: macOS is on 8.x where the other two
+      # are on 7.1.x), generate.mjs burns counters with the platform's own
+      # monospace font (Consolas / Menlo / DejaVuSansMono), and the AV1 entry's
+      # encoder is whichever of libsvtav1 / libaom-av1 that build ships. A shared
+      # set would move the very pixels the SSIM floor and the per-channel colour
+      # ceiling (both set in the E2E step below) were calibrated against.
+      #
+      # The fetch script is in the key for the same reason: it pins which build
       # encodes the media, and the AV1 entry's recipe hash embeds that build's
       # `-encoders` probe outright.
       #
