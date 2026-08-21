@@ -111,6 +111,7 @@ const probe: GizmoProbe = {
   canvasRect: () =>
     ({ left: 0, top: 0, width: 640, height: 360, right: 640, bottom: 360 }) as DOMRect,
   naturalSizeOf: () => ({ w: 640, h: 360 }),
+  textFitOf: () => null,
 };
 
 /// This fixture's layer fills half the composition, so almost any tidy drag

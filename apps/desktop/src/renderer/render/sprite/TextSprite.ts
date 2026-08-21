@@ -7,6 +7,7 @@ import { Text, TextStyle, type Container, type TextStyleFontWeight } from "pixi.
 
 import { DEFAULT_CAPTION_FONT_FAMILY } from "../../../shared/fonts";
 import type { ResolvedTextView } from "../resolveView";
+import type { TextFit } from "../textBox";
 import type { StageableSprite } from "./StageableSprite";
 
 export interface TextSpriteInit {
@@ -102,6 +103,11 @@ export class TextSprite implements StageableSprite {
   /// the same layer.
   private boxW: number | null = null;
   private boxH: number | null = null;
+  /// What the last `update` did with the font size, for the `GizmoProbe`
+  /// read-back. Held here and not recomputed on demand because the UI must be
+  /// told what was RENDERED, and a fresh computation could answer from a style
+  /// the frame never saw.
+  private fitState: TextFit | null = null;
 
   constructor(init: TextSpriteInit) {
     this.layerId = init.layerId;
@@ -137,6 +143,13 @@ export class TextSprite implements StageableSprite {
     return w > 0 && h > 0 ? { w, h } : null;
   }
 
+  /// What the last `update` did with the font size — the `GizmoProbe.textFitOf`
+  /// read-back. Null before the first update, so "nothing staged" and "no shrink"
+  /// stay different answers.
+  fit(): TextFit | null {
+    return this.fitState;
+  }
+
   update(view: ResolvedTextView): void {
     const o = view.outline, sh = view.shadow;
     const align = pixiAlign(view.align);
@@ -152,6 +165,13 @@ export class TextSprite implements StageableSprite {
     const letterSpacing = finiteOr0(view.letter_spacing);
     this.boxW = boxW;
     this.boxH = boxH;
+    // Outside Fixed nothing shrinks, so the authored size IS what renders and
+    // the box cannot overflow — Auto height grows to hold the block instead.
+    this.fitState = {
+      authoredPx: view.font_size_px,
+      effectivePx: view.font_size_px,
+      overflowing: false,
+    };
     const sig =
       `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${align}|` +
       `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|` +

@@ -64,6 +64,7 @@ import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { installCjkLineBreaking } from "./fonts/lineBreak";
+import type { TextFit } from "./textBox";
 import { EffectChain } from "./effects/EffectChain";
 import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
@@ -1507,6 +1508,14 @@ export class Compositor {
     const text = this.texts.get(layerId);
     if (text) return text.sprite.naturalSize();
     return null;
+  }
+
+  /// What the staged Text sprite did with its font size (`GizmoProbe.textFitOf`).
+  /// Null for every other kind and for a Text layer not currently staged — the
+  /// shrink factor is derived per-render and there is nothing to report about a
+  /// layer that has not rendered.
+  textFitOf(layerId: string): TextFit | null {
+    return this.texts.get(layerId)?.sprite.fit() ?? null;
   }
 
   /// E2E-only (preview-sw conformance): snapshot the decode source + bound

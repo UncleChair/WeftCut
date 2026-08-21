@@ -118,6 +118,8 @@ let staged = true;
 const probe: GizmoProbe = {
   canvasRect: () => null,
   naturalSizeOf: () => (staged ? { w: 640, h: 360 } : null),
+  // Centring never reads the fit — it moves a box, it does not resize text.
+  textFitOf: () => null,
 };
 
 beforeEach(() => {

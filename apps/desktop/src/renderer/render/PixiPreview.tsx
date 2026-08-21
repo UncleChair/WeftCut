@@ -439,6 +439,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const gizmoProbe: GizmoProbe = {
         canvasRect: () => (app.canvas as HTMLCanvasElement).getBoundingClientRect(),
         naturalSizeOf: (layerId) => compositor.naturalSizeOf(layerId),
+        textFitOf: (layerId) => compositor.textFitOf(layerId),
       };
       registerGizmoProbe(gizmoProbe);
       gizmoProbeRef.current = gizmoProbe;

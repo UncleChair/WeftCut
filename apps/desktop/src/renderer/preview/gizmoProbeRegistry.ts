@@ -6,6 +6,8 @@
 // Deliberately separate from PreviewSampler: that interface is the colour
 // picker's read-back contract, and a gizmo needs no pixels at all.
 
+import type { TextFit } from "../render/textBox";
+
 export interface GizmoProbe {
   /// The canvas element's CSS-px bounds, null pre-mount. The overlay maps
   /// composition→client through this box, so it must be the CANVAS rect and not
@@ -14,6 +16,15 @@ export interface GizmoProbe {
   /// The layer's untransformed content size in composition pixels, or null when
   /// nothing is staged for it yet (`Compositor.naturalSizeOf`).
   naturalSizeOf(layerId: string): { w: number; h: number } | null;
+  /// What the renderer did with a Text layer's font size, or null when nothing is
+  /// staged for the layer and on every non-Text kind. Shrink-to-fit is DERIVED in
+  /// the sprite and never stored (ADR 0049), so this read-back is the only way the
+  /// UI can learn the number — hence a probe rather than a state field.
+  ///
+  /// It rides the existing renderer→UI handshake on purpose: one registry that the
+  /// overlay and the inspector already consult, rather than a second one that could
+  /// be registered and cleared on a different schedule.
+  textFitOf(layerId: string): TextFit | null;
 }
 
 let probe: GizmoProbe | null = null;

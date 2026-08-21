@@ -47,6 +47,8 @@ const probe: GizmoProbe = {
   canvasRect: () =>
     ({ left: 0, top: 0, width: 640, height: 360, right: 640, bottom: 360 }) as DOMRect,
   naturalSizeOf: () => null,
+  // The guides are a property of the frame — no layer, no fit to read.
+  textFitOf: () => null,
 };
 
 function setVisible(on: boolean): void {
