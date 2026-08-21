@@ -254,9 +254,10 @@ async function createWindow(): Promise<BrowserWindow> {
   win.on('maximize', sendMaximizeState)
   win.on('unmaximize', sendMaximizeState)
 
-  // The titlebar ✕ (window:close IPC), Alt+F4 and the taskbar all land here, and
-  // this — not `window-all-closed` below — is what quits. Wrapped, not passed by
-  // reference: an emitter argument would occupy the injected `platform` param.
+  // The titlebar ✕ (window:close IPC), Alt+F4, the macOS red button and the
+  // taskbar all land here, and this — not `window-all-closed` below — is what
+  // quits. Wrapped rather than passed by reference so no emitter argument can
+  // ever reach the gate.
   win.on('closed', () => quitIfLastUserWindowClosed())
 
   // Forward the fullscreen state so the renderer can drop its self-drawn window
@@ -1709,19 +1710,18 @@ app.whenReady().then(async () => {
 
   win.once('ready-to-show', () => win.show())
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow().then((w) => w.once('ready-to-show', () => w.show()))
-    }
-  })
+  // LANDMINE: no `activate` handler re-creating a window on zero. The quit gate
+  // (windows.ts) leaves no windowless app for one to serve, and a Dock click
+  // inside the before-quit flush would have it resurrect a window the quit has
+  // stopped waiting for — the hazard shutdownCaptureHost already guards.
 })
 
 // Backstop for a window opened outside createWindow/createSecondary. The real
 // quit decision is quitIfLastUserWindowClosed (windows.ts), which explains why
 // this event cannot be trusted; a double quit is absorbed by quitFlushed below.
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+// No platform test, for the same reason the gate carries none — a windowless
+// WeftCut is never a state to leave running.
+app.on('window-all-closed', () => app.quit())
 
 // Flush the TS actor's debounced autosave before the process exits — an edit made
 // inside the 500ms autosave debounce window would otherwise be lost on quit

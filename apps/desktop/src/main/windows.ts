@@ -33,7 +33,7 @@ export function userFacingWindows(): BrowserWindow[] {
 }
 
 /// Quit once the last window the USER can see has closed — wired to the `closed`
-/// event of every user-facing window.
+/// event of every user-facing window, on every platform.
 ///
 /// LANDMINE: `window-all-closed` cannot carry this decision. The offscreen capture
 /// host is a listed BrowserWindow, so once a Motif has been rendered that event
@@ -41,13 +41,15 @@ export function userFacingWindows(): BrowserWindow[] {
 /// reachable only through app.quit() — host and process each waiting on the other,
 /// leaving a live app with no window. See docs/notes/electron-chromium-behavior.md.
 ///
+/// LANDMINE: no macOS exemption, and deliberately no platform parameter to hang
+/// one on. WeftCut is a single-window app, so a Dock-resident windowless process
+/// would hold decode sessions and ffmpeg children alive behind nothing the user
+/// can see or close — the Electron quick-start's `platform !== 'darwin'` guard
+/// does not belong here. Rationale: docs/notes/electron-chromium-behavior.md.
+///
 /// The closing window is already out of getAllWindows() when its own `closed`
 /// fires, so an empty list here means it was the last one.
-export function quitIfLastUserWindowClosed(
-  platform: NodeJS.Platform = process.platform,
-): void {
-  // macOS keeps a windowless app resident (index.ts re-creates one on `activate`).
-  if (platform === 'darwin') return
+export function quitIfLastUserWindowClosed(): void {
   if (userFacingWindows().length > 0) return
   app.quit()
 }

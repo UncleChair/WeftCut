@@ -168,7 +168,7 @@ offscreen one is **true**, and closing the visible window does **not** emit
 
 Implication: the failure this causes is a closed loop, not a missed teardown. The handler that
 destroys WeftCut's Motif capture host runs on `before-quit`, which is reached only through
-`app.quit()`, which off macOS was called only from `window-all-closed` — so the host held the
+`app.quit()`, which was called only from `window-all-closed` — so the host held the
 process open and the process was the only thing that would have closed the host, leaving a
 live app with no window on screen. The quit decision therefore rides the **user-facing**
 window count (`main/windows.ts`), with `window-all-closed` demoted to a backstop;
@@ -177,6 +177,27 @@ window count (`main/windows.ts`), with `window-all-closed` demoted to a backstop
 Rule: a window the user cannot see or close must be declared internal in the same tick as its
 constructor — before the first `await` of its setup, or a user window closing during that
 setup still counts it as one of their own.
+
+## Closing the last window quits, macOS included
+
+Cocoa sanctions both policies — `applicationShouldTerminateAfterLastWindowClosed` exists
+precisely so an app can choose — and the split is by app shape, not by OS. A document-based
+app (many windows, a `File > New Window`) stays Dock-resident with its menu bar; a
+single-window app terminates with its window.
+
+WeftCut is the second kind: one workspace, one editor window, no `File > New Window`. The
+Performance Monitor is the only secondary window, and it *is* counted, so closing the editor
+beneath it does not quit. Nothing needs a windowless WeftCut — the MCP stdio shim already
+serves an agent against a closed app — while the process such a state leaves behind is not
+idle: it holds decode sessions, GPU textures and ffmpeg children behind no window the user
+can see or close.
+
+So `quitIfLastUserWindowClosed` takes no platform argument and `window-all-closed` carries no
+platform test. The `process.platform !== 'darwin'` guard that belongs at this seam in the
+Electron quick-start is a decision about document-based apps, not about this one; restoring it
+fails `app-quit.spec.ts` on the macOS leg alone, and would drag back the `activate` handler
+that re-creates a window on zero — which can fire from a Dock click inside the `before-quit`
+flush and resurrect the window the quit has stopped waiting for.
 
 ## Not re-probed (kept as known Blink behavior)
 

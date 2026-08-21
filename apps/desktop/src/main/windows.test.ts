@@ -117,7 +117,7 @@ describe('quitIfLastUserWindowClosed', () => {
     markInternalWindow(captureHost)
     listed.push(captureHost) // the editor's `closed` already removed it from the list
 
-    quitIfLastUserWindowClosed('win32')
+    quitIfLastUserWindowClosed()
     expect(quits).toHaveLength(1)
   })
 
@@ -126,23 +126,14 @@ describe('quitIfLastUserWindowClosed', () => {
     markInternalWindow(captureHost)
     listed.push(win(), captureHost) // e.g. the Performance Monitor outliving the editor
 
-    quitIfLastUserWindowClosed('win32')
-    expect(quits).toHaveLength(0)
-  })
-
-  it('leaves a windowless app resident on macOS', () => {
-    const captureHost = win()
-    markInternalWindow(captureHost)
-    listed.push(captureHost)
-
-    quitIfLastUserWindowClosed('darwin')
+    quitIfLastUserWindowClosed()
     expect(quits).toHaveLength(0)
   })
 
   it('skips a destroyed window still in the list', () => {
     listed.push({ isDestroyed: () => true } as unknown as BrowserWindow)
 
-    quitIfLastUserWindowClosed('win32')
+    quitIfLastUserWindowClosed()
     expect(quits).toHaveLength(1)
   })
 })
