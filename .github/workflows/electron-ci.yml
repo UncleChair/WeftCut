@@ -49,31 +49,46 @@ jobs:
   e2e:
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default. Sized to
-    # the `all` e2e slice, NOT to the four split ones: a scoped dispatch can
+    # the `all` e2e slice, NOT to the split ones: a scoped dispatch can
     # still put the whole suite (`--full` included) on a single runner, and that
     # is the longest a green job can legitimately be. Headroom matters because a
     # leg that hits the cap reports only "exceeded the maximum execution time"
     # and hides which specs actually failed. Coverage cuts belong in the @matrix
     # tier (apps/desktop/e2e/README.md), not here.
     timeout-minutes: 90
-    # CONCURRENCY BUDGET — a push creates 17 jobs: 1 `checks` + 3 `rust-test` +
-    # this matrix's 12 + 1 `compare`. GitHub Free allows 20 concurrent, of which
+    # CONCURRENCY BUDGET — a push creates 18 jobs: 1 `checks` + 3 `rust-test` +
+    # this matrix's 13 + 1 `compare`. GitHub Free allows 20 concurrent, of which
     # 5 may be macOS, counted per billing entity across ALL repositories. macOS
-    # is the binding constraint and is already at it: 4 legs here + 1
-    # `rust-test`. Widening this matrix has to buy its macOS legs from somewhere.
+    # is the binding constraint — 3 legs here + 1 `rust-test` against its 5 — so
+    # widening this matrix on macOS has to buy those legs from somewhere, and
+    # e2e/slices.mjs (OS_SLICES) is where that trade is made.
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
-        # Which slice of the e2e suite this runner takes (see the E2E step for
-        # the split and its measured cost). Every slice repeats the build above
+        # Which slice of the e2e suite this runner takes (what each one owns:
+        # apps/desktop/e2e/slices.mjs). Every slice repeats the build above
         # it, which is free here — public repo, and the rebuilds run concurrently,
         # so a build-once-then-fan-out job would only lengthen the critical path
         # by making that build serial.
         #
         # A scoped dispatch collapses to the single `all` slice: `e2e_args` names
-        # its own specs, and running those args four times over is not a split.
-        part: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.e2e_args != '' && '["all"]' || '["audio", "codecs", "overlap", "rest"]') }}
+        # its own specs, and running those args once per slice is not a split.
+        part: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.e2e_args != '' && '["all"]' || '["audio", "codecs", "overlap", "range", "rest"]') }}
+        # Slice counts are per OS (which slices, and why that many:
+        # e2e/slices.mjs §OS_SLICES), so this is the matrix half of that map and
+        # a no-op on a scoped dispatch's single `all` part.
+        #
+        # LANDMINE — a part excluded here must also be absent from OS_SLICES for
+        # that OS. The map is what the catch-all's ignore set is computed from:
+        # left in, it makes that leg ignore files no leg of this OS owns, and
+        # they run nowhere while every leg reports green. Both halves are
+        # asserted against each other in apps/desktop/scripts/e2e-split.test.mjs.
+        exclude:
+          - os: macos-latest
+            part: overlap
+          - os: macos-latest
+            part: range
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -302,11 +317,18 @@ jobs:
       # ring before its backward-seek assertion — a shortened cut cannot
       # satisfy it. ~1.8 GB and ~1-2 min on a 4-vCPU runner.
       #
+      # One slice per OS, the one that runs the serial project:
+      # preview-sw-families.spec.ts is the only reader of these two rows and is
+      # itself @serial, so on every other leg the minute and the 1.8 GB buy
+      # nothing. That slice is the `decodeBench: true` entry in e2e/slices.mjs,
+      # and this condition has to name it.
+      #
       # Deliberately NOT cached. At 1.8 GB × 3 legs it would take over half of
       # the repo's 10 GB cache budget for media that regenerates from a
       # committed script in a minute — and evict the two caches that cannot
       # (ffmpeg-lgpl on macOS is a ~10 min from-source build).
       - name: Generate software-lane family fixtures (e2e)
+        if: matrix.part == 'audio' || matrix.part == 'all'
         working-directory: apps/desktop/e2e
         run: node scripts/gen-decode-bench-fixtures.mjs --only dnxhr-1080,mpeg2-1080
 
@@ -338,6 +360,9 @@ jobs:
           WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
           E2E_ARGS: ${{ inputs.e2e_args }}
           PART: ${{ matrix.part }}
+          # Not `OS`: that name is already Windows's own (`Windows_NT`), and this
+          # is the matrix label the slice table is keyed on.
+          MATRIX_OS: ${{ matrix.os }}
         run: |
           # THE SPLIT lives in e2e/slices.mjs — one home, read here per runner,
           # by scripts/e2e-split.test.mjs (the gate against a spec that lands on
@@ -345,9 +370,13 @@ jobs:
           # replaying a red slice locally. Slices are named by the files whose
           # cost is structural (the export matrices) and the catch-all takes
           # everything they do not, so a new spec needs no entry anywhere.
-          # Rebalance from the e2e-timings-* artifacts when a slice drifts;
           # playwright.config.ts (§WEFTCUT_E2E_ONLY) carries why this is not
           # Playwright's own --shard.
+          #
+          # BOTH matrix dimensions go in. Which slices exist is per OS, so the
+          # catch-all's ignore set is the union over THIS OS's slices only — pass
+          # the part alone and the OSes running fewer slices ignore files that no
+          # leg of theirs owns.
           e2e() {
             if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run e2e -- "$@"; else npm run e2e -- "$@"; fi
           }
@@ -361,13 +390,13 @@ jobs:
             # fails a failed ASSIGNMENT but not a failed substitution inside
             # eval, and an unknown PART must be a red leg — never an empty
             # restriction under which this one runner repeats the whole suite.
-            SLICE_ENV="$(node e2e/slices.mjs --shell "$PART")"
+            SLICE_ENV="$(node e2e/slices.mjs --shell "$PART" "$MATRIX_OS")"
             eval "$SLICE_ENV"
             # The serial project owns the machine and captures the determinism
             # PNGs, so it runs on exactly ONE slice — the one slices.mjs marks
             # `serial: true`, kept off whichever slice is already the worst case.
             # The determinism upload below must name that same slice.
-            if [ "$PART" = "codecs" ]; then e2e --project=serial; fi
+            if [ "$PART" = "audio" ]; then e2e --project=serial; fi
             # LANDMINE — the slice restriction rides the parallel invocation and
             # nothing else, which is what the subshell enforces. Exported above
             # the serial run instead, or written to $GITHUB_ENV, it narrows the
@@ -387,7 +416,7 @@ jobs:
       # slices uploading under one name is a hard artifact conflict, so this
       # condition and the serial project's slice above must name the same one.
       - name: Upload determinism artifacts
-        if: always() && (matrix.part == 'codecs' || matrix.part == 'all')
+        if: always() && (matrix.part == 'audio' || matrix.part == 'all')
         uses: actions/upload-artifact@v7
         with:
           name: determinism-${{ matrix.os }}
@@ -427,11 +456,19 @@ jobs:
       # halves directly — `build` for a clean non-E2E renderer bundle (no
       # VITE_WEFTCUT_E2E), then electron-builder.
       #
-      # Once per OS, not once per e2e slice — and on `overlap`, the lightest
-      # slice, for the same reason the serial project rides `codecs`: neither
-      # extra should land on whichever slice is already the worst case.
+      # Once per OS, not once per e2e slice — riding the slice e2e/slices.mjs
+      # marks `package: true`, which is the one with the most headroom after its
+      # own specs, for the same reason the serial project and the decode-bench
+      # media each ride one: no extra on whichever slice is already the worst
+      # case. It must be a slice every OS runs, or that OS never packages.
+      #
+      # Which slice that is, is MEASURED, and stays checkable: every leg uploads
+      # `e2e-timings-<os>-<slice>` (green or red), so summing a slice's test
+      # durations and adding this step's own ~2 min to its host says whether the
+      # gate still names the cheapest one. A named number here would not survive
+      # the next rebalance; the measurement does.
       - name: Package (unsigned)
-        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'overlap' || matrix.part == 'all')
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'codecs' || matrix.part == 'all')
         run: npm run build && npx electron-builder --publish never
 
       # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
@@ -443,7 +480,7 @@ jobs:
       # installer when explicitly wanted — a tag build or a manual dispatch —
       # with short retention on top.
       - name: Upload installer
-        if: success() && (matrix.part == 'overlap' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
+        if: success() && (matrix.part == 'codecs' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}

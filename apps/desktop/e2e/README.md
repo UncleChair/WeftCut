@@ -102,10 +102,10 @@ It is the only durable record of what the suite costs: the console reporter is
 - `suites[].specs[].tests[].results[]` — per test: `duration`, `startTime`,
   `workerIndex`, and `steps[].duration`.
 
-electron-ci publishes them per OS as the `e2e-timings-<os>` artifact on every
-run, green or red. Nothing consumes the reports automatically — they exist to be
-read when a leg approaches its job timeout, which is what produced the `@matrix`
-tier below.
+electron-ci publishes them per leg as the `e2e-timings-<os>-<slice>` artifact on
+every run, green or red. Nothing consumes the reports automatically — they exist
+to be read when a leg approaches its job timeout (which is what produced the
+`@matrix` tier below) and to rebalance the split.
 
 The Rust analyzer (`media_conformance`) used by the export/conformance specs,
 fixture generation, and per-gate details are documented in
@@ -148,20 +148,30 @@ tolerate running alongside other app instances.
 ### How CI spreads one run across runners
 
 Because the GPU-less legs cannot use a second worker, electron-ci buys its
-parallelism across machines instead: each OS runs the suite as four concurrent
+parallelism across machines instead: each OS runs the suite as several concurrent
 slices. A slice either **owns** named spec files (`WEFTCUT_E2E_ONLY`) or takes
 **everything the owning slices did not** (`WEFTCUT_E2E_IGNORE`), so a new spec
 joins the catch-all on its own and only the heavy names are maintained. The
-`serial` project and the packaging step each ride one designated slice, keeping
-either from landing on whichever slice is already the worst case.
+`serial` project, the packaging step and the decode-bench media each ride one
+designated slice, keeping any of them off whichever slice is already the worst
+case — so each has to ride one that every OS runs.
 
-The table — which slices exist, what each owns, and which ones carry those two
-extras — lives in `slices.mjs`, the one home for it: the workflow's E2E step reads
-it per runner, `npm run e2e -- --slice=<name>` replays one runner's share
-locally, and `scripts/e2e-split.test.mjs` asserts its invariants. That gate is
-what fails if a file ends up owned by no slice — it runs on no runner while every
-slice still reports green, which nothing else would catch. Rebalance from the
-`e2e-timings-<os>-<slice>` artifacts.
+How many slices is per OS rather than uniform: it follows that OS's own suite
+total and its worker count, which is why macOS runs fewer of them and its
+catch-all is its biggest leg without being on the critical path. That makes the
+catch-all's ignore set per OS too, and it is the load-bearing part: computed over
+slices an OS does not run, it hides those files from the one leg that should have
+absorbed them, and they run on **no** runner of that OS while every leg reports
+green. The workflow matrix's `exclude:` is the same fact from the other side.
+
+All of it — which slices exist, what each owns, which carry the extras, and which
+slices an OS runs — lives in `slices.mjs`, the one home for it: the workflow's
+E2E step reads it per (OS, slice), `npm run e2e -- --slice=<name>` replays one
+runner's share locally, and `scripts/e2e-split.test.mjs` asserts the invariants
+per OS, including the workflow conditions it cannot express itself. Rebalance
+from the `e2e-timings-<os>-<slice>` artifacts by naming one more heavy file — not
+by adding a slice, since the split is per file and no leg finishes sooner than
+the single most expensive spec.
 
 Deliberately not Playwright's `--shard`; `playwright.config.ts` carries why.
 
