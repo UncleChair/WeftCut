@@ -3,8 +3,16 @@
 // RULE, and both are realm-global installs behind the preview==export
 // guarantee. See ADR 0049.
 //
-// Kinsoku (no line-leading CJK closing punctuation) is deliberately absent — it
-// rides `CanvasTextMetrics.canBreakChars` with its own corpus.
+// `canBreakWords` is one of four statics PixiJS documents as the intended
+// extension point for exactly this ("allows one to customise which words should
+// break… if the token is CJK"), so this is the sanctioned mechanism rather than
+// a workaround. The other three are the map of what is deliberately NOT done
+// here, each wanting its own corpus:
+//   canBreakChars    — kinsoku: no line-leading closing punctuation.
+//   isBreakingSpace  — a space FOLLOWED by CJK is treated as breaking and should
+//                      not be (pixijs/pixijs#6975). Only bites mixed CJK+spaced
+//                      text, which subtitles rarely are.
+//   wordWrapSplit    — where to cut a token that must be split at all.
 
 import { CanvasTextMetrics } from "pixi.js";
 

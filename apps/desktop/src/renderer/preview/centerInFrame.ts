@@ -8,8 +8,10 @@
 // `layerFrameAt` from here rather than keeping its own copies, so the rectangle
 // the gizmo draws a box around and the rectangle "Center horizontally" centres
 // are the same rectangle by construction. Anything else that needs a layer's
-// footprint belongs here too — the two used to be twins with nothing enforcing
-// the agreement, and a drift between them looks broken on neither side alone.
+// footprint belongs here too. LANDMINE: a second private copy of this geometry
+// is not a duplicate the compiler will catch — nothing enforces the agreement,
+// and a drift looks broken on neither side alone (the gizmo boxes one rectangle
+// while "Center horizontally" centres another).
 
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { resolveAnimated } from "../render/animated";

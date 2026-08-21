@@ -254,7 +254,7 @@ function normalizeScaleLinked(o: Record<string, unknown>): void {
  *  reason this walk exists: nullability alone encodes the resize mode, so
  *  `box_w !== null` means "wrap at this width". Absent passes that test too, and
  *  a renderer wrapping every line of every pre-existing text layer at width
- *  `undefined` is a blank frame where a caption used to be. See ADR 0049. */
+ *  `undefined` is a blank frame in place of a caption. See ADR 0049. */
 function normalizeTextParams(o: Record<string, unknown>): void {
   forEachWireLayerParams(o, (params) => {
     if (params.kind !== 'Text') return
