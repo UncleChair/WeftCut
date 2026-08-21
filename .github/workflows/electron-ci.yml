@@ -46,33 +46,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  e2e:
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default. Sized to
-    # the `all` e2e slice, NOT to the four split ones: a scoped dispatch can
+    # the `all` e2e slice, NOT to the split ones: a scoped dispatch can
     # still put the whole suite (`--full` included) on a single runner, and that
     # is the longest a green job can legitimately be. Headroom matters because a
     # leg that hits the cap reports only "exceeded the maximum execution time"
     # and hides which specs actually failed. Coverage cuts belong in the @matrix
     # tier (apps/desktop/e2e/README.md), not here.
     timeout-minutes: 90
-    # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
-    env:
-      CARGO_TERM_COLOR: always
-      RUST_BACKTRACE: '1'
+    # CONCURRENCY BUDGET — a push creates 19 jobs: 1 `checks` + 3 `rust-test` +
+    # this matrix's 14 + 1 `compare`. GitHub Free allows 20 concurrent, of which
+    # 5 may be macOS, counted per billing entity across ALL repositories. macOS
+    # is the binding constraint and this matrix sits ON it: 4 legs here + 1
+    # `rust-test`. That is deliberate — measured, macOS needs its fourth leg to
+    # stay off the critical path (e2e/slices.mjs §OS_SLICES) — so another macOS
+    # job anywhere in the account now queues behind this run rather than beside
+    # it. Widening further means buying legs back from somewhere.
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
-        # Which slice of the e2e suite this runner takes (see the E2E step for
-        # the split and its measured cost). Every slice repeats the ~10 min
-        # build above it, which is free here — public repo, and the rebuilds run
-        # concurrently, so a build-once-then-fan-out job would only lengthen the
-        # critical path by making that build serial.
+        # Which slice of the e2e suite this runner takes (what each one owns:
+        # apps/desktop/e2e/slices.mjs). Every slice repeats the build above
+        # it, which is free here — public repo, and the rebuilds run concurrently,
+        # so a build-once-then-fan-out job would only lengthen the critical path
+        # by making that build serial.
         #
         # A scoped dispatch collapses to the single `all` slice: `e2e_args` names
-        # its own specs, and running those args four times over is not a split.
-        part: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.e2e_args != '' && '["all"]' || '["audio", "codecs", "overlap", "rest"]') }}
+        # its own specs, and running those args once per slice is not a split.
+        part: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.e2e_args != '' && '["all"]' || '["audio", "codecs", "overlap", "range", "rest"]') }}
+        # Slice counts are per OS (which slices, and why that many:
+        # e2e/slices.mjs §OS_SLICES), so this is the matrix half of that map and
+        # a no-op on a scoped dispatch's single `all` part.
+        #
+        # LANDMINE — a part excluded here must also be absent from OS_SLICES for
+        # that OS. The map is what the catch-all's ignore set is computed from:
+        # left in, it makes that leg ignore files no leg of this OS owns, and
+        # they run nowhere while every leg reports green. Both halves are
+        # asserted against each other in apps/desktop/scripts/e2e-split.test.mjs.
+        exclude:
+          - os: macos-latest
+            part: overlap
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -89,31 +105,16 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.23.0'
+          # Resolved against the repo root, not this job's working-directory.
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      # Third-party actions pinned to immutable commit SHAs (supply-chain
-      # hardening); version in the trailing comment. Bump deliberately at a
-      # checkpoint, not automatically. GitHub-owned actions/* stay on their
-      # major tag.
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
-        with:
-          # Once pinned to a SHA the @<ref> name no longer signals the channel
-          # (that was the magic of @stable), so name the toolchain explicitly.
-          toolchain: stable
-          # The renderer's shared "WYSIWYG math" compiles to wasm (weftcut-eval);
-          # the build:wasm step below needs this target, and every OS leg runs it.
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: apps/desktop/native
-
       # xvfb: the Electron app needs a display for offscreen CDP capture (no real
-      # display on GitHub runners). libclang-dev: native-decode's ffmpeg-next
-      # bindgen build needs libclang.so — clang-sys auto-discovers it on Linux
-      # (napi:build:decode only hard-sets LIBCLANG_PATH on Windows).
+      # display on GitHub runners). libclang-dev: only the artifact-cache MISS
+      # path needs it, where the rust-artifacts action runs native-decode's
+      # ffmpeg-next bindgen build (clang-sys auto-discovers it on Linux; only
+      # Windows hard-sets LIBCLANG_PATH).
       - name: Linux deps (xvfb, libclang)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libclang-dev
@@ -137,26 +138,15 @@ jobs:
       - name: Install Electron binary
         run: npm run electron:install
 
-      # The renderer imports src/renderer/eval/evalWasm.generated.ts, a
-      # gitignored build artifact produced by build:wasm. typecheck/build/test
-      # each chain build:wasm themselves, so this step is not what makes them
-      # work — it is here to fail FAST. As the job's first cargo invocation it
-      # turns a missing wasm32 target or a broken eval crate into a 30-second
-      # red instead of one surfacing twelve minutes in, behind the addon builds.
-      # Warm, the repeats cost a cargo no-op.
-      - name: Build eval wasm leaf
-        run: npm run build:wasm
-
-      - name: Build napi addon
-        run: npm run napi:build
-
       # Cache the fetched ffmpeg/ffprobe so repeat runs skip the CDN download —
       # ffmpeg:fetch no-ops when the binaries already exist. Keyed on the OS and
       # the fetch script (which pins FFMPEG_VERSION), so a version/source change
       # busts the cache. (path is repo-root-relative; cache ignores the job's
-      # working-directory default.)
-      - name: Cache ffmpeg
-        uses: actions/cache@v6
+      # working-directory default.) Split restore/save for the reason the
+      # ffmpeg-lgpl pair below gives.
+      - name: Restore ffmpeg cache
+        id: cache-ffmpeg
+        uses: actions/cache/restore@v6
         with:
           path: apps/desktop/resources/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
@@ -167,9 +157,16 @@ jobs:
       - name: Fetch ffmpeg
         run: npm run ffmpeg:fetch
 
+      - name: Save ffmpeg cache
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ${{ steps.cache-ffmpeg.outputs.cache-primary-key }}
+
       - name: Put bundled ffmpeg on PATH
-        # CI runners have no system ffmpeg; the Rust integration tests + the
-        # e2e app resolve "ffmpeg" via PATH. ffmpeg:fetch put it in resources/.
+        # CI runners have no system ffmpeg; the e2e app resolves "ffmpeg" via
+        # PATH. ffmpeg:fetch put it in resources/.
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -207,55 +204,39 @@ jobs:
           path: apps/desktop/resources/ffmpeg-lgpl
           key: ${{ steps.cache-ffmpeg-lgpl.outputs.cache-primary-key }}
 
-      - name: Build native-decode addon
-        run: npm run napi:build:decode
-        # Windows ships LLVM at C:\Program Files\LLVM (the wrapper defaults
-        # LIBCLANG_PATH there); Linux uses the apt libclang-dev above (clang-sys
-        # auto-discovers) and the wrapper bakes RUNPATH=$ORIGIN + co-locates the
-        # libav*.so. macOS uses the Xcode toolchain's libclang (clang-sys finds
-        # it via xcode-select; GitHub runners ship full Xcode) and the wrapper
-        # bakes @loader_path + co-locates the libav*.dylib. All default
-        # FFMPEG_DIR to the fetched ffmpeg-lgpl/<os>.
+      # Both addons, the conformance analyzer bin and the generated eval wasm —
+      # restored from a cache keyed on the Rust sources, or built here and saved
+      # (.github/actions/rust-artifacts owns the key and the per-artifact why).
+      #
+      # LANDMINE — must stay AFTER the LGPL fetch above: the decode addon's build
+      # reads FFMPEG_DIR from resources/ffmpeg-lgpl/<os>.
+      - uses: ./.github/actions/rust-artifacts
 
       - name: Put LGPL DLLs on PATH (native-decode runtime)
         if: runner.os == 'Windows'
         shell: bash
         run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
 
-      # Typecheck + unit tests are OS-independent, so run them once, on the
-      # Windows leg (it builds BOTH addons — native-decode's generated
-      # index.d.ts is a typecheck input; the Linux leg builds decode too now, but
-      # a single leg suffices). Neither was gated by CI before — the
-      # esbuild build does no type-checking and vitest wasn't run at all — so
-      # TS-type and unit regressions could slip through green. Placed after
-      # both napi:build and napi:build:decode (needs their generated
-      # .d.ts/.node) and before the heavier build/e2e/package so a failure
-      # fails fast.
+      # FAIL-FAST TRIPWIRE. These two are the only checks that stay inline: ~5 s
+      # and ~1 s against an 18-minute run is 200:1 leverage against the most
+      # common class of red, and nothing else here is worth booting a Playwright
+      # worker behind. The expensive OS-independent work — vitest, the
+      # build-script suite, cargo test — lives in `checks` / `rust-test`, which
+      # do NOT gate this job.
+      #
+      # Every leg, not just Windows: the artifact cache delivers native-decode's
+      # generated index.d.ts (a typecheck input) everywhere, so nothing pins this
+      # to the one leg that builds both addons. Placed after the artifacts and
+      # before the heavier build/e2e/package.
       - name: Typecheck (tsc -b)
-        if: runner.os == 'Windows'
         run: npm run typecheck
-
-      - name: Unit tests (vitest)
-        if: runner.os == 'Windows'
-        run: npm test
-
-      # The build scripts' own node:test suite. Separate from `npm test` because
-      # Vitest's `include` is pinned to the three src/ roots — these live in
-      # apps/desktop/scripts/ and are a different runner, so nothing else picks
-      # them up. They gate pure argv/env planning (E2E gate-flag splitting,
-      # preflight wiring): fast, no build artifacts, OS-independent.
-      - name: Build-script tests (node:test)
-        if: runner.os == 'Windows'
-        run: npm run test:scripts
 
       # The committed rust-native MCP catalog snapshot must equal what the addon
       # advertises. The bijection gate reconstructs the live catalog from this
       # fixture, so a stale fixture is the one drift the suite can't catch itself —
-      # regenerate and diff. Needs only the napi addon (built above); the fixture is
-      # pinned to LF via .gitattributes, so the diff is byte-clean on every leg. Run
-      # once on the Windows leg alongside the other OS-independent checks.
+      # regenerate and diff. Needs only the napi addon (restored above); the fixture
+      # is pinned to LF via .gitattributes, so the diff is byte-clean on every leg.
       - name: MCP catalog snapshot up to date
-        if: runner.os == 'Windows'
         shell: bash
         run: npm run mcp:catalog:check
 
@@ -266,23 +247,69 @@ jobs:
       - name: Build app (E2E mode)
         run: npm run build:e2e
 
-      # The analyzer-backed e2e gates exec this artifact per assertion
-      # (e2e/lib/analyze.mjs). Load-bearing, not an optimization: without it
-      # analyze.mjs falls back to `cargo run`, whose fingerprint check compiles
-      # the bin inside the first gate — silently, on the stderr it captures and
-      # drops. Same npm script a developer runs, so what CI prebuilds cannot
-      # drift from what the specs then look for.
-      - name: Prebuild conformance analyzer
-        run: npm run analyzer:build
+      # The 232 MB fixture matrix every spec reads. Restored per OS, and per OS
+      # NOT as a cache-efficiency choice: generate.mjs picks the drawtext font
+      # per platform (Consolas / Menlo / DejaVuSansMono) and the three bundled
+      # ffmpeg builds differ (gyan / BtbN / evermeet), so one shared set would
+      # move the very pixels the SSIM floor and the per-channel colour ceiling
+      # (both set in the E2E step below) were calibrated against. The ffmpeg
+      # fetch script rides in the key for that same reason — it pins which build
+      # encodes the media, and the AV1 entry's recipe hash embeds that build's
+      # `-encoders` probe outright.
+      #
+      # restore-keys is safe here ONLY because the media is content-addressed:
+      # a partial hit restores an older set, and ensureFixtures then deletes and
+      # regenerates exactly the entries whose recipe hash moved, keeping the
+      # rest. Prefix matching over media skipped on mere existence is how a
+      # stale fixture survives every run that would have caught it.
+      #
+      # BUDGET — 3 × 232 MB against the repo's 10 GB. The eviction pressure
+      # lands on stale rust-cache keys, which rotate anyway; the one key that
+      # must never be the victim is ffmpeg-lgpl-macOS, for the reason the
+      # decode-bench step below gives.
+      - name: Restore e2e fixture cache
+        id: cache-fixtures
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/e2e/fixtures/media
+          key: fixtures-${{ runner.os }}-${{ hashFiles('apps/desktop/e2e/fixtures/generate.mjs', 'apps/desktop/e2e/fixtures/generate-fixtures.mjs', 'apps/desktop/scripts/fetch-ffmpeg.mjs') }}
+          restore-keys: fixtures-${{ runner.os }}-
 
-      # The MAIN fixture matrix generates itself (playwright globalSetup →
-      # ensureFixtures), but the two software-lane family gates read from the
-      # separate decode-BENCH set, which nothing generates automatically — a
-      # bench run is a local, opt-in measurement. Without these two files
-      # preview-sw-families self-skipped on all three legs, so the ffmpeg
-      # engine's software decode of an intra 4:2:2 (DNxHR) and a long-GOP
-      # MPEG-2 source has never been gated anywhere but a dev machine (issue
-      # #15 layer 1).
+      # Its own step so the cache below can be saved the moment the media
+      # exists, and so the 4 min a cold pass costs on Windows (2.6 Linux / 2.2
+      # macOS) is legible on the timeline rather than hidden inside E2E. Placed
+      # after the tripwire above — a broken type must not cost a full generation
+      # first — and after the ffmpeg PATH step, since it spawns a bare `ffmpeg`.
+      #
+      # Playwright's globalSetup calls the same ensureFixtures and keeps doing
+      # so: with the media present and the manifest matching it is a sub-second
+      # no-op, which is what lets local runs, scoped dispatches and the `all`
+      # slice need no special case here.
+      - name: Generate e2e fixtures
+        run: node e2e/fixtures/generate-fixtures.mjs
+
+      # `cache-hit` is 'true' only on an exact key match, so this one condition
+      # covers both a total miss and a restore-keys partial hit — which is what
+      # re-publishes the set under the new key when a recipe is edited.
+      # continue-on-error: every leg of this OS races the same key and the losers
+      # get a 409 that must not redden a leg which already did the work. Split
+      # restore/save as the ffmpeg-lgpl pair above explains, and this is the
+      # case that most needs it: the step which goes red is the next one down.
+      - name: Save e2e fixture cache
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/e2e/fixtures/media
+          key: ${{ steps.cache-fixtures.outputs.cache-primary-key }}
+
+      # The main fixture matrix has its own cached step above; the two
+      # software-lane family gates read from the separate decode-BENCH set,
+      # which nothing generates automatically — a bench run is a local, opt-in
+      # measurement. Without these two files preview-sw-families self-skipped on
+      # all three legs, so the ffmpeg engine's software decode of an intra 4:2:2
+      # (DNxHR) and a long-GOP MPEG-2 source has never been gated anywhere but a
+      # dev machine (issue #15 layer 1).
       #
       # Only the two rows those gates read: the full 12-row matrix is minutes
       # of encoding and ~10 GB, most of it for cells only the bench opens. Both
@@ -290,13 +317,390 @@ jobs:
       # ring before its backward-seek assertion — a shortened cut cannot
       # satisfy it. ~1.8 GB and ~1-2 min on a 4-vCPU runner.
       #
+      # One slice per OS, the one that runs the serial project:
+      # preview-sw-families.spec.ts is the only reader of these two rows and is
+      # itself @serial, so on every other leg the minute and the 1.8 GB buy
+      # nothing. That slice is the `decodeBench: true` entry in e2e/slices.mjs,
+      # and this condition has to name it.
+      #
       # Deliberately NOT cached. At 1.8 GB × 3 legs it would take over half of
       # the repo's 10 GB cache budget for media that regenerates from a
       # committed script in a minute — and evict the two caches that cannot
       # (ffmpeg-lgpl on macOS is a ~10 min from-source build).
       - name: Generate software-lane family fixtures (e2e)
+        if: matrix.part == 'audio' || matrix.part == 'all'
         working-directory: apps/desktop/e2e
         run: node scripts/gen-decode-bench-fixtures.mjs --only dnxhr-1080,mpeg2-1080
+
+      # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
+      # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
+      #
+      # RENDERER CHOICE: no forced --use-gl=swiftshader (it HANGS the offscreen
+      # CDP capture on Windows 11). s6-determinism.spec.ts launches with each
+      # OS's CI-default renderer; on Linux we wrap with xvfb-run -a for a virtual
+      # framebuffer; Windows/macOS use the runner's native GPU stack. Captures
+      # are byte-identical cross-OS regardless (see the threshold note on the
+      # compare job) — no software-rendering force is needed.
+      - name: E2E tests (includes determinism capture)
+        shell: bash
+        env:
+          # The @matrix tier (see playwright.config.ts) runs only on the nightly
+          # sweep — per-PR it would blow the job budget. A dispatch opts in by
+          # passing --full in e2e_args instead of getting it implicitly.
+          WEFTCUT_E2E_FULL: ${{ github.event_name == 'schedule' && '1' || '' }}
+          # Dispatch runs are the scoped-diagnosis tool — tap the renderer
+          # console so a wedge reports its last milestone in the job log.
+          WEFTCUT_E2E_CONSOLE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          # The GPU-less legs (Linux AND Windows) rasterize in software, whose
+          # shader rounding shifts smooth regions by ±1-2 LSB — SSIM-visible,
+          # PSNR-flat. Both legs measure ~0.67 healthy; floors calibrated to
+          # that baseline, and the color gates' per-channel ceiling likewise
+          # (worst measured 12/255). See e2e/README.md §SSIM floors.
+          WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os != 'macos-latest' && '0.62' || '' }}
+          WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
+          E2E_ARGS: ${{ inputs.e2e_args }}
+          PART: ${{ matrix.part }}
+          # Not `OS`: that name is already Windows's own (`Windows_NT`), and this
+          # is the matrix label the slice table is keyed on.
+          MATRIX_OS: ${{ matrix.os }}
+        run: |
+          # THE SPLIT lives in e2e/slices.mjs — one home, read here per runner,
+          # by scripts/e2e-split.test.mjs (the gate against a spec that lands on
+          # no runner at all), and by `npm run e2e -- --slice=<name>` for
+          # replaying a red slice locally. Slices are named by the files whose
+          # cost is structural (the export matrices) and the catch-all takes
+          # everything they do not, so a new spec needs no entry anywhere.
+          # playwright.config.ts (§WEFTCUT_E2E_ONLY) carries why this is not
+          # Playwright's own --shard.
+          #
+          # BOTH matrix dimensions go in. Which slices exist is per OS, so the
+          # catch-all's ignore set is the union over THIS OS's slices only — pass
+          # the part alone and the OSes running fewer slices ignore files that no
+          # leg of theirs owns.
+          e2e() {
+            if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run e2e -- "$@"; else npm run e2e -- "$@"; fi
+          }
+          # `all` is the scoped-dispatch path: unsplit, and run-e2e.mjs's own
+          # serial-then-parallel plan rather than this step's, with e2e_args
+          # forwarded verbatim (unquoted — it is a word list, not one argument).
+          if [ "$PART" = "all" ]; then
+            e2e $E2E_ARGS
+          else
+            # Through a variable rather than `eval "$(...)"` directly: `set -e`
+            # fails a failed ASSIGNMENT but not a failed substitution inside
+            # eval, and an unknown PART must be a red leg — never an empty
+            # restriction under which this one runner repeats the whole suite.
+            SLICE_ENV="$(node e2e/slices.mjs --shell "$PART" "$MATRIX_OS")"
+            eval "$SLICE_ENV"
+            # The serial project owns the machine and captures the determinism
+            # PNGs, so it runs on exactly ONE slice — the one slices.mjs marks
+            # `serial: true`, kept off whichever slice is already the worst case.
+            # The determinism upload below must name that same slice.
+            if [ "$PART" = "audio" ]; then e2e --project=serial; fi
+            # LANDMINE — the slice restriction rides the parallel invocation and
+            # nothing else, which is what the subshell enforces. Exported above
+            # the serial run instead, or written to $GITHUB_ENV, it narrows the
+            # serial project to the sliced files as well; no @serial test lives
+            # in any of them, and Playwright kills the leg with "No tests found".
+            # The serial project is not sliced at all — it greps @serial across
+            # the whole suite.
+            ( export WEFTCUT_E2E_ONLY="$OWN" WEFTCUT_E2E_IGNORE="$IGN"; e2e --project=parallel )
+          fi
+
+      # Upload determinism PNGs so the compare job can fetch all three OSes.
+      # if: always() so a partial capture or test failure still uploads whatever
+      # PNGs were written — essential for diagnosing the first run.
+      #
+      # Gated to the slice that runs the serial project, and the NAME stays
+      # unsliced: the compare job reads `determinism-<os>` by literal path. Two
+      # slices uploading under one name is a hard artifact conflict, so this
+      # condition and the serial project's slice above must name the same one.
+      - name: Upload determinism artifacts
+        if: always() && (matrix.part == 'audio' || matrix.part == 'all')
+        uses: actions/upload-artifact@v7
+        with:
+          name: determinism-${{ matrix.os }}
+          retention-days: 14
+          # process.platform values: win32 / linux / darwin
+          path: apps/desktop/determinism-artifacts/**
+
+      # Upload Playwright traces/reports for any failing specs.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.part }}
+          retention-days: 14
+          path: apps/desktop/test-results/**
+
+      # Per-test durations for the run, one JSON per project (playwright.config.ts
+      # §reporter). Its own artifact rather than a path added to test-results-*
+      # above: that one is empty on a green run, and a green run is exactly when
+      # these timings are worth reading. if: always() so a red or timed-out leg —
+      # the case that motivates looking at cost at all — still publishes them.
+      #
+      # One per slice, and the whole set is what rebalances the split: the E2E
+      # step's slice boundaries were measured from exactly these files.
+      - name: Upload e2e timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-timings-${{ matrix.os }}-${{ matrix.part }}
+          retention-days: 14
+          path: apps/desktop/e2e-report/**
+
+      # Sign-free packaging. Deliberately NOT `npm run package`: that script
+      # re-runs napi:build + napi:build:decode for a one-shot local package,
+      # and both addons already built above (their .node artefacts persist in
+      # node_modules/@weftcut/{core,native-decode}). Run the two remaining
+      # halves directly — `build` for a clean non-E2E renderer bundle (no
+      # VITE_WEFTCUT_E2E), then electron-builder.
+      #
+      # Once per OS, not once per e2e slice — riding the slice e2e/slices.mjs
+      # marks `package: true`, which is the one with the most headroom after its
+      # own specs, for the same reason the serial project and the decode-bench
+      # media each ride one: no extra on whichever slice is already the worst
+      # case. It must be a slice every OS runs, or that OS never packages.
+      #
+      # Which slice that is, is MEASURED, and stays checkable: every leg uploads
+      # `e2e-timings-<os>-<slice>` (green or red), so summing a slice's test
+      # durations and adding this step's own ~2 min to its host says whether the
+      # gate still names the cheapest one. A named number here would not survive
+      # the next rebalance; the measurement does.
+      - name: Package (unsigned)
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'codecs' || matrix.part == 'all')
+        run: npm run build && npx electron-builder --publish never
+
+      # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
+      # step only PERSISTS the resulting installer. Installers are large
+      # (~0.4–0.9 GB per OS) and nothing downstream consumes them (the compare
+      # job only needs determinism-*). Uploading ~2 GB on every push refills the
+      # account artifact-storage quota, which then fails the essential (tiny)
+      # determinism-* upload and reddens the whole matrix. So only keep an
+      # installer when explicitly wanted — a tag build or a manual dispatch —
+      # with short retention on top.
+      - name: Upload installer
+        if: success() && (matrix.part == 'codecs' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-${{ matrix.os }}
+          retention-days: 5
+          path: apps/desktop/release/*
+
+  # The OS-independent TS test work: the unit suite, the build-script suite, and
+  # the two cheap gates the e2e legs also run.
+  #
+  # Deliberately NO `needs:` relationship with `e2e` in either direction — this
+  # job and the matrix start together. Wall clock is the objective, and gating
+  # would put these ~4 min in front of every leg's 18. The accepted cost: a red
+  # unit test here does not stop the e2e matrix, it only reddens the run. The
+  # failure class that WOULD waste the whole matrix is covered instead by the
+  # typecheck tripwire each leg still runs inline.
+  #
+  # Windows rather than Linux: off the critical path either way, and the unit
+  # suite carries Windows path-handling coverage a Linux-only run would drop.
+  # `typecheck` and `mcp:catalog:check` appear here as well as inline in every
+  # e2e leg; the duplication is concurrent, so it costs nothing.
+  checks:
+    # ~4 min warm. The cap covers a cold rust-artifacts miss, which adds the
+    # whole addon + analyzer build on top.
+    timeout-minutes: 20
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Root lockfile, as in the e2e job. No electron:install: the vitest suite
+      # never loads Electron (vitest.config.ts).
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      # Nothing here shells out to ffmpeg, but the unit suite does dlopen it:
+      # src/main/export-decode-native.integration.test.ts loads the decode addon,
+      # which resolves the libav family through resources/ffmpeg-lgpl/win/bin.
+      # That loader degrades to `mod = null` on any failure and the suite SKIPS,
+      # so without this tree those tests disappear silently instead of reddening.
+      # Restore + fetch only, no save: the e2e legs own this key (see there for
+      # the split restore/save rationale) and one fewer racer on it is free.
+      - name: Restore ffmpeg-lgpl cache
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
+
+      - name: Fetch LGPL ffmpeg (native-decode)
+        run: npm run ffmpeg:fetch-lgpl
+
+      # LANDMINE — must stay AFTER the LGPL fetch above: the decode addon's build
+      # reads FFMPEG_DIR from resources/ffmpeg-lgpl/<os>. Saving is left on: this
+      # job builds the whole set on a miss, so it is a legitimate publisher and
+      # may even warm the key for the e2e legs.
+      - uses: ./.github/actions/rust-artifacts
+
+      - name: Put LGPL DLLs on PATH (native-decode runtime)
+        shell: bash
+        run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
+
+      - name: Typecheck (tsc -b)
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      # The build scripts' own node:test suite. Separate from `npm test` because
+      # Vitest's `include` is pinned to the three src/ roots — these live in
+      # apps/desktop/scripts/ and e2e/ and are a different runner, so nothing
+      # else picks them up. They gate pure argv/env planning (E2E gate-flag
+      # splitting, preflight wiring, fixture recipe identity): fast, no build
+      # artifacts, OS-independent.
+      - name: Build-script tests (node:test)
+        run: npm run test:scripts
+
+      - name: MCP catalog snapshot up to date
+        shell: bash
+        run: npm run mcp:catalog:check
+
+  # `cargo test` for all three OSes, and the only remaining consumer of
+  # Swatinem/rust-cache: these tests need `target/`, which the rust-artifacts
+  # OUTPUT cache does not carry. Giving them their own job is what decouples that
+  # 537 MB compilation cache from every e2e leg. Concurrent with the e2e matrix,
+  # for the reason spelled out on `checks`.
+  rust-test:
+    # ~3.5 min warm. The cap covers the two cold paths that dwarf that: macOS
+    # compiling ffmpeg-lgpl from source (~10 min) and a cold rust-cache
+    # compiling the whole workspace.
+    timeout-minutes: 30
+    # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Root lockfile, as in the e2e job. Nothing in this job imports a workspace
+      # dependency — the cargo tests and both fetch scripts below use node
+      # builtins only — so this is uniformity with the other jobs, not a need.
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      # libclang-dev is what native-decode's ffmpeg-next bindgen build needs
+      # (clang-sys auto-discovers it on Linux; only Windows hard-sets
+      # LIBCLANG_PATH, in the tests below).
+      - name: Linux deps (libclang)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      # Same key as the e2e job's, which owns the keying rationale; split
+      # restore/save for the reason its ffmpeg-lgpl pair gives.
+      - name: Restore ffmpeg cache
+        id: cache-ffmpeg
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
+
+      - name: Fetch ffmpeg
+        run: npm run ffmpeg:fetch
+
+      - name: Save ffmpeg cache
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ${{ steps.cache-ffmpeg.outputs.cache-primary-key }}
+
+      - name: Put bundled ffmpeg on PATH
+        # The export / probe / jobs tests shell out to "ffmpeg" and SELF-SKIP
+        # when it is absent, so a runner without it loses coverage silently
+        # rather than going red. ffmpeg:fetch put it in resources/.
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cygpath -w "$PWD/resources/ffmpeg/win" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            echo "$PWD/resources/ffmpeg/linux" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
+          fi
+
+      # The decode crate needs this tree twice over: FFMPEG_DIR to build it and
+      # the bundled libav* on the loader path to run its tests. Split
+      # restore/save rather than the combined actions/cache — the e2e job owns
+      # why that split is load-bearing, and it matters most here, where a red
+      # cargo test would otherwise discard macOS's from-source ffmpeg build.
+      - name: Restore ffmpeg-lgpl cache
+        id: cache-ffmpeg-lgpl
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
+
+      - name: Fetch LGPL ffmpeg (native-decode)
+        run: npm run ffmpeg:fetch-lgpl
+
+      - name: Save ffmpeg-lgpl cache
+        if: steps.cache-ffmpeg-lgpl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ${{ steps.cache-ffmpeg-lgpl.outputs.cache-primary-key }}
+
+      - name: Put LGPL DLLs on PATH (native-decode runtime)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
+
+      # The COMPILATION cache and the toolchain that fills it, rather than
+      # ./.github/actions/rust-artifacts: that action restores build OUTPUTS, and
+      # `cargo test` needs `target/`.
+      #
+      # Third-party actions pinned to immutable commit SHAs (supply-chain
+      # hardening); version in the trailing comment. Bump deliberately at a
+      # checkpoint, not automatically — and in lockstep with the same pins in
+      # .github/actions/rust-artifacts. GitHub-owned actions/* stay on their
+      # major tag.
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
+        with:
+          # Once pinned to a SHA the @<ref> name no longer signals the channel
+          # (that was the magic of @stable), so name the toolchain explicitly.
+          # No wasm32 target: nothing here builds the wasm leaf.
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # One workspace covers every crate under test (native/Cargo.toml
+          # members: eval, decode).
+          workspaces: apps/desktop/native
 
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
@@ -345,153 +749,12 @@ jobs:
             cargo test --manifest-path native/decode/Cargo.toml --features test-noop
           fi
 
-      # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
-      # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
-      #
-      # RENDERER CHOICE: no forced --use-gl=swiftshader (it HANGS the offscreen
-      # CDP capture on Windows 11). s6-determinism.spec.ts launches with each
-      # OS's CI-default renderer; on Linux we wrap with xvfb-run -a for a virtual
-      # framebuffer; Windows/macOS use the runner's native GPU stack. Captures
-      # are byte-identical cross-OS regardless (see the threshold note on the
-      # compare job) — no software-rendering force is needed.
-      - name: E2E tests (includes determinism capture)
-        shell: bash
-        env:
-          # The @matrix tier (see playwright.config.ts) runs only on the nightly
-          # sweep — per-PR it would blow the job budget. A dispatch opts in by
-          # passing --full in e2e_args instead of getting it implicitly.
-          WEFTCUT_E2E_FULL: ${{ github.event_name == 'schedule' && '1' || '' }}
-          # Dispatch runs are the scoped-diagnosis tool — tap the renderer
-          # console so a wedge reports its last milestone in the job log.
-          WEFTCUT_E2E_CONSOLE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
-          # The GPU-less legs (Linux AND Windows) rasterize in software, whose
-          # shader rounding shifts smooth regions by ±1-2 LSB — SSIM-visible,
-          # PSNR-flat. Both legs measure ~0.67 healthy; floors calibrated to
-          # that baseline, and the color gates' per-channel ceiling likewise
-          # (worst measured 12/255). See e2e/README.md §SSIM floors.
-          WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os != 'macos-latest' && '0.62' || '' }}
-          WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
-          E2E_ARGS: ${{ inputs.e2e_args }}
-          PART: ${{ matrix.part }}
-        run: |
-          # THE SPLIT. Four slices, named by the files whose cost is structural
-          # (the export matrices); `rest` takes everything the other three do
-          # not, so a new spec needs no entry here. Balanced from the
-          # e2e-timings-* artifacts against the windows leg — the binding one,
-          # nearest the cap: 14.6 / 18.7 / 13.6 / 14.4 min out of 61 min serial.
-          # Rebalance from those same artifacts when a slice drifts;
-          # playwright.config.ts (§WEFTCUT_E2E_ONLY) carries why this is not
-          # Playwright's own --shard.
-          HEAVY='audio.spec.ts,export_codecs.spec.ts,export_overlap_same_source.spec.ts,export-range-audio.spec.ts'
-          OWN=''
-          IGN=''
-          case "$PART" in
-            audio)   OWN='audio.spec.ts' ;;
-            codecs)  OWN='export_codecs.spec.ts' ;;
-            overlap) OWN='export_overlap_same_source.spec.ts,export-range-audio.spec.ts' ;;
-            rest)    IGN="$HEAVY" ;;
-          esac
-          e2e() {
-            if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run e2e -- "$@"; else npm run e2e -- "$@"; fi
-          }
-          # `all` is the scoped-dispatch path: unsplit, and run-e2e.mjs's own
-          # serial-then-parallel plan rather than this step's, with e2e_args
-          # forwarded verbatim (unquoted — it is a word list, not one argument).
-          if [ "$PART" = "all" ]; then
-            e2e $E2E_ARGS
-          else
-            # The serial project owns the machine and captures the determinism
-            # PNGs, so it runs on exactly ONE slice. `codecs` because it is the
-            # lightest: anywhere else and the serial project's minutes land on
-            # top of an already-heavier slice and become the new worst case.
-            if [ "$PART" = "codecs" ]; then e2e --project=serial; fi
-            # LANDMINE — the slice restriction rides the parallel invocation and
-            # nothing else, which is what the subshell enforces. Exported above
-            # the serial run instead, it narrows the serial project to the
-            # sliced files as well; no @serial test lives in any of them, and
-            # Playwright kills the leg with "No tests found". The serial project
-            # is not sliced at all — it greps @serial across the whole suite.
-            ( export WEFTCUT_E2E_ONLY="$OWN" WEFTCUT_E2E_IGNORE="$IGN"; e2e --project=parallel )
-          fi
-
-      # Upload determinism PNGs so the compare job can fetch all three OSes.
-      # if: always() so a partial capture or test failure still uploads whatever
-      # PNGs were written — essential for diagnosing the first run.
-      #
-      # Gated to the slice that runs the serial project, and the NAME stays
-      # unsliced: the compare job reads `determinism-<os>` by literal path. Two
-      # slices uploading under one name is a hard artifact conflict, so this
-      # condition and the serial project's slice above must name the same one.
-      - name: Upload determinism artifacts
-        if: always() && (matrix.part == 'codecs' || matrix.part == 'all')
-        uses: actions/upload-artifact@v7
-        with:
-          name: determinism-${{ matrix.os }}
-          retention-days: 14
-          # process.platform values: win32 / linux / darwin
-          path: apps/desktop/determinism-artifacts/**
-
-      # Upload Playwright traces/reports for any failing specs.
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-${{ matrix.os }}-${{ matrix.part }}
-          retention-days: 14
-          path: apps/desktop/test-results/**
-
-      # Per-test durations for the run, one JSON per project (playwright.config.ts
-      # §reporter). Its own artifact rather than a path added to test-results-*
-      # above: that one is empty on a green run, and a green run is exactly when
-      # these timings are worth reading. if: always() so a red or timed-out leg —
-      # the case that motivates looking at cost at all — still publishes them.
-      #
-      # One per slice, and the whole set is what rebalances the split: the E2E
-      # step's slice boundaries were measured from exactly these files.
-      - name: Upload e2e timings
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-timings-${{ matrix.os }}-${{ matrix.part }}
-          retention-days: 14
-          path: apps/desktop/e2e-report/**
-
-      # Sign-free packaging. Deliberately NOT `npm run package`: that script
-      # re-runs napi:build + napi:build:decode for a one-shot local package,
-      # and both addons already built above (their .node artefacts persist in
-      # node_modules/@weftcut/{core,native-decode}). Run the two remaining
-      # halves directly — `build` for a clean non-E2E renderer bundle (no
-      # VITE_WEFTCUT_E2E), then electron-builder.
-      #
-      # Once per OS, not once per e2e slice — and on `overlap`, the lightest
-      # slice, for the same reason the serial project rides `codecs`: neither
-      # extra should land on whichever slice is already the worst case.
-      - name: Package (unsigned)
-        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'overlap' || matrix.part == 'all')
-        run: npm run build && npx electron-builder --publish never
-
-      # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
-      # step only PERSISTS the resulting installer. Installers are large
-      # (~0.4–0.9 GB per OS) and nothing downstream consumes them (the compare
-      # job only needs determinism-*). Uploading ~2 GB on every push refills the
-      # account artifact-storage quota, which then fails the essential (tiny)
-      # determinism-* upload and reddens the whole matrix. So only keep an
-      # installer when explicitly wanted — a tag build or a manual dispatch —
-      # with short retention on top.
-      - name: Upload installer
-        if: success() && (matrix.part == 'overlap' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
-        uses: actions/upload-artifact@v7
-        with:
-          name: installer-${{ matrix.os }}
-          retention-days: 5
-          path: apps/desktop/release/*
-
-  # Cross-OS SSIM comparison.  Runs after every build job finishes — one per
+  # Cross-OS SSIM comparison.  Runs after every e2e leg finishes — one per
   # (os, e2e slice) pair — but only the slice carrying the serial project
   # publishes a determinism-* artifact for it to read (fail-fast: false means
   # they all attempt even if one fails).
   compare:
-    needs: build
+    needs: e2e
     # A partial dispatch (one OS or a scoped suite) cannot feed a 3-way compare.
     if: github.event_name != 'workflow_dispatch' || (inputs.os == 'all' && inputs.e2e_args == '')
     timeout-minutes: 15
@@ -507,7 +770,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.23.0'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: package-lock.json
 

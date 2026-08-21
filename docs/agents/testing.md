@@ -10,7 +10,7 @@ not scattered by neglect.
 | Layer | Location | Runner | Command (cwd) |
 |---|---|---|---|
 | **Unit (TS)** | colocated next to source: `apps/desktop/src/{renderer,main,shared}/**/*.{test,spec}.{ts,tsx}` | Vitest | `npm test` (repo root) · `npm run test:watch` (`apps/desktop`) |
-| **Build scripts** | colocated: `apps/desktop/scripts/*.test.mjs` | `node:test` | `npm run test:scripts` (repo root or `apps/desktop`) |
+| **Build scripts** | colocated: `apps/desktop/scripts/*.test.mjs` and `apps/desktop/e2e/**/*.test.mjs` (the fixture generator's own suite) | `node:test` | `npm run test:scripts` (repo root or `apps/desktop`) |
 | **Rust** | `native/**` — inline `#[cfg(test)]` + `native/tests/` | cargo | see [Rust](#rust) (repo root) |
 | **E2E** | `apps/desktop/e2e/electron/*.spec.ts` | Playwright driving the **real Electron app** | `npm run e2e` (repo root or `apps/desktop`) · add `-- --full` for the `@matrix` tier |
 | **Mutation / PBT** | mutates `src/main/state/**` (config: `apps/desktop/stryker.config.mjs`) | StrykerJS (Vitest runner) | `npm run pbt:stryker` (`apps/desktop`) |

@@ -5,10 +5,18 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { assertWasmTargetInstalled } from './build-eval-wasm-lib.mjs'
+import { assertWasmTargetInstalled, usePrebuiltWasm } from './build-eval-wasm-lib.mjs'
 
 function main() {
   const root = resolve(import.meta.dirname, '..') // apps/desktop
+  const out = resolve(root, 'src/renderer/eval/evalWasm.generated.ts')
+  // A CI leg that only consumes the module gets it restored by the artifact
+  // cache and has no Rust toolchain at all (see usePrebuiltWasm).
+  if (usePrebuiltWasm(out)) {
+    console.log(`reusing prebuilt ${out}`)
+    return
+  }
+
   const manifest = resolve(root, 'native/Cargo.toml')
   const cargoEnv = { ...process.env }
   // Dev startup should not fail because a machine-local rustc wrapper daemon
@@ -34,7 +42,6 @@ function main() {
 
   const wasm = resolve(root, 'native/target/wasm32-unknown-unknown/release/weftcut_eval.wasm')
   const b64 = readFileSync(wasm).toString('base64')
-  const out = resolve(root, 'src/renderer/eval/evalWasm.generated.ts')
   mkdirSync(dirname(out), { recursive: true })
   writeFileSync(
     out,

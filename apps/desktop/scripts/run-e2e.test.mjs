@@ -3,13 +3,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
+import { SLICES, osLabelFor, sliceEnv } from '../e2e/slices.mjs'
 import {
   foldRunStatuses,
   planE2ERuns,
+  planSlicedRuns,
   prepareE2EEnv,
   reportFileForRun,
   splitFullFlag,
   splitGateFlags,
+  splitSliceFlag,
 } from './run-e2e.mjs'
 
 test('--full is consumed as a tier selector and never reaches Playwright', () => {
@@ -138,6 +141,100 @@ test('no gate flag survives into either planned Playwright run', () => {
     ['--project=parallel', '--pass-with-no-tests', 'dock-workspace.spec.ts'],
   ])
   for (const run of runs) for (const gate of gates) assert.ok(!run.includes(gate))
+})
+
+// ── splitSliceFlag / planSlicedRuns ────────────────────────────────────────
+// `--slice=<name>` reproduces one electron-ci runner's share of the suite. Which
+// files each slice takes is e2e/slices.mjs's business (and e2e-split.test.mjs
+// asserts the table); what matters here is that the restriction lands on the
+// parallel run ALONE, exactly as the workflow's subshell arranges — inherited by
+// the serial project it selects no @serial test and Playwright kills the run.
+
+const SERIAL_SLICE = SLICES.find((slice) => slice.serial).name
+const OTHER_SLICE = SLICES.find((slice) => !slice.serial).name
+// Pinned rather than taken from the host: the restriction a slice resolves to is
+// per OS, and these assertions have to mean the same thing on every machine.
+const PLATFORM = 'win32'
+const envFor = (slice) => sliceEnv(slice, osLabelFor(PLATFORM))
+
+test('--slice is extracted and never reaches the Playwright argv', () => {
+  const { slice, args } = splitSliceFlag(['--slice=overlap', '-g', 'export'])
+  assert.equal(slice, 'overlap')
+  assert.deepEqual(args, ['-g', 'export'])
+  const without = splitSliceFlag(['-g', 'export'])
+  assert.equal(without.slice, null)
+  assert.deepEqual(without.args, ['-g', 'export'])
+  // Repeated, the last wins — and every copy still leaves the argv.
+  assert.deepEqual(splitSliceFlag(['--slice=audio', '--slice=codecs']), {
+    slice: 'codecs',
+    args: [],
+  })
+})
+
+test('no --slice survives into any planned Playwright run', () => {
+  const { slice, args } = splitSliceFlag(['--slice=' + SERIAL_SLICE, 'audio.spec.ts'])
+  const plan = planSlicedRuns(planE2ERuns(args), slice)
+  assert.ok(plan.length > 0)
+  for (const run of plan) assert.ok(!run.args.some((arg) => arg.startsWith('--slice=')))
+})
+
+test('the slice that owns the serial project runs it, unrestricted', () => {
+  const runs = planE2ERuns([])
+  const plan = planSlicedRuns(runs, SERIAL_SLICE, PLATFORM)
+  assert.deepEqual(
+    plan.map((run) => run.args),
+    runs,
+  )
+  assert.deepEqual(plan[0].env, {}, 'the serial project must inherit no slice restriction')
+  assert.deepEqual(plan[1].env, envFor(SERIAL_SLICE))
+})
+
+test('every other slice plans the parallel run only', () => {
+  // On CI exactly one slice runs the serial project; the rest must not repeat
+  // its 3 minutes, and locally the same rule keeps `--slice=` honest about what
+  // that runner actually did.
+  const runs = planE2ERuns([])
+  const plan = planSlicedRuns(runs, OTHER_SLICE, PLATFORM)
+  assert.deepEqual(
+    plan.map((run) => run.args),
+    [runs[1]],
+  )
+  assert.deepEqual(plan[0].env, envFor(OTHER_SLICE))
+})
+
+test('a replay restricts as its own OS does, not as the widest OS does', () => {
+  // The catch-all absorbs whatever its OS's other slices do not own, so an OS
+  // running fewer slices ignores fewer files. Resolve a replay against the wrong
+  // OS and it runs LESS than the leg it claims to reproduce — silently, since
+  // both invocations look identical and both come back green.
+  const catchAll = SLICES.find((slice) => slice.own.length === 0).name
+  const runs = planE2ERuns([])
+  const ignoredOn = (platform) =>
+    planSlicedRuns(runs, catchAll, platform).at(-1).env.WEFTCUT_E2E_IGNORE.split(',')
+  assert.ok(
+    ignoredOn('darwin').length < ignoredOn('win32').length,
+    'macOS runs fewer slices, so its catch-all must ignore fewer files',
+  )
+  for (const name of ignoredOn('darwin'))
+    assert.ok(ignoredOn('win32').includes(name), `${name} ignored on macOS but not on Windows`)
+})
+
+test('an unsliced plan carries no restriction at all', () => {
+  const runs = planE2ERuns(['audio.spec.ts'])
+  assert.deepEqual(
+    planSlicedRuns(runs, null),
+    runs.map((args) => ({ args, env: {} })),
+  )
+})
+
+test('an unknown slice throws instead of restricting to nothing', () => {
+  assert.throws(() => planSlicedRuns(planE2ERuns([]), 'overlaps'), /unknown e2e slice/)
+})
+
+test('an explicit serial run under a slice that does not own it plans nothing', () => {
+  // runE2E turns the empty plan into a preflight error: having run nothing and
+  // exited 0 is indistinguishable from a green suite.
+  assert.deepEqual(planSlicedRuns(planE2ERuns(['--project=serial']), OTHER_SLICE), [])
 })
 
 // ── prepareE2EEnv ──────────────────────────────────────────────────────────

@@ -424,7 +424,9 @@ of encoding and ~10 GB) and `--force` to regenerate what exists; `$FFMPEG` /
 bench (its expected frame count comes from `durationUs` in the matrix) and the
 e2e gates that share the set (`preview-sw-families` far-seeks to 50 s) are
 written against it. electron-ci generates `dnxhr-1080,mpeg2-1080` this way so
-the software-lane family gates run on all three OSes.
+the software-lane family gates run on all three OSes — on one e2e slice per OS,
+the one carrying the serial project, since those gates are `@serial` and no other
+leg reads the rows.
 
 To also measure the **native**, **sw**, or **native-copyback** strategies,
 build the `@weftcut/native-decode` component — it ships on all three platforms
