@@ -760,6 +760,17 @@ describe('overlap add: sibling lane bounce (ADR 0042)', () => {
     expect(spawnedTrack.layers.map((l) => l.id)).toEqual([aud])
   })
 
+  it('a LOCKED free lane is never a bounce candidate — the bounce spawns instead of landing on it', () => {
+    const { p, gen, a1, a2, aud } = withBlockedSibling()
+    const lockedLane = applyAddTrack(p, gen, null) // #8 — free but locked
+    p.tracks.find((t) => t.id === lockedLane)!.locked = true
+    const { bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    expect(bounces).toHaveLength(1)
+    expect(bounces[0]).toMatchObject({ layer: aud, spawned: true })
+    expect(bounces[0].to_track).not.toBe(lockedLane)
+    expect(p.tracks.find((t) => t.id === lockedLane)!.layers).toEqual([]) // locked lane received nothing
+  })
+
   it("the incoming layer B itself never bounces — its own-lane overlap with A is the transition's authorized window", () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     addT(p, gen, a1, a2, 1_000_000)
@@ -933,5 +944,39 @@ describe('update_transition through the actor: backstop + chained reconcile', ()
     expect(r.ok).toBe(false)
     if (!r.ok) expect([r.error.error, (r.error as { field?: string }).field]).toEqual(['InvalidArgument', 'placement'])
     expect(actor.snapshot().transitions).toEqual([])
+  })
+})
+
+describe('locked home lane refuses every transition op (TrackLocked)', () => {
+  // Transitions are the one mutation family whose subject is not a layer, so
+  // the move/trim/split lock convention lands as a whole-command gate — the
+  // ungrouped incoming layer included, which checkGroupLock alone would miss.
+  it('add refuses under BOTH placements: no id burned, geometry untouched', () => {
+    for (const placement of ['overlap', 'extend'] as const) {
+      const { p, gen, a1, a2 } = twoAdjacent()
+      p.tracks[0].locked = true
+      expectCmd(() => applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE, placement), 'TrackLocked')
+      expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us], placement).toEqual([2_000_000, 2_000_000])
+      expect(p.transitions, placement).toEqual([])
+      expect(applyAddLayer(p, gen, p.tracks[1].id, color(), 0, 1_000_000), placement)
+        .toBe('00000000-0000-0000-0000-000000000006') // #6, not #7 → no burn
+    }
+  })
+  it('update refuses the WHOLE patch — a kind-only change is no exception (locked means untouchable)', () => {
+    const { p, gen, a1, a2 } = twoAdjacent()
+    const tid = addT(p, gen, a1, a2, 1_000_000) // #6, added while unlocked
+    p.tracks[0].locked = true
+    expectCmd(() => applyUpdateTransition(p, tid, { duration_us: 1_500_000 }), 'TrackLocked')
+    expectCmd(() => applyUpdateTransition(p, tid, { kind: { kind: 'Wipe', direction: 'left' } }), 'TrackLocked')
+    expect(p.transitions[0].kind).toEqual(CROSSFADE)
+    expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([2_000_000, 1_000_000])
+  })
+  it('remove refuses too — unlocking first is the road back, matching every other edit on the lane', () => {
+    const { p, gen, a1, a2 } = twoAdjacent()
+    const tid = addT(p, gen, a1, a2, 1_000_000)
+    p.tracks[0].locked = true
+    expectCmd(() => applyRemoveTransition(p, tid), 'TrackLocked')
+    expect(p.transitions.map((t) => t.id)).toEqual([tid])
+    expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([2_000_000, 1_000_000])
   })
 })

@@ -716,7 +716,9 @@ export function Timeline({
   // the click against the cuts on the layer's track: within
   // CUT_CLICK_TOLERANCE_PX of a seam between same-track adjacent visual
   // layers both long enough for the default duration (the kernel's
-  // eligibility), the menu grows the "Add transition" section.
+  // eligibility), the menu grows the "Add transition" section. A locked track
+  // offers no cuts — the add would refuse TrackLocked, and prevention beats a
+  // status-bar refusal (#18).
   const onContextMenu = useCallback(
     (
       e: React.MouseEvent,
@@ -729,7 +731,7 @@ export function Timeline({
       const track = tracks.find((candidate) =>
         candidate.layers.some((l) => l.id === layerId),
       );
-      if (canvas && track && pxPerSec > 0) {
+      if (canvas && track && !track.locked && pxPerSec > 0) {
         const rect = canvas.getBoundingClientRect();
         const xUs = ((e.clientX - rect.left) / pxPerSec) * 1_000_000;
         const toleranceUs = (CUT_CLICK_TOLERANCE_PX / pxPerSec) * 1_000_000;

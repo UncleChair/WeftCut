@@ -251,6 +251,16 @@ describe("findNearestCut", () => {
     expect(findNearestCut([track([shortA, shortB], "t1")], 0, DUR_1S)).toBeNull();
   });
 
+  it("a locked track's cuts are never offered — the add would refuse TrackLocked", () => {
+    const d = visualLayer("d", 1_000_000, 3_000_000);
+    const e = visualLayer("e", 3_000_000, 5_000_000);
+    // t2's cut at 3s is nearer to the playhead but its track is locked; the
+    // unlocked t1 cut at 2s wins. Locked-only timeline → nothing is offered.
+    const lockedT2 = { ...track([d, e], "t2"), locked: true };
+    expect(findNearestCut([track([a, b], "t1"), lockedT2], 3_200_000, DUR_1S)?.cutUs).toBe(2_000_000);
+    expect(findNearestCut([{ ...track([a, b], "t1"), locked: true }], 2_000_000, DUR_1S)).toBeNull();
+  });
+
   it("participants exactly as long as the duration stay eligible (d ≤ min, inclusive)", () => {
     const x = visualLayer("x", 0, 1_000_000);
     const y = visualLayer("y", 1_000_000, 2_000_000);

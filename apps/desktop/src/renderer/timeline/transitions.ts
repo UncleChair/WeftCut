@@ -104,7 +104,8 @@ function participantSpanUs(from: LayerSummary, to: LayerSummary): number {
 /// Ties are deterministic: nearer wins, then the lower track index, then the
 /// earlier cut. Same eligibility as `findCutNear` (adjacent visual pairs long
 /// enough for `durationUs` — the duration the surface will apply — audio
-/// never participates).
+/// never participates), plus: locked tracks are skipped — the add would
+/// refuse TrackLocked, and prevention beats a status-bar refusal (#18).
 export function findNearestCut(
   tracks: readonly TrackSummary[],
   tUs: number,
@@ -119,6 +120,7 @@ export function findNearestCut(
     } | null = null;
     for (let trackIndex = 0; trackIndex < tracks.length; trackIndex++) {
       const track = tracks[trackIndex]!;
+      if (track.locked) continue;
       for (const from of track.layers) {
         if (!VISUAL_LAYER_KINDS.has(from.kind)) continue;
         const to = track.layers.find(

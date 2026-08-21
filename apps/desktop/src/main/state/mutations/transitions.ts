@@ -88,6 +88,18 @@ function wholeFrameDurationUs(p: Project, cutUs: number, requestedUs: number): n
   return timeUsAtFrame(frameIndexRound(cutUs, num, den) + frames, num, den) - cutUs
 }
 
+/** TrackLocked for a transition op's home lane, by index. Transitions are the
+ *  one mutation family whose subject (the transition record) is not a layer,
+ *  so the move/trim/split lock convention lands here as a whole-command gate:
+ *  add/update/remove all retime, borrow, or re-authorize rendering on the
+ *  participants' shared lane, and a kind-only patch is no exception — locked
+ *  means untouchable, not merely un-retimable. Grouped siblings on OTHER lanes
+ *  keep their own gate (checkGroupLock via incomingMoveSet). */
+function checkTransitionTrackLock(p: Project, trackIdx: number): void {
+  if (p.tracks[trackIdx].locked)
+    throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[trackIdx].id })
+}
+
 /** Audio participants are rejected here (precise, pre-id-mint error); validate's
  *  TransitionUnsupportedLayerKind rule is the backstop no path can bypass. */
 function rejectAudioParticipant(layer: Layer): void {
@@ -190,9 +202,10 @@ function bounceCollidingSiblings(p: Project, idGen: IdGen, memberIds: readonly U
  *    placements — nothing moves, `extended_us = 0`.
  *  - anything else: TransitionLayersNotAdjacent.
  *
- *  Every refusal is pre-id-mint (LayerNotFound / TransitionUnsupportedLayerKind
- *  / TransitionInsufficientHandle / TransitionLayersNotAdjacent / the overlap
- *  branch's TransitionDurationOutOfRange, TransitionParticipantsShareGroup,
+ *  Every refusal is pre-id-mint (LayerNotFound / TrackLocked /
+ *  TransitionUnsupportedLayerKind / TransitionInsufficientHandle /
+ *  TransitionLayersNotAdjacent / the overlap branch's
+ *  TransitionDurationOutOfRange, TransitionParticipantsShareGroup,
  *  NegativeLayerStart and group-lock refusals burn no id); the transition id is
  *  minted after them all but BEFORE commit's validate — a downstream
  *  ValidationFailed burns it (the keystone landmine). A bounce-spawned track id
@@ -206,6 +219,11 @@ export function applyAddTransition(
   const [trackIdx, fromIdx] = fromLoc
   const toIdx = p.tracks[trackIdx].layers.findIndex((l) => l.id === toLayer)
   if (toIdx < 0) throw new CommandFailure({ error: 'LayerNotFound', layer: toLayer })
+  // Same-track invariant ⇒ ONE lock check covers both participants: every
+  // branch below retimes or borrows content on this lane (even the
+  // pre-overlapped one authorizes new rendering over it), and a locked lane is
+  // untouchable by any mutation (the move/trim/split convention).
+  checkTransitionTrackLock(p, trackIdx)
 
   const fromLayerObj = p.tracks[trackIdx].layers[fromIdx]
   const toLayerObj = p.tracks[trackIdx].layers[toIdx]
@@ -280,7 +298,8 @@ export function applyAddTransition(
 
 /** update_transition — patch { duration_us?, kind?, extended_us? } on one
  *  transition (direction rides inside kind). Patch semantics so the actor
- *  exposes it as ONE recorded command (one undo step). Mints no ids.
+ *  exposes it as ONE recorded command (one undo step). Mints no ids. A locked
+ *  home lane refuses the whole patch (TrackLocked, kind-only included).
  *
  *  The targets (d′, e′) fully determine both window edges, anchored on A's
  *  sacred end S: A.end′ = S + e′ frames and B.start′ = A.end′ − d′ frames, all
@@ -307,6 +326,11 @@ export function applyAddTransition(
 export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { duration_us?: number; kind?: Transition['kind']; extended_us?: number }): void {
   const tr = p.transitions.find((t) => t.id === transitionId)
   if (!tr) throw new CommandFailure({ error: 'TransitionNotFound', transition: transitionId })
+  // Whole-command lock gate, kind-only patches included (see
+  // checkTransitionTrackLock). Either participant locates the shared lane; a
+  // healthy state always has both (reconcile drops orphans on every commit).
+  const gateLoc = locate(p, tr.from_layer) ?? locate(p, tr.to_layer)
+  if (gateLoc) checkTransitionTrackLock(p, gateLoc[0])
   const requestedDur = patch.duration_us
   const requestedExt = patch.extended_us
   if (requestedDur !== undefined || requestedExt !== undefined) {
@@ -411,11 +435,12 @@ function precheckRestoreCollision(p: Project, memberIds: readonly Uuid[], deltaU
  *  lattices), restoring adjacency exactly: B.start′ = S = A.end′. Since e ≤ d
  *  the move is never negative, so B cannot cross 0 here.
  *
- *  The restore move is pre-checked for destination collisions
- *  (TransitionRestoreCollision) BEFORE anything mutates; an unlocatable
- *  from_layer/to_layer skips that half (tolerance for a participant a prior
- *  edit removed). Like update, a following B→C transition broken by B's move
- *  is commit-reconcile's designed drop. */
+ *  A locked home lane refuses first (TrackLocked), then the restore move is
+ *  pre-checked for destination collisions (TransitionRestoreCollision) — both
+ *  BEFORE anything mutates; an unlocatable from_layer/to_layer skips that half
+ *  (tolerance for a participant a prior edit removed). Like update, a
+ *  following B→C transition broken by B's move is commit-reconcile's designed
+ *  drop. */
 export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
   const idx = p.transitions.findIndex((t) => t.id === transitionId)
   if (idx < 0) throw new CommandFailure({ error: 'TransitionNotFound', transition: transitionId })
@@ -423,6 +448,9 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
   const moveUs = tr.duration_us - tr.extended_us // ≥ 0: validate holds e ≤ d
   const fromLoc = locate(p, tr.from_layer)
   const toLoc = locate(p, tr.to_layer)
+  // Whole-command lock gate on whichever participant halves still exist —
+  // lock outranks the collision pre-check below (see checkTransitionTrackLock).
+  for (const loc of [fromLoc, toLoc]) if (loc) checkTransitionTrackLock(p, loc[0])
 
   let moveSet: Uuid[] = []
   if (toLoc && moveUs > 0) {
