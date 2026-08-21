@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
-import { SLICES, sliceEnv } from '../e2e/slices.mjs'
+import { SLICES, osLabelFor, sliceEnv } from '../e2e/slices.mjs'
 import {
   foldRunStatuses,
   planE2ERuns,
@@ -152,6 +152,10 @@ test('no gate flag survives into either planned Playwright run', () => {
 
 const SERIAL_SLICE = SLICES.find((slice) => slice.serial).name
 const OTHER_SLICE = SLICES.find((slice) => !slice.serial).name
+// Pinned rather than taken from the host: the restriction a slice resolves to is
+// per OS, and these assertions have to mean the same thing on every machine.
+const PLATFORM = 'win32'
+const envFor = (slice) => sliceEnv(slice, osLabelFor(PLATFORM))
 
 test('--slice is extracted and never reaches the Playwright argv', () => {
   const { slice, args } = splitSliceFlag(['--slice=overlap', '-g', 'export'])
@@ -176,13 +180,13 @@ test('no --slice survives into any planned Playwright run', () => {
 
 test('the slice that owns the serial project runs it, unrestricted', () => {
   const runs = planE2ERuns([])
-  const plan = planSlicedRuns(runs, SERIAL_SLICE)
+  const plan = planSlicedRuns(runs, SERIAL_SLICE, PLATFORM)
   assert.deepEqual(
     plan.map((run) => run.args),
     runs,
   )
   assert.deepEqual(plan[0].env, {}, 'the serial project must inherit no slice restriction')
-  assert.deepEqual(plan[1].env, sliceEnv(SERIAL_SLICE))
+  assert.deepEqual(plan[1].env, envFor(SERIAL_SLICE))
 })
 
 test('every other slice plans the parallel run only', () => {
@@ -190,12 +194,29 @@ test('every other slice plans the parallel run only', () => {
   // its 3 minutes, and locally the same rule keeps `--slice=` honest about what
   // that runner actually did.
   const runs = planE2ERuns([])
-  const plan = planSlicedRuns(runs, OTHER_SLICE)
+  const plan = planSlicedRuns(runs, OTHER_SLICE, PLATFORM)
   assert.deepEqual(
     plan.map((run) => run.args),
     [runs[1]],
   )
-  assert.deepEqual(plan[0].env, sliceEnv(OTHER_SLICE))
+  assert.deepEqual(plan[0].env, envFor(OTHER_SLICE))
+})
+
+test('a replay restricts as its own OS does, not as the widest OS does', () => {
+  // The catch-all absorbs whatever its OS's other slices do not own, so an OS
+  // running fewer slices ignores fewer files. Resolve a replay against the wrong
+  // OS and it runs LESS than the leg it claims to reproduce — silently, since
+  // both invocations look identical and both come back green.
+  const catchAll = SLICES.find((slice) => slice.own.length === 0).name
+  const runs = planE2ERuns([])
+  const ignoredOn = (platform) =>
+    planSlicedRuns(runs, catchAll, platform).at(-1).env.WEFTCUT_E2E_IGNORE.split(',')
+  assert.ok(
+    ignoredOn('darwin').length < ignoredOn('win32').length,
+    'macOS runs fewer slices, so its catch-all must ignore fewer files',
+  )
+  for (const name of ignoredOn('darwin'))
+    assert.ok(ignoredOn('win32').includes(name), `${name} ignored on macOS but not on Windows`)
 })
 
 test('an unsliced plan carries no restriction at all', () => {

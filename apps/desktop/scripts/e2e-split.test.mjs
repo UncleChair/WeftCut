@@ -4,7 +4,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { OS_SLICES, SLICES, sliceEnv, sliceNames, slicesFor } from '../e2e/slices.mjs'
+import { OS_SLICES, SLICES, osLabelFor, sliceEnv, sliceNames, slicesFor } from '../e2e/slices.mjs'
 
 /// electron-ci splits one e2e run across runners by NAMING spec files and giving
 /// one leg everything that was not named. The split is therefore only correct if
@@ -135,22 +135,20 @@ test('a named slice restricts to its own files and ignores nothing', () => {
   }
 })
 
-test('naming no OS means the whole table, which is what a local replay wants', () => {
-  // scripts/run-e2e.mjs's `--slice=<name>` reproduces one CI leg on one machine,
-  // where there are no sibling legs to absorb a remainder: the full table is the
-  // only shape under which every named file still runs somewhere. CI always
-  // passes the OS, so this default never reaches a runner.
-  const everything = SLICES.flatMap((slice) => slice.own)
-  const catchAll = SLICES.find((slice) => slice.own.length === 0)
-  assert.deepEqual(names(sliceEnv(catchAll.name).WEFTCUT_E2E_IGNORE), everything)
-  for (const slice of SLICES.filter((s) => s.own.length))
-    assert.deepEqual(names(sliceEnv(slice.name).WEFTCUT_E2E_ONLY), slice.own)
+test('every runner platform resolves to an OS the table knows', () => {
+  // scripts/run-e2e.mjs's `--slice=<name>` derives the OS from process.platform,
+  // so a local replay restricts exactly as the leg it reproduces. Left to default
+  // to the whole table, a replay on an OS running fewer slices would ignore the
+  // files that OS's catch-all absorbs and run LESS than the leg it stands in for.
+  for (const platform of ['win32', 'linux', 'darwin'])
+    assert.ok(OS_SLICES[osLabelFor(platform)], `${platform} maps outside the table`)
+  assert.throws(() => osLabelFor('freebsd'), /no e2e slice set for platform/)
+  assert.throws(() => sliceEnv(sliceNames()[0]), /unknown OS/)
 })
 
 test('an unknown slice name is loud rather than an empty restriction', () => {
   // The failure mode this guards: a typo in the `part:` matrix resolving to no
   // restriction, under which that runner silently repeats the entire suite.
-  assert.throws(() => sliceEnv('overlaps'), /unknown e2e slice/)
   assert.throws(() => sliceEnv('overlaps', OSES[0]), /unknown e2e slice/)
 })
 

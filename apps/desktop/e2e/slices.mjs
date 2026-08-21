@@ -66,6 +66,22 @@ export const OS_SLICES = {
   "macos-latest": ["audio", "codecs", "rest"],
 };
 
+/// `process.platform` to the `os:` matrix label, so a local replay resolves to the
+/// same slice set as the leg it is reproducing. A machine can only reproduce its
+/// own OS's legs, which is why this is derived rather than passed.
+const MATRIX_OS = { win32: "windows-latest", linux: "ubuntu-latest", darwin: "macos-latest" };
+
+/// The matrix label for a platform. Throws rather than defaulting: guessing here
+/// would compute an ignore set for the wrong OS, which is the silent-skip class
+/// this module exists to make impossible.
+export function osLabelFor(platform = process.platform) {
+  const os = MATRIX_OS[platform];
+  if (!os) {
+    throw new Error(`no e2e slice set for platform "${platform}" — CI runs ${Object.values(MATRIX_OS).join(", ")}`);
+  }
+  return os;
+}
+
 /// Conservative on purpose: `--shell` emits these names inside single quotes for
 /// `eval`, so a quote character in one would run arbitrary shell on every runner.
 /// Validated at import, which makes every consumer the tripwire, not just CI.
@@ -101,17 +117,17 @@ export function slicesFor(os) {
 
 /// The two variables playwright.config.ts consumes, for one slice on one OS. The
 /// catch-all's ignore set is the union over the slices THAT OS runs, which is the
-/// whole reason the OS is a parameter (OS_SLICES carries what goes wrong without
-/// it). Omitting it means the full table — the shape a local `--slice=` replay
-/// wants, where one machine stands in for every leg; CI always names it.
+/// whole reason the OS is required: default it to the whole table and a replay of
+/// an OS running fewer slices would ignore the very files that OS's catch-all
+/// absorbs, running LESS than the leg it claims to reproduce.
 ///
-/// Every way the matrix can disagree with this table throws, because each of them
+/// Every way a caller can disagree with this table throws, because each of them
 /// is a leg doing the wrong amount of work while still reporting green: an unknown
 /// slice name or OS label would leave an empty restriction, under which that one
 /// runner repeats the whole suite, and a slice the named OS does not run is a
 /// `part` the matrix should have excluded rather than a leg to skip.
 export function sliceEnv(name, os) {
-  const runs = os === undefined ? SLICES : slicesFor(os);
+  const runs = slicesFor(os);
   const slice = runs.find((s) => s.name === name);
   if (!slice) {
     throw new Error(

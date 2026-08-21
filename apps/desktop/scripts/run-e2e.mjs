@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { SLICES, sliceEnv } from '../e2e/slices.mjs'
+import { SLICES, osLabelFor, sliceEnv } from '../e2e/slices.mjs'
 
 const require = createRequire(import.meta.url)
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url))) // apps/desktop
@@ -96,9 +96,11 @@ function projectForRun(args) {
  * that project to the sliced files as well; no @serial test lives in any of
  * them, and Playwright kills the run with "No tests found". The workflow keeps
  * the same separation with a subshell. */
-export function planSlicedRuns(runs, slice) {
+export function planSlicedRuns(runs, slice, platform = process.platform) {
   if (!slice) return runs.map((args) => ({ args, env: {} }))
-  const env = sliceEnv(slice)
+  // This machine's own OS: a slice set is per OS, so replaying `rest` here has to
+  // mean what `rest` means on the leg this machine could have been.
+  const env = sliceEnv(slice, osLabelFor(platform))
   const ownsSerial = Boolean(SLICES.find((s) => s.name === slice).serial)
   return runs
     .filter((args) => ownsSerial || projectForRun(args) !== 'serial')
@@ -233,15 +235,16 @@ function noteMatrixTier(env, notes) {
 /** Name the slice and what it leaves out. Same reason as the tier note above: a
  * scoped run drops most of the suite, and unannounced that reads as tests having
  * gone missing. */
-function noteSlice(slice) {
-  const { WEFTCUT_E2E_ONLY, WEFTCUT_E2E_IGNORE } = sliceEnv(slice)
+function noteSlice(slice, platform = process.platform) {
+  const os = osLabelFor(platform)
+  const { WEFTCUT_E2E_ONLY, WEFTCUT_E2E_IGNORE } = sliceEnv(slice, os)
   const scope = WEFTCUT_E2E_ONLY
     ? `only ${WEFTCUT_E2E_ONLY}`
     : `everything except ${WEFTCUT_E2E_IGNORE}`
   const serial = SLICES.find((s) => s.name === slice).serial
     ? 'plus the serial project, which this slice owns'
     : 'without the serial project, which another slice owns'
-  return `--slice=${slice} — the parallel project runs ${scope}, ${serial}`
+  return `--slice=${slice} (as on ${os}) — the parallel project runs ${scope}, ${serial}`
 }
 
 /** Wire the per-platform real-run config into a copy of the environment and
