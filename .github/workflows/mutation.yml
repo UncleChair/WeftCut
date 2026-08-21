@@ -41,21 +41,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.23.0'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: package-lock.json
-
-      # Stryker runs the vitest suite, which imports the napi addon
-      # (@weftcut/core) and the wasm eval leaf — so both must be built first.
-      # Action pins match electron-ci.yml (supply-chain hardening).
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
-        with:
-          toolchain: stable
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: apps/desktop/native
 
       # npm ci at the workspace root: the root package-lock.json covers all
       # workspaces (there is no apps/desktop/package-lock.json). .npmrc sets
@@ -67,15 +55,19 @@ jobs:
         working-directory: .
         run: npm ci
 
-      - name: Build napi addon
-        run: npm run napi:build
-
-      # testSetup.ts loads the eval wasm before every test file. Its pretest hook
-      # cannot deliver it twice over: hooks are off under ignore-scripts, and
-      # `stryker run` drives vitest through its own runner rather than `npm test`
-      # anyway. Build it explicitly.
-      - name: Build wasm eval leaf
-        run: npm run build:wasm
+      # The vitest suite imports the napi addon (@weftcut/core), and testSetup.ts
+      # loads the eval wasm before every test file. Nothing here delivers either
+      # implicitly: hooks are off under ignore-scripts, and `stryker run` drives
+      # vitest through its own runner rather than `npm test`, so that script's
+      # build:wasm prefix never fires either.
+      #
+      # This job has no LGPL ffmpeg tree and no libclang, so it declines the decode
+      # addon — a component the vitest suite only ever loads opportunistically —
+      # and therefore cannot publish: the electron-ci legs own that key.
+      - uses: ./.github/actions/rust-artifacts
+        with:
+          decode: false
+          save: false
 
       # WEFTCUT_PBT_RUNS=30 shrinks the property-based tests' fast-check runs for
       # the mutation pass (every mutant re-runs its covering tests; fewer runs

@@ -1,0 +1,197 @@
+name: Rust artifacts
+description: >-
+  Restore the two napi addons, the conformance analyzer bin and the generated
+  eval wasm module from a cache keyed on the Rust sources that produce them —
+  or build them and publish the cache.
+
+# Why this is an action and not five inline steps: the key below must be
+# byte-identical in every job that reads it, and a drifted copy degrades to a
+# silent miss rather than an error. That single definition is the whole reason
+# the abstraction is spent here.
+#
+# LANDMINE — the key inputs and the cached paths are repo-root-relative
+# literals, because `hashFiles` and actions/cache both resolve against
+# GITHUB_WORKSPACE and ignore any working-directory. `working-directory` moves
+# the npm scripts only; aimed at a second app it would key that app's artifacts
+# on this one's sources.
+
+inputs:
+  working-directory:
+    description: App whose npm scripts build the artifacts — so call this after its install.
+    required: false
+    default: apps/desktop
+  decode:
+    description: >-
+      Whether a miss builds the native-decode addon. It is the one artifact whose
+      build needs an LGPL ffmpeg tree and libclang, so a caller that has neither
+      opts out — and must then also pass save: false.
+    required: false
+    default: 'true'
+  save:
+    description: >-
+      Whether this caller publishes the cache. The key covers the whole set, so
+      only a caller that builds all of it may save (see `decode`, and the guard
+      step that enforces the pairing).
+    required: false
+    default: 'true'
+
+outputs:
+  cache-hit:
+    description: 'true when the whole set came from the cache and nothing was built.'
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # The pairing this refuses is the one that poisons the cache for everyone: a
+    # caller that skips an artifact but still publishes hands every later leg a
+    # restore that LOOKS complete. Cheaper to fail here than to debug a hit that
+    # is missing an addon.
+    - name: Reject a publisher that skips an artifact
+      if: inputs.save == 'true' && inputs.decode != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "rust-artifacts: save=true needs decode=true — the key names the whole set." >&2
+        exit 1
+
+    # `rust-toolchain.toml` floats on `channel = "stable"`, so the compiler is
+    # the one build input no file hash can see. LANDMINE — this reads the rustc
+    # the runner image already carries, the only one a cache HIT can offer; the
+    # miss path's toolchain install may be a newer stable, so a stable release
+    # busts the key when the runner IMAGE adopts it, not when it ships. `git
+    # hash-object` because git is the one digest tool present on all three
+    # images (`shasum` is missing on Windows, `sha256sum` on macOS).
+    - name: Identify the Rust compiler
+      id: rustc
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: echo "ver=$(rustc -V | git hash-object --stdin | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+    # No restore-keys: a prefix match would hand the leg addons built from
+    # different sources, and every downstream gate would then judge the wrong
+    # binary. Split restore/save (not the combined actions/cache) so the build
+    # steps can read the outcome, and so the save lands right after the build
+    # instead of in a post-step that a later red skips.
+    - name: Restore rust artifacts
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        # The co-located libav* set is a versioned symlink chain
+        # (libfoo.so -> .so.62 -> .so.62.x.y, libfoo.dylib -> libfoo.62.dylib);
+        # tar keeps the links, and it must — the addon's NEEDED entries name the
+        # versioned real file, not the bare one.
+        path: |
+          apps/desktop/native/index.*.node
+          apps/desktop/native/index.js
+          apps/desktop/native/index.d.ts
+          apps/desktop/native/decode/index.*.node
+          apps/desktop/native/decode/index.js
+          apps/desktop/native/decode/index.d.ts
+          apps/desktop/native/decode/*.so
+          apps/desktop/native/decode/*.so.*
+          apps/desktop/native/decode/*.dylib
+          apps/desktop/native/target/debug/media_conformance
+          apps/desktop/native/target/debug/media_conformance.exe
+          apps/desktop/src/renderer/eval/evalWasm.generated.ts
+        key: rustartifacts-${{ runner.os }}-${{ hashFiles('apps/desktop/native/**/*.rs', 'apps/desktop/native/**/Cargo.toml', 'apps/desktop/native/Cargo.lock', 'rust-toolchain.toml', 'apps/desktop/native/**/build.rs', 'apps/desktop/scripts/napi-build-decode.mjs', 'apps/desktop/scripts/build-eval-wasm.mjs') }}-${{ steps.rustc.outputs.ver }}
+
+    # Third-party actions pinned to immutable commit SHAs (supply-chain
+    # hardening); version in the trailing comment. Bump deliberately at a
+    # checkpoint, not automatically. GitHub-owned actions/* stay on their major
+    # tag.
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
+      with:
+        # Once pinned to a SHA the @<ref> name no longer signals the channel
+        # (that was the magic of @stable), so name the toolchain explicitly.
+        toolchain: stable
+        # rust-toolchain.toml names this target too, but the action's
+        # auto-detection of that file is unverified here and the wasm leaf below
+        # fails hard without it.
+        targets: wasm32-unknown-unknown
+
+    # A COMPILATION cache (537 MB on Windows), restored only when something is
+    # about to compile: a hit already holds the outputs those compilations would
+    # produce, so it skips the restore along with cargo itself.
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        workspaces: apps/desktop/native
+
+    # First cargo invocation on purpose: a broken eval crate or a missing wasm32
+    # target reddens in 30 seconds here instead of surfacing minutes later,
+    # behind the addon builds.
+    - name: Build eval wasm leaf
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm run build:wasm
+
+    - name: Build napi addon
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm run napi:build
+
+    # Windows ships LLVM at C:\Program Files\LLVM (the wrapper defaults
+    # LIBCLANG_PATH there); Linux uses the caller's apt libclang-dev (clang-sys
+    # auto-discovers it) and the wrapper bakes RUNPATH=$ORIGIN + co-locates the
+    # libav*.so; macOS uses the Xcode toolchain's libclang (clang-sys finds it
+    # via xcode-select; GitHub runners ship full Xcode) and the wrapper bakes
+    # @loader_path + co-locates the libav*.dylib. All default FFMPEG_DIR to the
+    # fetched resources/ffmpeg-lgpl/<os>, so the caller must have fetched it —
+    # which is what the `decode` input lets a caller decline.
+    - name: Build native-decode addon
+      if: steps.restore.outputs.cache-hit != 'true' && inputs.decode == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm run napi:build:decode
+
+    # The analyzer-backed e2e gates exec this bin per assertion
+    # (e2e/lib/analyze.mjs). Load-bearing, not an optimization: without it
+    # analyze.mjs falls back to `cargo run`, whose fingerprint check compiles the
+    # bin inside the first gate — silently, on the stderr it captures and drops.
+    # Same npm script a developer runs, so what CI prebuilds cannot drift from
+    # what the specs then look for. Dev profile deliberately: 3.50 s per
+    # invocation against release's 3.07 s, because the cost is ffmpeg decode and
+    # process startup rather than Rust code.
+    - name: Prebuild conformance analyzer
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm run analyzer:build
+
+    # continue-on-error: the whole matrix races this one key, and the losers get
+    # a 409 that actions/cache/save reports as a warning — a leg that already did
+    # the work must not go red for losing the race. Path list must stay identical
+    # to the restore's above.
+    - name: Save rust artifacts
+      if: steps.restore.outputs.cache-hit != 'true' && inputs.save == 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          apps/desktop/native/index.*.node
+          apps/desktop/native/index.js
+          apps/desktop/native/index.d.ts
+          apps/desktop/native/decode/index.*.node
+          apps/desktop/native/decode/index.js
+          apps/desktop/native/decode/index.d.ts
+          apps/desktop/native/decode/*.so
+          apps/desktop/native/decode/*.so.*
+          apps/desktop/native/decode/*.dylib
+          apps/desktop/native/target/debug/media_conformance
+          apps/desktop/native/target/debug/media_conformance.exe
+          apps/desktop/src/renderer/eval/evalWasm.generated.ts
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    # Every consumer of the wasm module reaches it through an npm script that
+    # chains build:wasm (typecheck, test, build:e2e), so the file alone does not
+    # spare them cargo — the flag does. $GITHUB_ENV is the only channel that
+    # reaches the calling job's later steps. See usePrebuiltWasm in
+    # scripts/build-eval-wasm-lib.mjs.
+    - name: Reuse the generated eval wasm
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: echo "WEFTCUT_EVAL_WASM_PREBUILT=1" >> "$GITHUB_ENV"
