@@ -1,6 +1,8 @@
-// The two facts about a text box that both the renderer and the UI need, kept
-// in a module neither has to import Pixi to read. `TextSprite` derives the fit;
-// the gizmo and the inspector consume it through `GizmoProbe`.
+// What a text box did to a layer's font size, and the search that decides it.
+// Imports no Pixi: the measurement is injected, so the search is testable
+// without a canvas and the gizmo and the inspector can read its result without
+// learning what Pixi is. `TextSprite` supplies the measurement and owns the
+// style that renders; the UI consumes the result through `GizmoProbe`.
 // See ADR 0049.
 
 /// Smallest font size shrink-to-fit will produce, and the smallest `box_w` a
@@ -42,4 +44,83 @@ export interface TextFit {
 /// flicker on a layer that fits.
 export function isShrunk(fit: TextFit): boolean {
   return fit.effectivePx < fit.authoredPx - 1e-6;
+}
+
+/// Slack allowed when comparing the measured block against the box, so a block
+/// that lands exactly on the box edge counts as fitting. It absorbs the float
+/// error of summed glyph advances and nothing else, so it stays far below the
+/// one pixel that would let a visibly clipped line pass.
+const FIT_EPS = 1e-6;
+
+/// A candidate size's cost, in the box's units (composition px, pre-`scale`).
+export interface MeasuredBlock {
+  w: number;
+  h: number;
+}
+
+export interface FitSearch {
+  /// The size the user set. Returned unrounded when it already fits, so a box
+  /// with room to spare renders bit-for-bit what it rendered before the box
+  /// existed.
+  authoredPx: number;
+  boxW: number;
+  boxH: number;
+  /// The block's extent at one candidate size. Stroke and drop shadow are
+  /// already inside it — `CanvasTextMetrics` adds the stroke width and the
+  /// shadow's distance to the width it reports — so the caller must not pad for
+  /// the outline a second time, and the outline it measures has to be the
+  /// SCALED one or the fit test would answer for a frame nobody renders.
+  measure: (px: number) => MeasuredBlock;
+}
+
+/// The largest font size whose measured block fits `(boxW, boxH)` — Fixed mode's
+/// answer to text that does not fit. Derived per style change and never stored:
+/// state keeps exactly one font size, the one the user set (ADR 0049).
+///
+/// Searched over WHOLE pixels. A fractional bisection would need a termination
+/// epsilon to tune and could mint an unbounded set of sizes, each one a fresh
+/// entry in `CanvasTextMetrics`'s measurement cache; integers terminate on the
+/// range itself in ~log2(authored) probes, and every probe is a size the
+/// inspector can name ("auto-reduced to 31 px").
+///
+/// Premise of the bisection: `measure` is monotone in `px`. Glyph advances scale
+/// with the size, so a smaller size never yields a wider or taller block — with
+/// wrapping it yields fewer, shorter lines, which is shrink and wrap composing
+/// rather than fighting.
+export function fitFontSize(s: FitSearch): TextFit {
+  const { authoredPx, boxW, boxH } = s;
+  const fits = (px: number): boolean => {
+    const m = s.measure(px);
+    return m.w <= boxW + FIT_EPS && m.h <= boxH + FIT_EPS;
+  };
+  // Not a size to bisect toward — a hand-edited project, which still has to
+  // render something rather than take the sprite down.
+  if (!Number.isFinite(authoredPx) || authoredPx <= 0) {
+    return { authoredPx, effectivePx: authoredPx, overflowing: false };
+  }
+  if (fits(authoredPx)) return { authoredPx, effectivePx: authoredPx, overflowing: false };
+  // The authored size is now known not to fit, so an integer one excludes itself
+  // from the range below.
+  let hi = Number.isInteger(authoredPx) ? authoredPx - 1 : Math.floor(authoredPx);
+  // `TEXT_BOX_MIN_PX` is a floor on SHRINKING, never a size to grow toward: a
+  // 6 px caption in a box too small for it overflows at 6 px rather than being
+  // enlarged to 8, because no box drag may make text bigger than it was set.
+  if (hi < TEXT_BOX_MIN_PX) return { authoredPx, effectivePx: authoredPx, overflowing: true };
+  let lo = TEXT_BOX_MIN_PX;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = lo + ((hi - lo) >> 1);
+    if (fits(mid)) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  // Nothing down to the floor fits: render AT the floor and say so. Continuing
+  // is the one thing this must not do — 4 px text is not a smaller version of
+  // the feature, it is a frame nobody can read.
+  return best < 0
+    ? { authoredPx, effectivePx: TEXT_BOX_MIN_PX, overflowing: true }
+    : { authoredPx, effectivePx: best, overflowing: false };
 }

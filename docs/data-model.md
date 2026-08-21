@@ -659,8 +659,8 @@ Neither box field is `Animated`, deliberately: a keyframed box would move the
 shrink factor every frame and rebuild the glyph atlas with it. `scale_x`/`scale_y`
 remain the animation channel for a text layer's size, and they scale the rendered
 result — the box lays glyphs out instead of magnifying them. The shrink factor
-Fixed applies (and the outline/shadow scaling that follows it) is **derived in the
-renderer and never stored**: an MCP `content` edit never reaches the renderer, so
+Fixed applies (and the outline, shadow, leading and tracking scaling that follows
+it) is **derived in the renderer and never stored**: an MCP `content` edit never reaches the renderer, so
 a persisted effective size would be stale from the next word typed. See ADR 0049.
 
 ### `MotifParams`

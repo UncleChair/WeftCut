@@ -1,13 +1,14 @@
 // Text layer rendered via PixiJS native `Text` (canvas-backed glyphs).
-// Owns two things Pixi does not do for us: the wrap width (from the layer's
-// box) and the placement of the measured block inside that box.
+// Owns three things Pixi does not do for us: the wrap width (from the layer's
+// box), the placement of the measured block inside that box, and the size the
+// glyphs are actually drawn at when the box is too small for them.
 // See docs/render.md, ADR 0049.
 
-import { Text, TextStyle, type Container, type TextStyleFontWeight } from "pixi.js";
+import { CanvasTextMetrics, Text, TextStyle, type Container, type TextStyleFontWeight } from "pixi.js";
 
 import { DEFAULT_CAPTION_FONT_FAMILY } from "../../../shared/fonts";
 import type { ResolvedTextView } from "../resolveView";
-import type { TextFit } from "../textBox";
+import { fitFontSize, type TextFit } from "../textBox";
 import type { StageableSprite } from "./StageableSprite";
 
 export interface TextSpriteInit {
@@ -91,6 +92,76 @@ function anchorAxis(block: number, box: number | null, frac: number, anchor: num
   return (anchor * box - frac * (box - block)) / block;
 }
 
+/// Everything the applied `TextStyle` needs except the size, which shrink-to-fit
+/// searches for against one of these.
+interface StyleInput {
+  view: ResolvedTextView;
+  align: keyof typeof ALIGN_FRAC;
+  /// Already coalesced — the wrap width, or null for no wrapping at all.
+  boxW: number | null;
+  /// AUTHORED leading and tracking. The shrink factor is applied to them below,
+  /// so a caller that pre-scaled them would compress them twice.
+  lineHeight: number;
+  letterSpacing: number;
+}
+
+/// The style at one candidate size: the shrink search's probe and, at the winning
+/// size, the style that renders. One function for both, so a probe can never
+/// measure something other than what the frame gets.
+///
+/// Outline, shadow, leading and tracking are all multiplied by `px /
+/// font_size_px` here and nowhere else — derived like the size itself, never
+/// written back to state. Everything authored in pixels AGAINST THE GLYPHS has to
+/// compress with them, for one reason wearing several faces: an absolute 4 px
+/// outline around text compressed to 43% reads as a smeared border, and an
+/// absolute 80 px leading over 8 px glyphs reads as broken spacing.
+/// `native/src/subtitles/layout.rs` already treats an outline as `size * 0.06` at
+/// import, so an absolute width surviving the compression would contradict the
+/// importer's own model. ADR 0049.
+///
+/// Scaling the leading is also what lets the search CONVERGE: an absolute height
+/// term no bisection can shrink drives a box shorter than one authored line to
+/// the 8 px floor however small the glyphs get, and reports overflow on a case
+/// the feature is supposed to handle.
+function textStyleFor(i: StyleInput, px: number): TextStyle {
+  const v = i.view, o = v.outline, sh = v.shadow;
+  // Exactly 1 whenever nothing shrank, and `line_height: 0` — auto, the font's
+  // own metrics — stays 0 under any factor. Both `× 1.0` and `0 ×` are exact in
+  // IEEE-754, so Auto width and the default leading are bit-for-bit what they
+  // were before the box existed.
+  const f = v.font_size_px > 0 ? px / v.font_size_px : 1;
+  const offX = (sh?.offset_x ?? 0) * f, offY = (sh?.offset_y ?? 0) * f;
+  return new TextStyle({
+    fontFamily: v.font_family || DEFAULT_CAPTION_FONT_FAMILY,
+    fontSize: px,
+    fontWeight: String(v.weight || 400) as TextStyleFontWeight,
+    fontStyle: v.italic ? "italic" : "normal",
+    align: i.align,
+    fill: (v.color.r << 16) | (v.color.g << 8) | v.color.b,
+    lineHeight: i.lineHeight * f,
+    letterSpacing: i.letterSpacing * f,
+    // A box width is the wrap width; without one the text runs as far as it
+    // likes. `breakWords` stays off so Latin words are never split — CJK wraps
+    // through `fonts/lineBreak.ts`'s realm-global hook instead.
+    wordWrap: i.boxW !== null,
+    wordWrapWidth: i.boxW ?? 0,
+    ...(o
+      ? { stroke: { color: (o.color.r << 16) | (o.color.g << 8) | o.color.b, width: o.width * f } }
+      : {}),
+    ...(sh
+      ? {
+          dropShadow: {
+            color: (sh.color.r << 16) | (sh.color.g << 8) | sh.color.b,
+            blur: sh.blur * f,
+            distance: Math.hypot(offX, offY),
+            angle: Math.atan2(offY, offX),
+            alpha: sh.color.a / 255,
+          },
+        }
+      : {}),
+  });
+}
+
 export class TextSprite implements StageableSprite {
   readonly text: Text;
   readonly layerId: string;
@@ -106,7 +177,9 @@ export class TextSprite implements StageableSprite {
   /// What the last `update` did with the font size, for the `GizmoProbe`
   /// read-back. Held here and not recomputed on demand because the UI must be
   /// told what was RENDERED, and a fresh computation could answer from a style
-  /// the frame never saw.
+  /// the frame never saw. Written only inside the `appliedSig` gate: every input
+  /// to the shrink search is in that signature, so an unchanged signature means
+  /// this is still the answer.
   private fitState: TextFit | null = null;
 
   constructor(init: TextSpriteInit) {
@@ -165,56 +238,61 @@ export class TextSprite implements StageableSprite {
     const letterSpacing = finiteOr0(view.letter_spacing);
     this.boxW = boxW;
     this.boxH = boxH;
-    // Outside Fixed nothing shrinks, so the authored size IS what renders and
-    // the box cannot overflow — Auto height grows to hold the block instead.
-    this.fitState = {
-      authoredPx: view.font_size_px,
-      effectivePx: view.font_size_px,
-      overflowing: false,
-    };
     const sig =
       `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${align}|` +
       `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|` +
       // The box joins the signature because it IS a measurement input: a wrap
       // width change re-flows the lines. `valign` rides along so the two box
       // axes and their placement can't be read from different generations.
+      // Every input to the shrink search below is in this signature — content,
+      // family, size, weight, italic, box, leading, tracking, outline width,
+      // shadow geometry — which is what lets the search live inside the gate and
+      // cost an unchanged box zero re-measures per frame.
       `${boxW ?? "-"},${boxH ?? "-"},${valign},${lineHeight},${letterSpacing}|` +
       `${o ? `${o.width}:${o.color.r},${o.color.g},${o.color.b}` : "-"}|` +
       `${sh ? `${sh.offset_x},${sh.offset_y},${sh.blur}:${sh.color.r},${sh.color.g},${sh.color.b},${sh.color.a}` : "-"}`;
 
     if (sig !== this.appliedSig) {
       this.appliedSig = sig;
-      const fill = (view.color.r << 16) | (view.color.g << 8) | view.color.b;
+      const si: StyleInput = { view, align, boxW, lineHeight, letterSpacing };
+      // Shrink belongs to Fixed alone, with no exceptions to remember: Auto
+      // height narrower than one glyph overflows HORIZONTALLY instead of
+      // shrinking, which is what keeps a caption at exactly the size its style
+      // asked for. Outside Fixed the authored size IS what renders, and there is
+      // no second dimension for the block to fail to fit. ADR 0049.
+      let style: TextStyle | null = null;
+      if (boxW !== null && boxH !== null) {
+        // Probe styles are kept so the WINNER can be the style that renders:
+        // `TextStyle.styleKey` is per-instance (`uid-tick`), so a freshly minted
+        // style at the same size would miss `CanvasTextMetrics`'s measurement
+        // cache and make Pixi measure the chosen size all over again on render.
+        const probes = new Map<number, TextStyle>();
+        this.fitState = fitFontSize({
+          authoredPx: view.font_size_px,
+          boxW,
+          boxH,
+          measure: (px) => {
+            const s = textStyleFor(si, px);
+            probes.set(px, s);
+            // No explicit wrap argument: the style says `wordWrap: true`, and
+            // reading it from there is what keeps this cache key identical to
+            // the one `Text.updateBounds` computes for the same style.
+            const m = CanvasTextMetrics.measureText(view.content, s);
+            return { w: m.width, h: m.height };
+          },
+        });
+        style = probes.get(this.fitState.effectivePx) ?? null;
+      } else {
+        this.fitState = {
+          authoredPx: view.font_size_px,
+          effectivePx: view.font_size_px,
+          overflowing: false,
+        };
+      }
       // Re-create the style (TextStyle is mutable but Pixi recommends
       // re-assignment for predictable atlas invalidation).
       this.text.text = view.content;
-      this.text.style = new TextStyle({
-        fontFamily: view.font_family || DEFAULT_CAPTION_FONT_FAMILY,
-        fontSize: view.font_size_px,
-        fontWeight: String(view.weight || 400) as TextStyleFontWeight,
-        fontStyle: view.italic ? "italic" : "normal",
-        align,
-        fill,
-        lineHeight,
-        letterSpacing,
-        // A box width is the wrap width; without one the text runs as far as it
-        // likes. `breakWords` stays off so Latin words are never split — CJK
-        // wraps through `fonts/lineBreak.ts`'s realm-global hook instead.
-        wordWrap: boxW !== null,
-        wordWrapWidth: boxW ?? 0,
-        ...(o ? { stroke: { color: (o.color.r << 16) | (o.color.g << 8) | o.color.b, width: o.width } } : {}),
-        ...(sh
-          ? {
-              dropShadow: {
-                color: (sh.color.r << 16) | (sh.color.g << 8) | sh.color.b,
-                blur: sh.blur,
-                distance: Math.hypot(sh.offset_x, sh.offset_y),
-                angle: Math.atan2(sh.offset_y, sh.offset_x),
-                alpha: sh.color.a / 255,
-              },
-            }
-          : {}),
-      });
+      this.text.style = style ?? textStyleFor(si, this.fitState.effectivePx);
     }
 
     // Per-frame transforms and alpha are cheap and do not rebuild the atlas.

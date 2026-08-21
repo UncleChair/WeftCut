@@ -154,8 +154,9 @@ _Avoid_: resize enum, box mode, auto-size flag
 
 **Shrink-to-fit**:
 Fixed's answer to text that overruns its box: the largest font size whose
-measured block fits, with the outline width and shadow offsets multiplied by the
-same factor. Derived at render time and never written back — the layer keeps
+measured block fits, with every other length authored against the glyphs — the
+outline width, the shadow offsets, the leading and the tracking — multiplied by
+the same factor. Derived at render time and never written back — the layer keeps
 exactly one font size, the one the user set — and floored at 8 px absolute,
 below which the text overflows and is marked instead. Belongs to Fixed alone;
 Auto height overflows horizontally rather than shrinking.

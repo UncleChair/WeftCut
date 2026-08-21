@@ -405,7 +405,43 @@ hook is a class static, it must be installed in **both** realms — the
 installed unconditionally in the Compositor, not inside the preview-only font
 branch: the hook needs neither `document` nor a `FontFaceSet`.
 
-Shrink-to-fit is a separate concern: Fixed text that exceeds its box overflows.
+**Shrink-to-fit belongs to Fixed alone.** Fixed is the only mode that can fail
+to contain its text, and it responds by shrinking the glyphs: `TextSprite`
+binary-searches the largest whole-pixel font size whose measured block fits the
+box (`textBox.ts`'s `fitFontSize`, measured through
+`CanvasTextMetrics.measureText` — canvas measurement, no rasterization, no GPU)
+and renders at that size. Whole pixels rather than a fractional bisection: the
+search terminates on the range itself with no epsilon to tune, and the set of
+sizes it can mint stays finite, so Pixi's measurement cache cannot become a
+growth term. The floor is an absolute 8 px (`TEXT_BOX_MIN_PX`, the same number
+as the `box_w` drag floor) — at the floor the text overflows and the sprite
+reports it rather than shrinking further, and an authored size already below the
+floor is never *enlarged* toward it. Auto height narrower than one glyph
+overflows **horizontally** instead of shrinking, which is what keeps a caption
+at exactly the size its style asked for.
+
+The factor also multiplies `outline.width`, the shadow's offsets and blur, and
+the leading and tracking: everything authored in pixels *against the glyphs*
+compresses with them, for one reason wearing several faces — an absolute 4 px
+outline around text compressed to 43% reads as a smeared border, and an absolute
+80 px leading over 8 px glyphs reads as broken spacing.
+`native/src/subtitles/layout.rs` already treats an outline as `size * 0.06` at
+import, so an absolute width surviving the compression would contradict the
+importer's own model. Scaling the leading is also what lets the search converge
+at all: an absolute height term no bisection can shrink drives a box shorter than
+one authored line to the floor however small the glyphs get. `line_height: 0`
+means auto — the font's own metrics — and 0 survives any factor, so the default
+path is untouched.
+
+None of this reaches state: the layer keeps exactly the font size the user set,
+because an MCP `content` edit never passes through the renderer, which would
+leave a stored size stale from the next word typed. The search lives inside
+`TextSprite`'s `appliedSig` gate, whose signature already carries every
+measurement input, so an unchanged box costs zero re-measures per frame; the
+winning probe's `TextStyle` becomes the applied style, since `styleKey` is
+per-instance and a freshly minted twin would miss the measurement cache.
+`GizmoProbe.textFitOf` reads the result back for the inspector's reduced-size
+notice and the gizmo's box stroke.
 
 ### Frame upload: the snapshot rule
 

@@ -88,10 +88,19 @@ number in authored state: an MCP `content` edit never reaches the renderer, so
 the stored value would be a lie from the next word typed. Preview and export
 share this code path, so deriving it costs nothing in agreement between them.
 
-The shrink factor multiplies `outline.width` and `shadow.offset_x/y`/`blur`
-too — also derived, never written back. An absolute 4 px outline on text
-compressed to 43% reads as a smeared border, and `subtitles/layout.rs` already
-treats an outline as a fraction of the size (`size * 0.06`) at import.
+The shrink factor multiplies every other length authored *against the glyphs* —
+`outline.width`, `shadow.offset_x/y`/`blur`, `line_height` and
+`letter_spacing` — all derived, none written back. An absolute 4 px outline on
+text compressed to 43% reads as a smeared border, and `subtitles/layout.rs`
+already treats an outline as a fraction of the size (`size * 0.06`) at import;
+an absolute 80 px leading around 8 px glyphs is the same defect wearing a
+different name. Leading has a second reason: it is the one such length that can
+otherwise make the search *unable to converge*, because an explicit
+`line_height` exceeding `box_h` puts a floor under the measured height that no
+font size can get below. Scaling it also makes that height linear in the
+candidate size, which is the monotonicity the bisection assumes. `line_height`
+`0` means "the font's own metrics", and `0 × factor` is exactly `0`, so the
+default path is untouched.
 
 The floor is absolute — 8 px — not proportional: a proportional floor would
 crush 12 px text to 3 px while leaving 96 px text legible, so the same setting
