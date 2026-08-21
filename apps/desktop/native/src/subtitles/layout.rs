@@ -6,9 +6,17 @@ use crate::state::transform::Transform;
 
 pub const DEFAULT_CAPTION_FONT: &str = "Liberation Sans, Noto Sans SC";
 
+/// Per-side safe-area margin, as a fraction of the composition edge: the inset
+/// `anchor_for` positions a cue at, and — doubled — the frame width the caption
+/// box gives up. One constant for both, because the position margin and the
+/// wrap width have to agree and two literals that must agree are how they stop
+/// agreeing. Twin in `src/main/state/mutations/captions.ts` — diff both sides
+/// when you touch one.
+const SAFE_AREA_MARGIN: f64 = 0.08;
+
 /// Lay out one cue as a Text layer. Styleless cues (SRT/VTT) get the default
 /// caption look: white fill, black outline + soft shadow, size 5% of comp
-/// height, bottom-centre with an 8% safe-area margin. The ASS 9-grid `align`
+/// height, bottom-centre inside `SAFE_AREA_MARGIN`. The ASS 9-grid `align`
 /// (or `\pos`) is converted here to an absolute anchor + position — the render
 /// model stays plain x/y/anchor (no caption-specific render code).
 pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
@@ -55,8 +63,14 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
         }),
         intro: None,
         outro: None,
-        box_w: None,
+        // Auto height, never Fixed: it wraps a transcript's unbroken line
+        // without shrinking, so every cue keeps the size its style asked for.
+        // Fixed would compress the long ones and make two cues of one file
+        // render at different sizes. `box_w` is f32, the margin math f64 — cast
+        // at the boundary, explicitly. See ADR 0049.
+        box_w: Some((comp_w as f64 * (1.0 - 2.0 * SAFE_AREA_MARGIN)) as f32),
         box_h: None,
+        // Never observable in Auto height — the box's height tracks the content.
         valign: VAlign::default(),
         line_height: 0.0,
         letter_spacing: 0.0,
@@ -64,10 +78,10 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
 }
 
 /// ASS 9-grid → (anchor, x, y). 1-3 bottom, 4-6 middle, 7-9 top; 1/4/7 left,
-/// 2/5/8 centre, 3/6/9 right. 8% horizontal + vertical safe-area margins.
+/// 2/5/8 centre, 3/6/9 right, inset by `SAFE_AREA_MARGIN` on both axes.
 fn anchor_for(an: u8, w: f64, h: f64) -> ((f64, f64), f64, f64) {
-    let mx = w * 0.08;
-    let my = h * 0.08;
+    let mx = w * SAFE_AREA_MARGIN;
+    let my = h * SAFE_AREA_MARGIN;
     let (ax, x) = match an {
         1 | 4 | 7 => (0.0, mx),
         3 | 6 | 9 => (1.0, w - mx),
@@ -119,6 +133,11 @@ mod tests {
             }
             _ => panic!("static xy expected"),
         }
+        // Auto height: a wrap width so an unbroken transcript line stays inside
+        // the safe area, and no height so it wraps without ever shrinking.
+        let box_w = p.box_w.expect("a cue is born with a wrap width");
+        assert!((box_w - 1612.8).abs() < 0.05); // 1920 less the margin per side
+        assert!(p.box_h.is_none());
     }
 
     #[test]
@@ -127,6 +146,34 @@ mod tests {
         s.align = Some(8);
         let p = cue_to_text_params(&cue(s), 1920, 1080);
         assert_eq!(static_anchor(&p.transform), (0.5, 0.0));
+    }
+
+    /// The box wraps; it never relocates. An ASS cue carrying both `\an` and an
+    /// explicit `\pos` keeps its 9-grid alignment and its absolute position, and
+    /// gets the same wrap width as a positionless cue.
+    #[test]
+    fn explicit_pos_and_an_survive_the_box() {
+        let s = CueStyle {
+            align: Some(1), // bottom-left
+            pos: Some((100.0, 200.0)),
+            ..CueStyle::default()
+        };
+        let p = cue_to_text_params(&cue(s), 1920, 1080);
+        assert_eq!(static_anchor(&p.transform), (0.0, 1.0));
+        match (&p.transform.x, &p.transform.y) {
+            (Animated::Static(x), Animated::Static(y)) => assert_eq!((*x, *y), (100.0, 200.0)),
+            _ => panic!("static xy expected"),
+        }
+        assert_eq!(p.align, TextAlign::Left);
+        assert!((p.box_w.expect("wrap width") - 1612.8).abs() < 0.05);
+        assert!(p.box_h.is_none());
+    }
+
+    /// The wrap width tracks the composition, not a hardcoded 1920.
+    #[test]
+    fn wrap_width_scales_with_the_composition() {
+        let p = cue_to_text_params(&cue(CueStyle::default()), 640, 360);
+        assert!((p.box_w.expect("wrap width") - 537.6).abs() < 0.05); // 640 * 0.84
     }
 
     /// The anchor pair as plain numbers. `\an` import always writes Static, so a

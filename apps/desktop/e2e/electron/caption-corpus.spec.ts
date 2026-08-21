@@ -20,6 +20,12 @@ const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 const SRT_PATH = path.resolve(__dirname, "../fixtures/subtitles/overlapping.srt");
 // macOS select-all is Meta+a; Control+a does not select in native text fields.
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
+/// One cue's worth of text as a single unbroken line of ~220 characters. A
+/// machine transcript carries no '\n' — the wrap width a cue is born with is the
+/// only thing that keeps such a line inside the frame, and at the default caption
+/// size (5% of 360 px) this is several times the box's width. Written at run time
+/// rather than committed: the shape is the whole fixture.
+const UNBROKEN_LINE = "a transcript sentence that nobody ever broke into lines ".repeat(4).trim();
 
 interface CaptionLayer {
   id: string;
@@ -48,6 +54,59 @@ async function captionLayers(page: import("@playwright/test").Page): Promise<Cap
   }
   return out.sort((a, b) => a.startUs - b.startUs);
 }
+
+interface StoredTextParams {
+  kind: string;
+  content: string;
+  font: { size_px: number };
+  box_w: number | null;
+  box_h: number | null;
+}
+
+/// The stored (authored) params of the project's single caption Text layer, read
+/// back off disk. `project_summary`'s Text view projects no box, so the saved
+/// project is what a spec can hold the importer to.
+function storedCaptionParams(projectDir: string): StoredTextParams {
+  const wire = JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")) as {
+    tracks: Array<{ role: string | null; layers: Array<{ params: StoredTextParams }> }>;
+  };
+  const params = wire.tracks
+    .filter((t) => t.role === "Caption")
+    .flatMap((t) => t.layers.map((l) => l.params))
+    .filter((p) => p.kind === "Text");
+  expect(params).toHaveLength(1);
+  return params[0]!;
+}
+
+/// The importer's half of the unbroken-line defect: the cue is born with a wrap
+/// width, in the state the renderer reads. That the glyphs then break at that
+/// width is `TextSprite`'s half and belongs to the box/wrap gate, not here.
+test("an unbroken transcript line is born with a wrap width inside the safe area", async () => {
+  const { app, page } = await launchApp();
+  try {
+    const parent = tmpDir("weftcut-caption-wrap-");
+    await newProject(page, { parentFolder: parent, name: "caption-wrap", canvas: CANVAS });
+    const srt = path.join(tmpDir("weftcut-caption-srt-"), "unbroken.srt");
+    fs.writeFileSync(srt, `1\n00:00:00,000 --> 00:00:03,000\n${UNBROKEN_LINE}\n`, "utf8");
+
+    await invokeCmd(page, "import_media", { path: srt });
+    await expect.poll(async () => (await captionLayers(page)).length).toBe(1);
+
+    await invokeCmd(page, "project_save");
+    const params = storedCaptionParams(path.join(parent, "caption-wrap"));
+    // The premise: one line, no newline to break on.
+    expect(params.content).not.toContain("\n");
+    expect(params.content.length).toBeGreaterThan(200);
+    // Auto height — (box_w, null): the cue wraps at the composition width less
+    // the 8% safe-area margin per side, and because Auto height never shrinks,
+    // the stored size is still the size the cue's style asked for.
+    expect(params.box_w).toBeCloseTo(537.6, 3); // 640 - 2 × 8%
+    expect(params.box_h).toBeNull();
+    expect(params.font.size_px).toBe(Math.round(CANVAS.height * 0.05));
+  } finally {
+    await app.close();
+  }
+});
 
 test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one undo", async () => {
   test.skip(!fs.existsSync(SRT_PATH), `subtitle fixture missing: ${SRT_PATH}`);

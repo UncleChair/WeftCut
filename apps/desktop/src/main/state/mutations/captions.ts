@@ -24,13 +24,21 @@ export interface Cue { start_us: number; end_us: number; text: string; style?: C
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 }
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 }
 
-/** subtitles/layout.rs:14 cue_to_text_params — lay out one cue as a Text layer.
+/** Per-side safe-area margin, as a fraction of the composition edge: the inset
+ *  `anchorFor` positions a cue at, and — doubled — the frame width the caption
+ *  box gives up. One constant for both, because the position margin and the wrap
+ *  width have to agree and two literals that must agree are how they stop
+ *  agreeing. Twin of `SAFE_AREA_MARGIN` in subtitles/layout.rs. */
+const SAFE_AREA_MARGIN = 0.08
+
+/** subtitles/layout.rs:21 cue_to_text_params — lay out one cue as a Text layer.
  *  Styleless cues get white fill, black outline + soft shadow, size 5% of comp
- *  height, bottom-centre with an 8% safe-area margin. The ASS 9-grid align (or
+ *  height, bottom-centre inside `SAFE_AREA_MARGIN`. The ASS 9-grid align (or
  *  \pos) becomes an absolute anchor + position. NOTE the f32 keystone: size_px /
- *  outline width / shadow offsets are f32 in Rust — the differential corpus
- *  supplies explicit clean style values so the auto-multiply path (this fn's
- *  `size * 0.06`) is never differential-gated (it IS unit-tested above). */
+ *  outline width / shadow offsets / box_w are f32 in Rust — the differential
+ *  corpus supplies explicit clean style values so the auto-multiply paths (this
+ *  fn's `size * 0.06` and the wrap width) are never differential-gated (they ARE
+ *  unit-tested above). Keep the arithmetic in the same order as the Rust twin. */
 export function cueToTextParams(cue: Cue, compW: number, compH: number): TextParams {
   const s = cue.style ?? {}
   const size = s.size_px ?? Math.round(compH * 0.05)
@@ -50,14 +58,20 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
     shadow: { color: BLACK, offset_x: shadowOff, offset_y: shadowOff, blur: shadowOff },
     outline: { color: s.outline_color ?? BLACK, width: outlineW },
     intro: null, outro: null,
-    box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+    // Auto height, never Fixed: it wraps a transcript's unbroken line without
+    // shrinking, so every cue keeps the size its style asked for. Fixed would
+    // compress the long ones and make two cues of one file render at different
+    // sizes. valign is never observable here — the height tracks the content.
+    // See ADR 0049.
+    box_w: compW * (1 - 2 * SAFE_AREA_MARGIN), box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }
 }
 
-/** layout.rs:60 anchor_for — ASS 9-grid → (anchor, x, y). 1-3 bottom, 4-6 middle,
- *  7-9 top; 1/4/7 left, 2/5/8 centre, 3/6/9 right. 8% safe-area margins (f64). */
+/** layout.rs:81 anchor_for — ASS 9-grid → (anchor, x, y). 1-3 bottom, 4-6 middle,
+ *  7-9 top; 1/4/7 left, 2/5/8 centre, 3/6/9 right, inset by `SAFE_AREA_MARGIN`
+ *  on both axes (f64). */
 function anchorFor(an: number, w: number, h: number): [[number, number], number, number] {
-  const mx = w * 0.08, my = h * 0.08
+  const mx = w * SAFE_AREA_MARGIN, my = h * SAFE_AREA_MARGIN
   let ax: number, x: number
   if (an === 1 || an === 4 || an === 7) { ax = 0.0; x = mx }
   else if (an === 3 || an === 6 || an === 9) { ax = 1.0; x = w - mx }
@@ -68,7 +82,7 @@ function anchorFor(an: number, w: number, h: number): [[number, number], number,
   else { ay = 1.0; y = h - my }
   return [[ax, ay], x, y]
 }
-/** layout.rs:76 align_for. */
+/** layout.rs:97 align_for. */
 function alignFor(an: number): TextAlign {
   if (an === 1 || an === 4 || an === 7) return 'Left'
   if (an === 3 || an === 6 || an === 9) return 'Right'

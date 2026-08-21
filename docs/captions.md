@@ -54,6 +54,19 @@ cue (plain SRT/VTT) gets the default caption look: white fill, a thin outline an
 soft shadow, font size proportional to composition height, bottom-centre anchored
 with a safe-area margin.
 
+Every cue — styled or not, imported or transcribed — is also born with a **wrap
+width**: `box_w` is the composition width less the safe-area margin on each side,
+and `box_h` stays null. Both numbers come from the one `SAFE_AREA_MARGIN`
+constant that the position inset is derived from, so the margin a caption sits
+inside and the width it wraps at cannot drift apart. `(set, null)` is Auto height
+([ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md)), which
+wraps *without* shrinking — the reason it is not Fixed: a machine transcript's
+cue is a single unbroken line with no `\n`, and Auto height breaks it inside the
+safe area at exactly the size its style asked for, where a fixed box would
+compress the long cues and leave two cues of one file at different font sizes.
+The wrap width is not applied retroactively and there is no migration: a caption
+layer stored without a box loads as Auto width and renders exactly as it did.
+
 ASS is supported at "Tier 3": the V4+ Style table plus the inline override tags
 that matter for captions — `\an` (alignment, mapped to anchor + position), `\pos`,
 `\c`/`\1c` (colour), `\b`, `\i`, `\fs`, `\fn`, `\fad`. Advanced tags (karaoke
@@ -114,13 +127,15 @@ for navigating and bulk-styling a caption set, not the only way to edit it.
 v1 export is **burn-in only**: captions composite into the video frame like any
 text. Soft-subtitle tracks (stream-muxed SRT/ASS into MKV/MP4) and sidecar
 subtitle-file export are deferred — the data already lives in `Text` layers and is
-available to a future ffmpeg subtitle-mux stage. Word-level/karaoke highlight,
-automatic safe-area word-wrap, and per-project user-supplied font files are out of
-scope.
+available to a future ffmpeg subtitle-mux stage. Word-level/karaoke highlight and
+per-project user-supplied font files are out of scope, as is kinsoku (the CJK
+line-breaking prohibitions) on top of the wrap width above.
 
 ## Pointers
 
 - Decision record and trade-offs: [ADR 0026](adr/0026-captions-as-text-layers.md).
+- The text box a cue is born with (resize modes, why the box never scales
+  glyphs): [ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md).
 - Layer/track data model and the `apply_subtitles` tool contract: [data-model.md](data-model.md).
 - How `Text` layers render (and how bundled fonts load into the export Worker):
   [render.md](render.md).

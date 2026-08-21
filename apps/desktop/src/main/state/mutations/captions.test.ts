@@ -27,10 +27,17 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect(p.transform.x).toEqual({ mode: 'Static', value: 960 }) // w/2
     expect((p.transform.y as { value: number }).value).toBeCloseTo(1080 - 1080 * 0.08, 5) // h - 8%
     expect(p.align).toBe('Center')
-    // Nullability IS the resize mode, so a null pair means Auto width: an
-    // imported cue breaks only where its own '\n' says, never on measured width.
-    expect([p.box_w, p.box_h]).toEqual([null, null])
+    // Nullability IS the resize mode, so (set, null) is Auto height: the cue
+    // wraps inside the safe area — the defect a machine transcript's single
+    // unbroken line hits — and never shrinks, so two cues of one file cannot end
+    // up at different sizes. 1920 less SAFE_AREA_MARGIN per side; the derived
+    // fraction is the same f64 as a literal 0.84, so this is an exact compare.
+    expect(p.box_w).toBe(1612.8)
+    expect(p.box_h).toBeNull()
     expect([p.valign, p.line_height, p.letter_spacing]).toEqual(['Middle', 0, 0])
+  })
+  it('wrap width tracks the composition, not a hardcoded 1920', () => {
+    expect(cueToTextParams(cue(), 640, 360).box_w).toBe(537.6) // 640 * 0.84
   })
   it('an8 → top-center anchors top', () => {
     expect(staticAnchor(cueToTextParams(cue({ align: 8 }), 1920, 1080))).toEqual([0.5, 0.0])
@@ -43,6 +50,16 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
   it('explicit pos overrides the computed base position', () => {
     const p = cueToTextParams(cue({ align: 5, pos: [100, 200] }), 1920, 1080)
     expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
+  })
+  // The box wraps; it never relocates. An ASS cue carrying both \an and an
+  // explicit \pos keeps its 9-grid alignment and its absolute position, and gets
+  // the same wrap width as a positionless cue.
+  it('an + explicit pos survive the box', () => {
+    const p = cueToTextParams(cue({ align: 1, pos: [100, 200] }), 1920, 1080)
+    expect(staticAnchor(p)).toEqual([0.0, 1.0])
+    expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
+    expect(p.align).toBe('Left')
+    expect([p.box_w, p.box_h]).toEqual([1612.8, null])
   })
   it('explicit clean style: bold/italic + size/outline', () => {
     const p = cueToTextParams(cue({ size_px: 54, bold: true, italic: true, outline_px: 3, shadow_px: 2 }), 1920, 1080)
