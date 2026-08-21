@@ -507,6 +507,16 @@ export interface TextPatch {
   x?: number;
   y?: number;
   opacity?: number;
+  align?: TextView["align"];
+  valign?: TextView["valign"];
+  /// On the box pair alone, `null` is a VALUE — "back to auto" — and absent is
+  /// "don't touch". The mutation layer refuses any patch that would leave
+  /// `(box_w: null, box_h: set)`, so leaving Fixed means sending both fields in
+  /// one patch, not `box_w: null` by itself (ADR 0049).
+  box_w?: number | null;
+  box_h?: number | null;
+  line_height?: number;
+  letter_spacing?: number;
 }
 
 export interface VideoClipPatch {

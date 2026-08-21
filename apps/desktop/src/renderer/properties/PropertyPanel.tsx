@@ -14,7 +14,8 @@ import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { AppSwitch } from "../components/AppSwitch";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   updateLayer,
   updateLayerParams,
@@ -37,8 +38,12 @@ import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN } from "../ke
 import { layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import { refusalText, tryMutate } from "../errors/tryMutate";
+import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
+import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { ScaleFields } from "./ScaleFields";
+import { TEXT_BOX_MODES, textBoxModeOf, textBoxPatchFor, type TextBoxMode } from "./textBoxMode";
+import { useTextFit } from "./useTextFit";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
 // render via `InspectorAnimField`; every other row (fades/flip/mute/content/
@@ -542,6 +547,127 @@ function TransformSection({
   );
 }
 
+/// The Text section's box block: the three-way resize control, then the two box
+/// extents.
+///
+/// The mode is re-derived from `boxW`/`boxH` on every render and never cached,
+/// which is what makes the control agree with a gizmo drag or an MCP patch that
+/// moved the fields behind the panel's back.
+function TextBoxFields({
+  layerId,
+  boxW,
+  boxH,
+  localW,
+  localH,
+  setLocalW,
+  setLocalH,
+  onEditingChange,
+  commit,
+}: {
+  layerId: string;
+  /// Committed extents — the mode and the per-axis disabling read THESE, not the
+  /// mirrors below, so an external change is reflected even mid-edit.
+  boxW: number | null;
+  boxH: number | null;
+  /// Mirrors of the same two extents, so typing isn't fighting a round trip.
+  localW: number | null;
+  localH: number | null;
+  setLocalW: (v: number) => void;
+  setLocalH: (v: number) => void;
+  onEditingChange: (editing: boolean) => void;
+  commit: Commit;
+}) {
+  const { t } = useTranslation();
+  const mode = textBoxModeOf(boxW, boxH);
+  // ONE synchronous probe read per render rather than a second rAF sampler: this
+  // only has to answer "is this mode reachable at all", and the panel already
+  // re-renders on every project change. The click below re-reads the probe, so a
+  // stale answer costs at most an enabled button that then does nothing.
+  const measured = getGizmoProbe()?.naturalSizeOf(layerId) ?? null;
+  const current = { boxW, boxH };
+
+  const selectMode = (next: TextBoxMode): void => {
+    if (next === mode) return;
+    const patch = textBoxPatchFor(next, current, getGizmoProbe()?.naturalSizeOf(layerId) ?? null);
+    if (patch === null) return;
+    void commit({ kind: "Text", ...patch });
+  };
+
+  return (
+    <>
+      {/* Deliberately NOT a `Field`: that row is a `<label>`, and a label
+          wrapping buttons activates the FIRST one — clicking the caption would
+          silently drop the layer to Auto width. */}
+      <div className="prop-field">
+        <span className="prop-field-label">{t("property_panel.text_box_mode")}</span>
+        <div className="prop-field-control">
+          {/* Wraps rather than squashes: three word labels do not fit the
+              inspector's control column in one line at every panel width, and a
+              segment whose label is clipped is worse than a second row. */}
+          <div
+            role="group"
+            aria-label={t("property_panel.text_box_mode")}
+            className="flex min-w-0 flex-1 flex-wrap gap-1"
+          >
+            {TEXT_BOX_MODES.map((candidate) => {
+              const reachable = textBoxPatchFor(candidate, current, measured) !== null;
+              return (
+                <button
+                  key={candidate}
+                  type="button"
+                  className={cn(
+                    buttonVariants({ variant: candidate === mode ? "secondary" : "ghost", size: "xs" }),
+                    "grow",
+                  )}
+                  aria-pressed={candidate === mode}
+                  disabled={!reachable}
+                  title={reachable ? undefined : t("property_panel.text_box_unmeasured")}
+                  onClick={() => selectMode(candidate)}
+                >
+                  {t(`property_panel.text_box_mode_${candidate}`)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <Field label={t("property_panel.text_box_w")}>
+        <AppNumberField
+          value={localW}
+          step={1}
+          min={TEXT_BOX_MIN_PX}
+          disabled={mode === "auto_width"}
+          ariaLabel={t("property_panel.text_box_w")}
+          onValueChange={setLocalW}
+          onCommit={(w) => commit({ kind: "Text", box_w: w })}
+          onFocus={() => onEditingChange(true)}
+          onBlur={() => onEditingChange(false)}
+        />
+      </Field>
+      <Field label={t("property_panel.text_box_h")} hint={t("property_panel.text_box_h_hint")}>
+        <AppNumberField
+          value={localH}
+          step={1}
+          min={TEXT_BOX_MIN_PX}
+          disabled={mode !== "fixed"}
+          ariaLabel={t("property_panel.text_box_h")}
+          onValueChange={setLocalH}
+          onCommit={(h) => commit({ kind: "Text", box_h: h })}
+          onFocus={() => onEditingChange(true)}
+          onBlur={() => onEditingChange(false)}
+        />
+      </Field>
+    </>
+  );
+}
+
+/// The block-placement pair, each listed in the direction it reads: `align`
+/// left to right, `valign` top to bottom.
+const ALIGNS = ["Left", "Center", "Right"] as const;
+const VALIGNS = ["Top", "Middle", "Bottom"] as const;
+type TextAlign = (typeof ALIGNS)[number];
+type VAlign = (typeof VALIGNS)[number];
+
 function TextFields({
   layer,
   v,
@@ -556,18 +682,45 @@ function TextFields({
   const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
   const [color, setColor] = useState(() => trackStatic(v.color, WHITE));
-  // While the size field is being edited, suppress the prop→local resync so a
-  // mid-typing debounced commit's round-trip can't clobber the in-progress edit.
-  const editingSize = useRef(false);
+  const [boxW, setBoxW] = useState<number | null>(v.box_w);
+  const [boxH, setBoxH] = useState<number | null>(v.box_h);
+  const [leading, setLeading] = useState(v.line_height);
+  const [tracking, setTracking] = useState(v.letter_spacing);
+  // While a number in this section is being edited, suppress the prop→local
+  // resync so a mid-typing debounced commit's round-trip can't clobber the
+  // in-progress edit.
+  //
+  // ONE gate for the section, not one ref per field: the resync is a single
+  // all-fields effect, so per-field refs would only start paying off once it is
+  // split per field — and "nothing in this section resyncs while a number here
+  // is focused" is the invariant that stays true as fields keep being added. The
+  // cost is bounded and already the shipped behaviour for the size field: an
+  // external change to the size lands on blur if the user happens to be inside
+  // the tracking field.
+  const editingNumber = useRef(false);
   useEffect(() => {
-    if (editingSize.current) return;
+    if (editingNumber.current) return;
     setContent(v.content);
     setFamily(v.font_family);
     setSize(v.font_size_px);
     setColor(trackStatic(v.color, WHITE));
+    setBoxW(v.box_w);
+    setBoxH(v.box_h);
+    setLeading(v.line_height);
+    setTracking(v.letter_spacing);
   }, [layer.id, v]);
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
+  // Fixed is the only mode that can shrink, so it is the only one worth
+  // sampling — see `useTextFit` for why this can't be a plain render-time read.
+  const fit = useTextFit(layer.id, textBoxModeOf(v.box_w, v.box_h) === "fixed");
+  const shrinkNotice =
+    fit !== null && isShrunk(fit)
+      ? t(
+          fit.overflowing ? "property_panel.text_overflowing" : "property_panel.text_reduced",
+          { px: Math.round(fit.effectivePx) },
+        )
+      : null;
 
   return (
     <PropSection layerKind={layer.kind} sectionId="text" title={t("property_panel.text")}>
@@ -599,10 +752,15 @@ function TextFields({
           ariaLabel={t("property_panel.font_size_px")}
           onValueChange={setSize}
           onCommit={(v) => commit({ kind: "Text", font_size_px: v })}
-          onFocus={() => { editingSize.current = true; }}
-          onBlur={() => { editingSize.current = false; }}
+          onFocus={() => { editingNumber.current = true; }}
+          onBlur={() => { editingNumber.current = false; }}
         />
       </Field>
+      {/* The authored size stays the one editable number (ADR 0049 keeps exactly
+          one font size in state); this reports what the box let through. */}
+      {shrinkNotice === null ? null : (
+        <p className="meta" data-testid="text-shrink-notice">{shrinkNotice}</p>
+      )}
       <Field label={t("property_panel.color")}>
         <AppColorField
           value={rgbaToHex(color)}
@@ -612,6 +770,68 @@ function TextFields({
             setColor(next);
             debouncedCommit({ kind: "Text", color: next });
           }}
+        />
+      </Field>
+      <TextBoxFields
+        layerId={layer.id}
+        boxW={v.box_w}
+        boxH={v.box_h}
+        localW={boxW}
+        localH={boxH}
+        setLocalW={setBoxW}
+        setLocalH={setBoxH}
+        onEditingChange={(editing) => { editingNumber.current = editing; }}
+        commit={commit}
+      />
+      {/* Where the text block sits INSIDE the box, on both axes — the pair ADR
+          0049 promoted `align` into when it stopped being line-to-line only.
+          They belong side by side; what they must NOT sit next to is Transform's
+          `anchor_x`/`anchor_y`, which place the box against x/y. Same axes, one
+          level up: the section split plus the explicit "align" wording is the
+          whole disambiguation, so don't merge the two pairs. */}
+      <Field label={t("property_panel.align")}>
+        <AppSelect
+          value={v.align}
+          ariaLabel={t("property_panel.align")}
+          onValueChange={(next) => commit({ kind: "Text", align: next as TextAlign })}
+          options={ALIGNS.map((o) => ({
+            value: o,
+            label: t(`property_panel.align_${o.toLowerCase()}`),
+          }))}
+        />
+      </Field>
+      <Field label={t("property_panel.valign")}>
+        <AppSelect
+          value={v.valign}
+          ariaLabel={t("property_panel.valign")}
+          onValueChange={(next) => commit({ kind: "Text", valign: next as VAlign })}
+          options={VALIGNS.map((o) => ({
+            value: o,
+            label: t(`property_panel.valign_${o.toLowerCase()}`),
+          }))}
+        />
+      </Field>
+      <Field label={t("property_panel.line_height")} hint={t("property_panel.line_height_hint")}>
+        <AppNumberField
+          value={leading}
+          step={1}
+          min={0}
+          ariaLabel={t("property_panel.line_height")}
+          onValueChange={setLeading}
+          onCommit={(px) => commit({ kind: "Text", line_height: px })}
+          onFocus={() => { editingNumber.current = true; }}
+          onBlur={() => { editingNumber.current = false; }}
+        />
+      </Field>
+      <Field label={t("property_panel.letter_spacing")}>
+        <AppNumberField
+          value={tracking}
+          step={0.5}
+          ariaLabel={t("property_panel.letter_spacing")}
+          onValueChange={setTracking}
+          onCommit={(px) => commit({ kind: "Text", letter_spacing: px })}
+          onFocus={() => { editingNumber.current = true; }}
+          onBlur={() => { editingNumber.current = false; }}
         />
       </Field>
     </PropSection>
