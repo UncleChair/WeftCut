@@ -225,9 +225,9 @@ jobs:
       # do NOT gate this job.
       #
       # Every leg, not just Windows: the artifact cache delivers native-decode's
-      # generated index.d.ts (a typecheck input) everywhere, so the single-leg
-      # restriction that used to be necessary no longer is. Placed after the
-      # artifacts and before the heavier build/e2e/package.
+      # generated index.d.ts (a typecheck input) everywhere, so nothing pins this
+      # to the one leg that builds both addons. Placed after the artifacts and
+      # before the heavier build/e2e/package.
       - name: Typecheck (tsc -b)
         run: npm run typecheck
 
