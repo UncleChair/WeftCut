@@ -362,6 +362,30 @@ export interface ProjectSummary {
 }
 export const summary = (page: Page) => invokeCmd<ProjectSummary>(page, 'project_summary', {})
 
+/// What `TextSprite` did with a Text layer's box, off the live `GizmoProbe` (the
+/// `textBoxProbe` hook). Shared because everything ADR 0049 derives — the
+/// shrink-to-fit size and the rectangle the glyphs were laid into — exists ONLY
+/// here: the project carries the authored size, so no summary can answer "what
+/// reached the frame".
+export interface TextBoxProbe {
+  /// Null on a kind with no box, and before the layer is staged.
+  fit: { authoredPx: number; effectivePx: number; overflowing: boolean } | null
+  /// The BOX in Fixed mode; the measured glyph block on either auto axis — which
+  /// is what makes a line count observable, since at a fixed font size the
+  /// block's height is its line count times its leading.
+  natural: { w: number; h: number } | null
+}
+
+export async function textBoxProbe(page: Page, layerId: string): Promise<TextBoxProbe> {
+  await waitForHook(page, 'textBoxProbe')
+  const p = (await page.evaluate(
+    (id) => (window as unknown as { __weftcutTest: { textBoxProbe(id: string): unknown } }).__weftcutTest.textBoxProbe(id),
+    layerId,
+  )) as TextBoxProbe | null
+  if (!p) throw new Error('textBoxProbe: no preview has registered a gizmo probe')
+  return p
+}
+
 /// Import `mediaAbsPath` and place it 1:1 at `tStartUs` (default 0) on a fresh
 /// track — the `importAndPlaceMedia` hook (same IPC chain the UI uses), without
 /// exporting. Returns the new ids + the media's classified kind.

@@ -21,6 +21,16 @@
 //                 pool (TransitionRtPool) acquires/releases every cycle — a
 //                 per-frame or per-window RT leak ratchets straight past the
 //                 red line. Scenario shape: see `transitionsLayers` below.
+//   text-box    — the per-frame TEXT MEASUREMENT class: four boxed Text layers,
+//                 two of them Fixed, so shrink-to-fit's bisection is in play for
+//                 the whole pass. That search is the first thing in `TextSprite`
+//                 that could cost per frame instead of per style change, and
+//                 `appliedSig` is the only reason it does not — every input to
+//                 the search is in the signature, so an unchanged box re-measures
+//                 zero times. A signature that stopped covering one of them
+//                 re-enters `CanvasTextMetrics` on every one of the pass's ~2700
+//                 frames, per layer, each probe minting a fresh cache entry.
+//                 Scenario shape: see `textBoxLayers` below.
 //
 // Method: assembles a throwaway shell package (isolated userData via a
 // distinct app name; node_modules junction into the repo; copy of out/) so
@@ -40,9 +50,10 @@ import { electronBinPath } from '../lib/electron-bin.mjs';
 const THRESHOLD_MB = 30;
 const PLAY_SECONDS = 90;
 
+const SCENARIOS = ['text', 'transitions', 'text-box'];
 const SCENARIO = process.argv[2] ?? 'text';
-if (!['text', 'transitions'].includes(SCENARIO)) {
-  console.error(`[memory-ratchet] unknown scenario '${SCENARIO}' — use 'text' or 'transitions'.`);
+if (!SCENARIOS.includes(SCENARIO)) {
+  console.error(`[memory-ratchet] unknown scenario '${SCENARIO}' — use ${SCENARIOS.join(' / ')}.`);
   process.exit(2);
 }
 
@@ -103,6 +114,55 @@ const textLayers = () => [{
   effects: [],
 }];
 
+// Scenario `text-box`: four Text layers, one per resize mode plus a CJK Fixed
+// one, all spanning the whole timeline so every sprite is staged for the entire
+// pass. `outline` and `shadow` are on the two Fixed layers because the shrink
+// factor multiplies them, so a style rebuilt per frame rebuilds the stroke and
+// the drop shadow with it — the most expensive shape this class can take.
+//
+// Nothing here animates: the point is that a STILL boxed layer costs nothing per
+// frame. Animating the box is not the test (and is not possible — the box fields
+// are plain scalars by decision, ADR 0049); a box that holds still while the
+// playhead moves is.
+const CJK_LINE = '天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏';
+const textBoxLayer = (i, y, content, box, style) => ({
+  id: fixtureId(0x3000 + i),
+  label: null, t_start_us: 0, t_end_us: DURATION_US,
+  enabled: true, locked: false, metadata: {},
+  params: {
+    kind: 'Text', content,
+    font: { family: 'Liberation Sans, Noto Sans SC', size_px: 72, weight: 400, italic: false },
+    color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
+    align: 'Center',
+    transform: {
+      x: staticNum(960), y: staticNum(y), scale_x: staticNum(1), scale_y: staticNum(1),
+      rotation_deg: staticNum(0), anchor_x: staticNum(0.5), anchor_y: staticNum(0.5),
+      scale_linked: true,
+    },
+    opacity: staticNum(1),
+    intro: null, outro: null,
+    box_w: box[0], box_h: box[1], valign: 'Middle', line_height: 0, letter_spacing: 0,
+    ...style,
+  },
+  effects: [],
+});
+const NO_DECORATION = { shadow: null, outline: null };
+// Both scale by the shrink factor, so a Fixed layer exercises that propagation.
+const DECORATED = {
+  outline: { width: 4, color: { r: 0, g: 0, b: 0, a: 255 } },
+  shadow: { offset_x: 3, offset_y: 3, blur: 6, color: { r: 0, g: 0, b: 0, a: 180 } },
+};
+const textBoxLayers = () => [
+  // Auto width — the control: no box, no wrap, no search.
+  textBoxLayer(0, 140, 'AUTO WIDTH', [null, null], NO_DECORATION),
+  // Auto height — wraps, never shrinks.
+  textBoxLayer(1, 380, 'auto height wraps this sentence across several lines', [700, null], NO_DECORATION),
+  // Fixed, past capacity — the box cannot hold the text, so the search runs.
+  textBoxLayer(2, 660, 'fixed and far too small for the text it was given', [520, 150], DECORATED),
+  // Fixed with CJK — the break-rule hook feeds the same search.
+  textBoxLayer(3, 900, CJK_LINE, [600, 160], DECORATED),
+];
+
 // Scenario `transitions`: alternating full-frame RED/BLUE Color layers, cuts
 // every 4 s, a 1 s transition at EVERY cut (kinds cycling Crossfade → Wipe →
 // Slide). Start-at-cut shape: each outgoing layer's tail extends 1 s past the
@@ -139,9 +199,21 @@ const transitionsList = () => Array.from({ length: SEGMENTS - 1 }, (_, i) => ({
   kind: TRANSITION_KINDS[i % TRANSITION_KINDS.length],
 }));
 
-const layers = SCENARIO === 'transitions' ? transitionsLayers() : textLayers();
+const layersFor = { text: textLayers, transitions: transitionsLayers, 'text-box': textBoxLayers };
+const layers = layersFor[SCENARIO]();
 const transitions = SCENARIO === 'transitions' ? transitionsList() : [];
-log(`scenario: ${SCENARIO} (${layers.length} layers, ${transitions.length} transitions)`);
+const track = (id, layers) => ({
+  id, label: 'Overlay', enabled: true, locked: false, muted: false, solo: false,
+  removable: true, role: null, transient: false, height_px: 64, layers,
+});
+// One track per layer for `text-box`, one shared track otherwise: those four
+// layers all span the WHOLE timeline so every sprite stays staged for the whole
+// pass, and same-track layers may not overlap — the project would fail validate
+// and never open. The other two scenarios' layers are sequential.
+const tracks = SCENARIO === 'text-box'
+  ? layers.map((l, i) => track(fixtureId(0x3100 + i), [l]))
+  : [track('019f0000-0000-7000-8000-0000000000aa', layers)];
+log(`scenario: ${SCENARIO} (${layers.length} layers on ${tracks.length} tracks, ${transitions.length} transitions)`);
 
 fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
   // The app must OPEN this file, so it declares the CURRENT schema version
@@ -157,12 +229,7 @@ fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
     background: { r: 0, g: 0, b: 0, a: 255 },
   },
   media_pool: {},
-  tracks: [{
-    id: '019f0000-0000-7000-8000-0000000000aa',
-    label: 'Overlay', enabled: true, locked: false, muted: false, solo: false,
-    removable: true, role: null, transient: false, height_px: 64,
-    layers,
-  }],
+  tracks,
   markers: [], transitions, groups: [], audio_roles: {},
   settings: {
     preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
@@ -238,6 +305,8 @@ try {
     exitCode = 0;
   } else if (SCENARIO === 'transitions') {
     log(`FAIL [transitions] (>= ${THRESHOLD_MB} MB) — likely a transition RT-pool leak (per-frame/per-window RenderTexture allocation); see src/renderer/render/transitions/TransitionRtPool.ts`);
+  } else if (SCENARIO === 'text-box') {
+    log(`FAIL [text-box] (>= ${THRESHOLD_MB} MB) — a boxed Text layer is likely re-measuring per frame: check that every input to the shrink search is still in TextSprite's appliedSig; see src/renderer/render/sprite/TextSprite.ts`);
   } else {
     log(`FAIL [text] (>= ${THRESHOLD_MB} MB) — a frame-rate React subscription has likely crept back in; see docs/render.md §Playhead updates`);
   }

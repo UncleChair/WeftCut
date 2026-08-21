@@ -57,9 +57,12 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
 - **The analyzer-backed gates need a buildable `cargo`.** `lib/analyze.mjs`
   shells `cargo run --bin media_conformance --features jobs,export`; the first
   invocation compiles it (slow), later runs reuse the binary. These gates
-  (`conformance`, `color-conformance`, `audio`, `export-range-audio`) run in
-  CI too — electron-ci fetches ffmpeg (so `globalSetup` generates fixtures)
-  and prebuilds the analyzer so no spec pays the cold compile.
+  (`conformance`, `color-conformance`, `audio`, `export-range-audio`,
+  `text-box-cjk-export`) run in CI too — electron-ci fetches ffmpeg (so
+  `globalSetup` generates fixtures) and prebuilds the analyzer so no spec pays
+  the cold compile. `text-box-cjk-export` is the one that needs no fixture
+  media and no calibrated SSIM floor: it exports the same composition twice and
+  compares the two outputs, so both legs share whatever raster the runner has.
 - **`export-native-wedges.spec.ts` (native export decode wedge gates) is gated
   on `WEFTCUT_DECODE_E2E=1`** — the preflight sets it automatically when the
   native-decode component is built (see above), so locally it just runs. It

@@ -392,18 +392,26 @@ bit-for-bit what it did before the box existed.
 `Compositor.naturalSizeOf` asks the sprite for that same rectangle, so the
 on-canvas gizmo draws the box being dragged rather than the glyphs inside it.
 
-**CJK breaking is realm-global, and that makes it half a contract.** Pixi's
+**CJK breaking is realm-global, and that decides where it is installed.** Pixi's
 wrap unit is a space-delimited token and `CanvasTextMetrics.canBreakWords`
 returns the style's `breakWords` (false), so an unspaced Chinese sentence is
 one token that never wraps at any width — the box is inert in Chinese.
 `fonts/lineBreak.ts` overrides that static: breakable if the style says so *or*
 the token contains CJK, which wraps Chinese per character and English per word.
-`breakWords: true` is not the alternative; it splits Latin words. Because the
-hook is a class static, it must be installed in **both** realms — the
-`Compositor` constructor and `worker/exportWorker.ts`, each beside that realm's
-`loadFontsIntoFaceSet` — or preview wraps where export does not. It is
-installed unconditionally in the Compositor, not inside the preview-only font
-branch: the hook needs neither `document` nor a `FontFaceSet`.
+`breakWords: true` is not the alternative; it splits Latin words.
+
+Because the hook is a class static it has to be set in every realm that
+rasterizes text, or preview wraps where export does not. That needs exactly one
+install site, not one per realm: every such realm builds a `Compositor` — the
+export Worker included — so the constructor's unconditional call is
+realm-complete by construction. It sits *outside* the preview-only font branch
+and must stay there; the hook needs neither `document` nor a `FontFaceSet`, and
+gating it on those is the defect itself.
+`e2e/electron/text-box-cjk-export.spec.ts` is the gate: it exports the same CJK
+string twice, relying on auto-wrap once and spelling the line breaks out with
+`\n` the other, and SSIM-compares the two videos. Both legs come from the same
+realm, so it needs no fixture media and no calibrated floor — an export that
+failed to wrap renders one long clipped line and diverges.
 
 **Shrink-to-fit belongs to Fixed alone.** Fixed is the only mode that can fail
 to contain its text, and it responds by shrinking the glyphs: `TextSprite`

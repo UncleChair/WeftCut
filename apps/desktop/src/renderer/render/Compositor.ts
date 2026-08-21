@@ -679,13 +679,17 @@ export class Compositor {
     this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
-    // Half of the two-realm text contract; the other half is the same call in
-    // `worker/exportWorker.ts`, beside its own `loadFontsIntoFaceSet`. Install
-    // one and not the other and preview wraps CJK where export does not.
-    // OUTSIDE the preview branch below on purpose: the hook needs no
-    // `document` and no FontFaceSet, so gating it on the branch's conditions
-    // would leave any main-thread export-mode Compositor wrapping differently
-    // from the preview it is supposed to match.
+    // THE install site for the CJK break rule, and the reason one site is
+    // enough: `canBreakWords` is a class static, so it must be set in every
+    // realm that rasterizes text — and every such realm builds a Compositor
+    // (the export Worker included). Installing here is realm-complete by
+    // construction, where a per-realm call list has to be remembered.
+    //
+    // LANDMINE: it MUST stay outside the preview branch below. The hook needs
+    // neither `document` nor a FontFaceSet, and gating it on those conditions
+    // is exactly the defect this guards — preview would wrap CJK and the
+    // burned-in export would not, which nobody sees until they export.
+    // `e2e/electron/text-box-cjk-export.spec.ts` is what goes red for it.
     installCjkLineBreaking();
     // Preview + real DOM only — the export Worker has neither `document`
     // nor preview audio.

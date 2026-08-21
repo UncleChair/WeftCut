@@ -47,7 +47,6 @@ import type { ExportEvent, ExportRequest } from "./protocol";
 import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
 import { PackYuvPlanar } from "../yuv/PackYuvPlanar";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
-import { installCjkLineBreaking } from "../fonts/lineBreak";
 import { initEval } from "@/eval";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
@@ -125,16 +124,6 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     (self as unknown as { fonts: FontFaceSet }).fonts,
     req.fonts,
   );
-  // Half of the two-realm text contract; the other half is the same call in
-  // the `Compositor` constructor. `canBreakWords` is a class static and this
-  // Worker has its own module realm, so a preview-only install would wrap CJK
-  // in the preview and not in the burned-in output — the one text defect that
-  // is invisible until someone exports. The Compositor built below installs it
-  // too; this call stays because the install must precede the FIRST text
-  // measurement in the realm, and because the contract is only legible when
-  // both halves sit beside their realm's font load.
-  installCjkLineBreaking();
-
   // 1. PixiJS Application against the transferred OffscreenCanvas.
   // Any native-sink export (8-bit or 10-bit) needs WebGL2 — the pack shaders
   // (PackYuv420p10 / PackYuvPlanar) need a GL renderer, and 10-bit additionally

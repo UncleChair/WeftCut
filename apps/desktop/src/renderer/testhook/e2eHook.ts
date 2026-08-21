@@ -30,6 +30,7 @@ import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
+import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
@@ -439,6 +440,14 @@ export interface E2EHook {
   /// what the entry touched; the timeline's LayerBlock carries no id attribute,
   /// so selection is not observable from the DOM at all.
   getSelectedLayerId(): string | null;
+  /// What the renderer DID with a Text layer's box, straight off the live
+  /// `GizmoProbe`. Null before a preview registers one.
+  ///
+  /// Both halves of ADR 0049 are derived in the sprite and never stored, so a
+  /// spec that wants to know what reached the frame has nowhere else to read:
+  /// the project carries the authored font size and the box, and the difference
+  /// between "authored" and "rendered" only exists here.
+  textBoxProbe(layerId: string): TextBoxProbe | null;
   /// Live Dock Workspace snapshot as plain JSON — open Panel kinds (sorted), the
   /// focused/active Panel, the maximized Panel, and whether the workspace is
   /// empty. WeftCut-owned observability so the Electron acceptance specs can
@@ -484,6 +493,22 @@ export interface DockWorkspaceProbe {
   activePanel: string | null;
   maximizedPanel: string | null;
   empty: boolean;
+}
+
+/// The two derived readings a text box has: what the shrink search did to the
+/// font size, and the rectangle `x`/`y` anchors. Bundled into one call so a
+/// spec cannot straddle two frames — `TextSprite` writes both from the same
+/// `update`.
+export interface TextBoxProbe {
+  /// `GizmoProbe.textFitOf` — null on a kind with no box and before the layer
+  /// is staged.
+  fit: { authoredPx: number; effectivePx: number; overflowing: boolean } | null;
+  /// `GizmoProbe.naturalSizeOf` — the BOX in Fixed, and the measured glyph
+  /// block on either auto axis. So the height reported in Auto width and Auto
+  /// height is the rendered block's, which is what makes a line count
+  /// observable from a spec: at a fixed font size the block's height is its
+  /// line count times its leading.
+  natural: { w: number; h: number } | null;
 }
 
 /// Pixel + whole-frame diagnostics from the live composite readback. `r/g/b/a`
@@ -598,6 +623,13 @@ export function installBootstrapHook(
   hookSlot().getPlayheadUs = () => playheadTimeUs();
   hookSlot().getSelectedLayerId = () =>
     useSelectionStore.getState().primaryLayerId;
+  // Read through the registry on every call rather than capturing the probe:
+  // PixiPreview registers on mount and clears on unmount, and this hook is
+  // installed at boot — before any preview exists.
+  hookSlot().textBoxProbe = (layerId) => {
+    const p = getGizmoProbe();
+    return p ? { fit: p.textFitOf(layerId), natural: p.naturalSizeOf(layerId) } : null;
+  };
 }
 
 /// App-side: expose the live Dock Workspace snapshot to Electron acceptance

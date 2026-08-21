@@ -121,10 +121,18 @@ so **or** it contains CJK, which wraps Chinese per character and English per
 word.
 
 That override is realm-global, which places it in the same contract as the
-bundled fonts: both must be installed in the main thread and in the export
-Worker, or preview wraps where export does not. It lives beside the font
-registry and is gated by the same pixel-comparison e2e. Kinsoku (no line-
-leading punctuation) is a separate, incremental decision with its own corpus.
+bundled fonts: set it in one realm only and preview wraps where export does
+not. It lives beside the font registry.
+
+Unlike the fonts, though, it needs exactly one install site rather than one per
+realm — the `Compositor` constructor, unconditionally. Every realm that
+rasterizes text builds a Compositor, the export Worker included, so installing
+there is realm-complete *by construction*, where a per-realm call list has to be
+remembered for each new realm. The condition that matters is therefore not "did
+we call it twice" but "is the call ungated": moving it inside the
+preview-only branch is the whole defect, and is what the CJK e2e goes red for.
+Kinsoku (no line-leading punctuation) is a separate, incremental decision with
+its own corpus.
 
 ### One default, at the center of the frame
 

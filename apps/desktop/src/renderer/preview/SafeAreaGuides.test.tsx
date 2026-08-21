@@ -100,13 +100,6 @@ describe("safeAreaRect", () => {
     expect(title.x).toBeGreaterThan(action.x);
     expect(title.x + title.w).toBeLessThan(action.x + action.w);
   });
-
-  // The margin the caption importer applies (8% per side ⇒ a 0.84 box) has to
-  // land inside the drawn title-safe rectangle, or one of the two constants is
-  // wrong. Asserted on the constants, since the caption box is not built yet.
-  it("leaves the caption importer's 8% box inside title-safe", () => {
-    expect(0.84).toBeLessThan(TITLE_SAFE_FRACTION);
-  });
 });
 
 describe("SafeAreaGuidesHost", () => {

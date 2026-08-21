@@ -50,13 +50,16 @@ let ours: ((token: string, breakWords: boolean) => boolean) | null = null;
 /// `breakWords: true` is not the alternative: it splits Latin words mid-word.
 /// So the rule composes — breakable if the style says so OR the token is CJK.
 ///
-/// `canBreakWords` is a class static, i.e. realm-global: installing it in one
-/// realm only means preview wraps where export does not. Call it in EVERY realm
-/// that rasterizes text, beside that realm's `loadFontsIntoFaceSet`.
+/// `canBreakWords` is a class static, i.e. realm-global, so it has to be set in
+/// every realm that rasterizes text or preview wraps where export does not. One
+/// call site covers that: the `Compositor` constructor, because every such realm
+/// builds a Compositor — the export Worker included. Do not add a second call
+/// per realm; keep the existing one out of any `mode`/`document` branch, which is
+/// the failure `e2e/electron/text-box-cjk-export.spec.ts` goes red for.
 ///
-/// Call it before the first measurement: `CanvasTextMetrics`'s measurement LRU
-/// keys on text + style alone, so metrics cached under the stock hook would
-/// survive a later install.
+/// Whoever calls it must do so before the realm's first text measurement:
+/// `CanvasTextMetrics`'s measurement LRU keys on text + style alone, so metrics
+/// cached under the stock hook would survive a later install.
 export function installCjkLineBreaking(): void {
   if (CanvasTextMetrics.canBreakWords === ours) return;
   ours = (token: string, breakWords: boolean): boolean => breakWords || CJK_RE.test(token);
