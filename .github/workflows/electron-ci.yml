@@ -127,9 +127,11 @@ jobs:
       # ffmpeg:fetch no-ops when the binaries already exist. Keyed on the OS and
       # the fetch script (which pins FFMPEG_VERSION), so a version/source change
       # busts the cache. (path is repo-root-relative; cache ignores the job's
-      # working-directory default.)
-      - name: Cache ffmpeg
-        uses: actions/cache@v6
+      # working-directory default.) Split restore/save for the reason the
+      # ffmpeg-lgpl pair below gives.
+      - name: Restore ffmpeg cache
+        id: cache-ffmpeg
+        uses: actions/cache/restore@v6
         with:
           path: apps/desktop/resources/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
@@ -139,6 +141,13 @@ jobs:
       # exercises the Linux + macOS branches for the first time in CI.
       - name: Fetch ffmpeg
         run: npm run ffmpeg:fetch
+
+      - name: Save ffmpeg cache
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ${{ steps.cache-ffmpeg.outputs.cache-primary-key }}
 
       - name: Put bundled ffmpeg on PATH
         # CI runners have no system ffmpeg; the e2e app resolves "ffmpeg" via
@@ -223,14 +232,69 @@ jobs:
       - name: Build app (E2E mode)
         run: npm run build:e2e
 
-      # The MAIN fixture matrix generates itself (playwright globalSetup →
-      # ensureFixtures), but the two software-lane family gates read from the
-      # separate decode-BENCH set, which nothing generates automatically — a
-      # bench run is a local, opt-in measurement. Without these two files
-      # preview-sw-families self-skipped on all three legs, so the ffmpeg
-      # engine's software decode of an intra 4:2:2 (DNxHR) and a long-GOP
-      # MPEG-2 source has never been gated anywhere but a dev machine (issue
-      # #15 layer 1).
+      # The 232 MB fixture matrix every spec reads. Restored per OS, and per OS
+      # NOT as a cache-efficiency choice: generate.mjs picks the drawtext font
+      # per platform (Consolas / Menlo / DejaVuSansMono) and the three bundled
+      # ffmpeg builds differ (gyan / BtbN / evermeet), so one shared set would
+      # move the very pixels the SSIM floor and the per-channel colour ceiling
+      # (both set in the E2E step below) were calibrated against. The ffmpeg
+      # fetch script rides in the key for that same reason — it pins which build
+      # encodes the media, and the AV1 entry's recipe hash embeds that build's
+      # `-encoders` probe outright.
+      #
+      # restore-keys is safe here ONLY because the media is content-addressed:
+      # a partial hit restores an older set, and ensureFixtures then deletes and
+      # regenerates exactly the entries whose recipe hash moved, keeping the
+      # rest. Prefix matching over media skipped on mere existence is how a
+      # stale fixture survives every run that would have caught it.
+      #
+      # BUDGET — 3 × 232 MB against the repo's 10 GB. The eviction pressure
+      # lands on stale rust-cache keys, which rotate anyway; the one key that
+      # must never be the victim is ffmpeg-lgpl-macOS, for the reason the
+      # decode-bench step below gives.
+      - name: Restore e2e fixture cache
+        id: cache-fixtures
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/e2e/fixtures/media
+          key: fixtures-${{ runner.os }}-${{ hashFiles('apps/desktop/e2e/fixtures/generate.mjs', 'apps/desktop/e2e/fixtures/generate-fixtures.mjs', 'apps/desktop/scripts/fetch-ffmpeg.mjs') }}
+          restore-keys: fixtures-${{ runner.os }}-
+
+      # Its own step so the cache below can be saved the moment the media
+      # exists, and so the 4 min a cold pass costs on Windows (2.6 Linux / 2.2
+      # macOS) is legible on the timeline rather than hidden inside E2E. Placed
+      # after the tripwire above — a broken type must not cost a full generation
+      # first — and after the ffmpeg PATH step, since it spawns a bare `ffmpeg`.
+      #
+      # Playwright's globalSetup calls the same ensureFixtures and keeps doing
+      # so: with the media present and the manifest matching it is a sub-second
+      # no-op, which is what lets local runs, scoped dispatches and the `all`
+      # slice need no special case here.
+      - name: Generate e2e fixtures
+        run: node e2e/fixtures/generate-fixtures.mjs
+
+      # `cache-hit` is 'true' only on an exact key match, so this one condition
+      # covers both a total miss and a restore-keys partial hit — which is what
+      # re-publishes the set under the new key when a recipe is edited.
+      # continue-on-error: every leg of this OS races the same key and the losers
+      # get a 409 that must not redden a leg which already did the work. Split
+      # restore/save as the ffmpeg-lgpl pair above explains, and this is the
+      # case that most needs it: the step which goes red is the next one down.
+      - name: Save e2e fixture cache
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/e2e/fixtures/media
+          key: ${{ steps.cache-fixtures.outputs.cache-primary-key }}
+
+      # The main fixture matrix has its own cached step above; the two
+      # software-lane family gates read from the separate decode-BENCH set,
+      # which nothing generates automatically — a bench run is a local, opt-in
+      # measurement. Without these two files preview-sw-families self-skipped on
+      # all three legs, so the ffmpeg engine's software decode of an intra 4:2:2
+      # (DNxHR) and a long-GOP MPEG-2 source has never been gated anywhere but a
+      # dev machine (issue #15 layer 1).
       #
       # Only the two rows those gates read: the full 12-row matrix is minutes
       # of encoding and ~10 GB, most of it for cells only the bench opens. Both
@@ -519,15 +583,24 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
-      # Same key as the e2e job's, which owns the keying rationale.
-      - name: Cache ffmpeg
-        uses: actions/cache@v6
+      # Same key as the e2e job's, which owns the keying rationale; split
+      # restore/save for the reason its ffmpeg-lgpl pair gives.
+      - name: Restore ffmpeg cache
+        id: cache-ffmpeg
+        uses: actions/cache/restore@v6
         with:
           path: apps/desktop/resources/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
 
       - name: Fetch ffmpeg
         run: npm run ffmpeg:fetch
+
+      - name: Save ffmpeg cache
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ${{ steps.cache-ffmpeg.outputs.cache-primary-key }}
 
       - name: Put bundled ffmpeg on PATH
         # The export / probe / jobs tests shell out to "ffmpeg" and SELF-SKIP
