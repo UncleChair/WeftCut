@@ -383,11 +383,13 @@ jobs:
           # playwright.config.ts (§WEFTCUT_E2E_ONLY) carries why this is not
           # Playwright's own --shard.
           HEAVY='audio.spec.ts,export_codecs.spec.ts,export_overlap_same_source.spec.ts,export-range-audio.spec.ts'
+          OWN=''
+          IGN=''
           case "$PART" in
-            audio)   export WEFTCUT_E2E_ONLY='audio.spec.ts' ;;
-            codecs)  export WEFTCUT_E2E_ONLY='export_codecs.spec.ts' ;;
-            overlap) export WEFTCUT_E2E_ONLY='export_overlap_same_source.spec.ts,export-range-audio.spec.ts' ;;
-            rest)    export WEFTCUT_E2E_IGNORE="$HEAVY" ;;
+            audio)   OWN='audio.spec.ts' ;;
+            codecs)  OWN='export_codecs.spec.ts' ;;
+            overlap) OWN='export_overlap_same_source.spec.ts,export-range-audio.spec.ts' ;;
+            rest)    IGN="$HEAVY" ;;
           esac
           e2e() {
             if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run e2e -- "$@"; else npm run e2e -- "$@"; fi
@@ -403,7 +405,13 @@ jobs:
             # lightest: anywhere else and the serial project's minutes land on
             # top of an already-heavier slice and become the new worst case.
             if [ "$PART" = "codecs" ]; then e2e --project=serial; fi
-            e2e --project=parallel
+            # LANDMINE — the slice restriction rides the parallel invocation and
+            # nothing else, which is what the subshell enforces. Exported above
+            # the serial run instead, it narrows the serial project to the
+            # sliced files as well; no @serial test lives in any of them, and
+            # Playwright kills the leg with "No tests found". The serial project
+            # is not sliced at all — it greps @serial across the whole suite.
+            ( export WEFTCUT_E2E_ONLY="$OWN" WEFTCUT_E2E_IGNORE="$IGN"; e2e --project=parallel )
           fi
 
       # Upload determinism PNGs so the compare job can fetch all three OSes.

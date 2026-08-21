@@ -34,9 +34,9 @@ function ignored() {
   return names(m[1])
 }
 
-/** Every `WEFTCUT_E2E_ONLY='…'` a case arm exports, flattened. */
+/** Every spec file a case arm claims via `OWN='…'`, flattened. */
 function owned() {
-  const found = [...yml.matchAll(/export WEFTCUT_E2E_ONLY='([^']+)'/g)].flatMap((m) => names(m[1]))
+  const found = [...yml.matchAll(/^\s*\w+\)\s+OWN='([^']+)'/gm)].flatMap((m) => names(m[1]))
   assert.ok(found.length > 0, 'no leg owns any spec file — the split would run nothing')
   return found
 }
@@ -61,13 +61,29 @@ test('every spec file the split names still exists', () => {
   }
 })
 
+test('the slice restriction reaches the parallel project and nothing else', () => {
+  // The serial project is NOT sliced — it greps @serial across the whole suite
+  // and captures the determinism PNGs. Set anywhere the serial run inherits it,
+  // the restriction narrows that project to the sliced files too; no @serial
+  // test lives in any of them, so Playwright kills the whole leg with "No tests
+  // found" before a single spec runs.
+  const applied = yml.split('\n').filter((l) => /WEFTCUT_E2E_(ONLY|IGNORE)=/.test(l))
+  assert.ok(applied.length > 0, 'nothing applies a slice restriction — the split is not in effect')
+  for (const line of applied)
+    assert.match(
+      line,
+      /--project=parallel/,
+      `a slice restriction must be set on the parallel invocation itself, never where the serial run inherits it: ${line.trim()}`,
+    )
+})
+
 test('every e2e slice the matrix declares is a slice the step knows how to run', () => {
   const m = yml.match(/part:\s*\$\{\{[^}]*?'(\["[^\]]+\])'\s*\)\s*\}\}/)
   assert.ok(m, 'no part: matrix dimension found')
   const declared = JSON.parse(m[1])
   // `all` is the scoped-dispatch slice: handled by its own branch, not a case arm.
   const handled = new Set([
-    ...[...yml.matchAll(/^\s*(\w+)\)\s+export WEFTCUT_E2E_/gm)].map((x) => x[1]),
+    ...[...yml.matchAll(/^\s*(\w+)\)\s+(?:OWN|IGN)=/gm)].map((x) => x[1]),
     'all',
   ])
   for (const part of declared)
