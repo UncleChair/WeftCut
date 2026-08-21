@@ -14,6 +14,7 @@ import type {
   PixiPreviewHandle,
 } from "../render/pixiPreviewFlag";
 import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
+import { SafeAreaGuidesHost } from "./SafeAreaGuides";
 import { TransformGizmoHost } from "./TransformGizmo";
 
 interface Props {
@@ -137,9 +138,12 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             visible={visible}
           />
         </PixiErrorBoundary>
-        {/* After the canvas so it stacks above it; screen-space by design —
-            see TransformGizmo.tsx. Skipped while the dock tab is hidden — the
-            box would otherwise track a canvas nobody can see. */}
+        {/* After the canvas so they stack above it; screen-space by design —
+            see TransformGizmo.tsx. Skipped while the dock tab is hidden — an
+            overlay would otherwise track a canvas nobody can see.
+            Safe areas first: they are chrome about the frame, so they paint
+            UNDER the selection's box and handles. */}
+        {visible && <SafeAreaGuidesHost />}
         {visible && <TransformGizmoHost />}
       </div>
     );

@@ -24,12 +24,14 @@ vi.mock("react-i18next", async (importOriginal) => ({
 
 const prefs = vi.hoisted(() => ({
   markersVisible: true,
+  safeAreaGuides: false,
 }));
 
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => "AbRoll",
   useFollowPlayheadEnabled: () => true,
   useMarkersVisible: () => prefs.markersVisible,
+  useSafeAreaGuidesVisible: () => prefs.safeAreaGuides,
 }));
 
 vi.mock("../ipc", async (importActual) => ({
@@ -258,6 +260,57 @@ describe("ViewMenu marker display", () => {
     expect(
       off.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
+  });
+});
+
+// The preview's safe-area overlay: the same bindingless-toggle shape as the
+// marker item, one row further down (it annotates the preview, not the
+// timeline), and OFF by default.
+describe("ViewMenu safe areas", () => {
+  const renderMenu = () =>
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={null}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+
+  afterEach(() => {
+    prefs.safeAreaGuides = false;
+  });
+
+  it("sits immediately below Show markers, unchecked by default", async () => {
+    renderMenu();
+    openView();
+    const item = await screen.findByText("Show safe areas");
+    const labels = screen
+      .getAllByRole("menuitem")
+      .map((row) => row.querySelector(".app-menu-item-label")?.textContent ?? "");
+    expect(labels.indexOf("Show safe areas")).toBe(labels.indexOf("Show markers") + 1);
+    expect(
+      item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
+    ).toBeNull();
+  });
+
+  it("flips the preference through the registry command and reflects it", async () => {
+    const run = vi.fn();
+    provide([
+      {
+        id: "toggleSafeAreaGuides",
+        labelKey: "actions.toggle_safe_area_guides",
+        run,
+      },
+    ]);
+    prefs.safeAreaGuides = true;
+    renderMenu();
+    openView();
+    const item = await screen.findByText("Show safe areas");
+    expect(
+      item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
+    ).not.toBeNull();
+    fireEvent.click(item);
+    expect(run).toHaveBeenCalledOnce();
   });
 });
 

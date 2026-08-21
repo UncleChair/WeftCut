@@ -199,6 +199,7 @@ const enUS = {
     display_all: "Display: Show all tracks",
     follow_playhead: "Follow playhead",
     show_markers: "Show markers",
+    show_safe_areas: "Show safe areas",
     close_active_panel: "Close Active Panel",
     reset_workspace: "Reset Workspace",
     workspaces_heading: "Workspaces",
@@ -318,6 +319,9 @@ const enUS = {
     toggle_display_mode: "Toggle A/B Roll / Show All",
     toggle_follow_playhead: "Toggle follow playhead",
     toggle_markers_visible: "Toggle timeline markers",
+    toggle_safe_area_guides: "Toggle safe-area guides",
+    center_horizontally: "Center horizontally",
+    center_vertically: "Center vertically",
     apply_default_transition: "Apply default transition (crossfade)",
     zoom_timeline_in: "Zoom timeline in",
     zoom_timeline_out: "Zoom timeline out",
@@ -1306,6 +1310,8 @@ const enUS = {
     export_failed: "Export failed: {{error}}",
     export_cancelled: "Export cancelled",
     cleared: "Log cleared",
+    center_layer_unstaged:
+      "Cannot center a layer the preview has not staged yet — its size is unknown",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three

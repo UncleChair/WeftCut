@@ -69,6 +69,13 @@ export interface AppSettings {
   /// content — so the markers themselves are untouched, and neither the
   /// agent-mode mini timeline nor the search palette answers to it.
   markers_visible: boolean;
+  /// Draw the broadcast title-safe / action-safe rectangles over the preview
+  /// (`renderer/preview/SafeAreaGuides.tsx`). A property of the frame, not of a
+  /// selection, so unlike the transform gizmo it needs no selected layer.
+  /// App-level for the same reason `markers_visible` is: it describes how THIS
+  /// user wants the preview annotated, and it changes no pixel that reaches an
+  /// export.
+  safe_area_guides_visible: boolean;
   /// Absolute path to the user-configurable data root that owns all large,
   /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
   /// unset means "use the default" — the main-process resolver
@@ -104,6 +111,7 @@ export interface AppSettingsPatch {
   media_pool_layout?: MediaPoolLayout;
   timeline_follow_playhead?: boolean;
   markers_visible?: boolean;
+  safe_area_guides_visible?: boolean;
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
   /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
@@ -132,6 +140,11 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // On, like every NLE that has markers ships it: a mark nobody can see is
   // indistinguishable from one that was never written.
   markers_visible: true,
+  // OFF, unlike the two toggles above: safe-area guides are a broadcast-delivery
+  // aid, and every NLE that draws them ships them hidden. The additive-boolean
+  // trap does not apply in this direction — an app_settings.json written before
+  // the field existed reads as false, which is the state its user already had.
+  safe_area_guides_visible: false,
   data_root: undefined,
   language: undefined,
 };

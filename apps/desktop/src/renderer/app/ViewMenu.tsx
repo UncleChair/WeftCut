@@ -6,6 +6,7 @@ import {
   useDisplayMode,
   useFollowPlayheadEnabled,
   useMarkersVisible,
+  useSafeAreaGuidesVisible,
 } from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
@@ -38,7 +39,8 @@ export interface ViewMenuWorkspaces {
 /// The View menu — Panels (open/focus/close) flat at the top, Workspace
 /// profiles + management under the Workspaces submenu (low-frequency ops stay
 /// one level down), then the A/B-roll vs Show-All track-display radio, the
-/// follow-playhead and marker-display toggles, and the Agent-mode entry. Every
+/// follow-playhead, marker-display and safe-area toggles, and the Agent-mode
+/// entry. Every
 /// checkmark here reads the app-pref store, so it stays in sync however the
 /// value changed — whether from `T` / `Shift+F`, the Quick Actions strip, or the
 /// search palette.
@@ -63,6 +65,7 @@ export function ViewMenu({
   const mode = useDisplayMode();
   const followPlayhead = useFollowPlayheadEnabled();
   const markersVisible = useMarkersVisible();
+  const safeAreaGuides = useSafeAreaGuidesVisible();
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
   // rebuild so recovery is never dead.
@@ -185,6 +188,14 @@ export function ViewMenu({
         label={t("view.show_markers", { defaultValue: "Show markers" })}
         checked={markersVisible}
         onSelect={() => void getCommand("toggleMarkersVisible")?.run()}
+      />
+      {/* Preview chrome rather than timeline display, so it sits below the two
+          timeline toggles. Bindingless like the marker toggle — see
+          `SELF_CONTAINED_COMMAND_IDS` in `commands/appCommands.ts`. */}
+      <MenuItem
+        label={t("view.show_safe_areas", { defaultValue: "Show safe areas" })}
+        checked={safeAreaGuides}
+        onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
       />
       <MenuSeparator />
       {/* Enter path only: while a session is active the whole menu bar is

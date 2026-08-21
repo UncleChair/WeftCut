@@ -172,6 +172,21 @@ describe('app-settings store', () => {
     expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().markers_visible).toBe(true)
   })
 
+  // The mirror image of the two booleans above: this one defaults OFF, so an
+  // absent key reading as false is exactly right. What still has to hold is the
+  // restart — a view toggle the user turned on is a preference, not a session
+  // flag, and it never enters project history to be restored from.
+  it('safe_area_guides_visible defaults to OFF and survives a restart', () => {
+    expect(store().get().safe_area_guides_visible).toBe(false)
+    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().safe_area_guides_visible).toBe(false)
+    // Hand-edited / wrong-typed values degrade to the default.
+    expect(store({ [PATH]: '{ "safe_area_guides_visible": "on" }' }).get().safe_area_guides_visible).toBe(false)
+
+    const { fs } = memFs()
+    createAppSettingsStore({ fs, path: PATH, dir: DIR }).apply({ safe_area_guides_visible: true })
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().safe_area_guides_visible).toBe(true)
+  })
+
   it('data_root round-trips, and empty/missing/corrupt degrades to unset', () => {
     // No file → unset (resolver substitutes the default).
     expect(store().get().data_root).toBeUndefined()

@@ -52,6 +52,7 @@ const FALLBACK: AppSettings = {
   media_pool_layout: "large",
   timeline_follow_playhead: true,
   markers_visible: true,
+  safe_area_guides_visible: false,
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -103,6 +104,11 @@ export const useFollowPlayheadEnabled = (): boolean =>
 /// and nothing else — see `markers_visible` in `shared/app-settings.ts`.
 export const useMarkersVisible = (): boolean =>
   useAppSettingsStore((s) => s.settings.markers_visible);
+/// Whether the preview draws the title-safe / action-safe rectangles. The
+/// overlay subscribes through this hook and then tracks the canvas box
+/// imperatively — a React re-render per frame is what the playhead gate forbids.
+export const useSafeAreaGuidesVisible = (): boolean =>
+  useAppSettingsStore((s) => s.settings.safe_area_guides_visible);
 /// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
 /// (the renderer auto-detects the OS language). i18next remains the live
 /// language source; this is the persisted user choice.
@@ -142,6 +148,11 @@ export async function toggleMarkersVisible(): Promise<AppSettings> {
   return setAppSettings({ markers_visible: !current });
 }
 
+export async function toggleSafeAreaGuides(): Promise<AppSettings> {
+  const current = useAppSettingsStore.getState().settings.safe_area_guides_visible;
+  return setAppSettings({ safe_area_guides_visible: !current });
+}
+
 /// Imperative read for the command palette's checkmark, which is evaluated
 /// inside `listCommands()` rather than during a render — same reason
 /// `appCommands.ts` reads `toolStore` directly.
@@ -153,6 +164,12 @@ export function followPlayheadEnabled(): boolean {
 /// palette checkmark is evaluated inside `listCommands()`, not during a render.
 export function markersVisible(): boolean {
   return useAppSettingsStore.getState().settings.markers_visible;
+}
+
+/// Same imperative-read reason again: the safe-area toggle's palette checkmark
+/// is evaluated inside `listCommands()`.
+export function safeAreaGuidesVisible(): boolean {
+  return useAppSettingsStore.getState().settings.safe_area_guides_visible;
 }
 
 /// Imperative read for command handlers that have to decide whether a freshly

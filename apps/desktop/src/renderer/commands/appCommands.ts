@@ -1,6 +1,23 @@
+import { snapFrameRound } from "../frames";
+import { logEmit, updateLayerParamTracks, type LayerSummary } from "../ipc";
+import { autoKeyTrack } from "../keyframe/autoKey";
+import { readParamTrack } from "../keyframe/descriptors";
+import {
+  centerShift,
+  layerFrameAt,
+  TRANSFORMABLE_KINDS,
+} from "../preview/centerInFrame";
+import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
+import { resolveAnimated } from "../render/animated";
 import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
-import { followPlayheadEnabled, markersVisible } from "../settings/appSettingsStore";
+import {
+  followPlayheadEnabled,
+  markersVisible,
+  safeAreaGuidesVisible,
+  toggleSafeAreaGuides,
+} from "../settings/appSettingsStore";
+import { playheadTimeUs } from "../state/playheadStore";
 import { hasMarkedRange } from "../state/rangeStore";
 import { hasTransitionCut } from "../timeline/applyTransition";
 import { useProjectStore } from "../state/projectStore";
@@ -83,6 +100,130 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   toggleMarkersVisible: "actions.toggle_markers_visible",
   applyDefaultTransition: "actions.apply_default_transition",
 };
+
+/// Commands implemented HERE, in full. They differ from `MENU_ONLY_COMMAND_IDS`
+/// on one axis only: those borrow a closure from App (a dialog to open, a panel
+/// controller, a `refresh`), while these read the stores they need and commit
+/// through IPC, so threading a dependency through `buildAppCommands` would carry
+/// nothing.
+///
+/// No keyboard binding, for the key-budget reason spelled out above: the safe
+/// areas are a preference a user flips when a delivery spec asks for them, and
+/// the two centring ops are reached once per title, not per cut. Being
+/// no-binding commands is also what puts all three in the search palette for
+/// free. They are deliberately NOT `ACTION_DEFS` entries: `ActionDef.scope`
+/// gates KEY dispatch (ADR 0041) and every other field describes a chord, so an
+/// entry with no keys would add two rebindable rows to Settings → Keyboard whose
+/// bindings nothing dispatches.
+const SELF_CONTAINED_COMMAND_IDS = [
+  "toggleSafeAreaGuides",
+  "centerHorizontally",
+  "centerVertically",
+] as const;
+
+type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
+
+const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
+  toggleSafeAreaGuides: "actions.toggle_safe_area_guides",
+  centerHorizontally: "actions.center_horizontally",
+  centerVertically: "actions.center_vertically",
+};
+
+/// A centring command's whole input: the layer, and the frame it is being
+/// centred in.
+interface CenterTarget {
+  layer: LayerSummary;
+  compW: number;
+  compH: number;
+  fpsNum: number;
+  fpsDen: number;
+}
+
+/// The layer a centring command would act on: the PRIMARY selection, the same
+/// one the on-canvas gizmo boxes. Not the whole multi-selection — centring N
+/// layers stacks them on one point, which is align-multiple's job, and the batch
+/// mutation writes one layer per call (so N layers would also be N undo steps).
+///
+/// Read live from both stores for the reason `canMoveSelectionToNewTrack`
+/// documents: this runs inside `listCommands()`, and App re-renders on neither.
+function centerTarget(): CenterTarget | null {
+  const layerId = useSelectionStore.getState().primaryLayerId;
+  const summary = useProjectStore.getState().summary;
+  if (!layerId || !summary) return null;
+  for (const track of summary.tracks) {
+    for (const layer of track.layers) {
+      if (layer.id !== layerId) continue;
+      if (!TRANSFORMABLE_KINDS.has(layer.params.kind)) return null;
+      return {
+        layer,
+        compW: summary.composition.width,
+        compH: summary.composition.height,
+        fpsNum: summary.composition.fps_num,
+        fpsDen: summary.composition.fps_den,
+      };
+    }
+  }
+  return null;
+}
+
+/// Below this a shift is float noise rather than an edit — the layer is already
+/// centred, and writing anyway would stamp a redundant keyframe on a keyframed
+/// track. Same threshold and same reason as the gizmo's `NOISE`.
+const CENTER_NOISE = 1e-9;
+
+/// The one refusal this pair can hit: the compositor has not staged the layer,
+/// so its footprint is unknowable — not zero. Moving it to a position derived
+/// from a guessed size would be a silent lie, so nothing is written and the
+/// status log says why.
+///
+/// Not a `logMutationFailure`: no mutation was attempted, so there is no
+/// `CommandError` to render. `Project` at `Warn` for the same reason a refused
+/// direct commit is `Project` — it is about this project's layer, not about the
+/// key that asked (docs/status-log.md).
+function refuseUnstaged(layerId: string, axis: "x" | "y"): void {
+  void logEmit({
+    level: "warn",
+    category: { kind: "Project" },
+    source: { kind: "User" },
+    message: "Cannot center a layer the preview has not staged yet",
+    i18n_key: "log.center_layer_unstaged",
+    details: { context: axis === "x" ? "center_horizontally" : "center_vertically", layerId },
+  });
+}
+
+/// Put the primary layer's visible box in the middle of the frame on ONE axis,
+/// in one commit — so it undoes as one step, like a gizmo gesture.
+///
+/// Everything is evaluated at the frame-snapped playhead: the same instant a
+/// keyframe would land on, so the box the shift is measured from and the base
+/// value the shift is added to cannot come from different times.
+async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
+  const target = centerTarget();
+  // Prevented by `enabled`; a palette entry built before the selection changed
+  // can still reach here, and doing nothing is the honest answer to "no target".
+  if (!target) return;
+  const { layer, compW, compH } = target;
+  const size = getGizmoProbe()?.naturalSizeOf(layer.id);
+  if (!size || size.w <= 0 || size.h <= 0) return refuseUnstaged(layer.id, axis);
+  const tInLayerUs = snapFrameRound(
+    playheadTimeUs() - layer.t_start_us,
+    target.fpsNum,
+    target.fpsDen,
+  );
+  const frame = layerFrameAt(layer, layer.t_start_us + tInLayerUs, size);
+  const shift = centerShift(frame, compW, compH);
+  if (!shift) return refuseUnstaged(layer.id, axis);
+  const delta = axis === "x" ? shift.x : shift.y;
+  if (Math.abs(delta) < CENTER_NOISE) return;
+  const track = readParamTrack(layer.params, axis) ?? { mode: "Static" as const, value: 0 };
+  // Absolute, through `autoKeyTrack` — the shared "commit a scalar to an
+  // animatable param" rule, so this writes tracks exactly the way the inspector
+  // and the gizmo do (a Static track flattens, a Keyframed one takes a key).
+  const next = autoKeyTrack(track, tInLayerUs, resolveAnimated(track, tInLayerUs, 0) + delta);
+  // Uncaught on purpose: the registry funnel turns a rejection into the one
+  // `Shortcut`/Error row with the refusal's curated copy (commands/registry.ts).
+  await updateLayerParamTracks(layer.id, [[axis, next]]);
+}
 
 /// "Move to a new track" is offered only when one fresh lane could actually hold
 /// the whole selection, so the impossible request is prevented rather than
@@ -205,6 +346,42 @@ export function buildAppCommands(
       ...(enabled ? { enabled } : {}),
       ...(checked ? { checked } : {}),
       run: menu[id],
+    });
+  }
+
+  // The self-contained third of the namespace. Gates and runs sit together here
+  // because there is no dependency to receive them from.
+  //
+  // The centring pair gates on the SELECTION only, deliberately not on the
+  // probe: whether the compositor has the layer staged flickers with decoding
+  // and with the preview panel's own lifetime, and a command that greys itself
+  // out for reasons invisible on screen is worse than one that refuses out loud
+  // (`refuseUnstaged`).
+  const selfContained: Record<
+    SelfContainedCommandId,
+    { run: () => void | Promise<void>; enabled?: () => boolean; checked?: () => boolean }
+  > = {
+    toggleSafeAreaGuides: {
+      run: () => void toggleSafeAreaGuides(),
+      checked: () => safeAreaGuidesVisible(),
+    },
+    centerHorizontally: {
+      run: () => centerPrimaryLayer("x"),
+      enabled: () => centerTarget() !== null,
+    },
+    centerVertically: {
+      run: () => centerPrimaryLayer("y"),
+      enabled: () => centerTarget() !== null,
+    },
+  };
+  for (const id of SELF_CONTAINED_COMMAND_IDS) {
+    const { run, enabled, checked } = selfContained[id];
+    defs.push({
+      id,
+      labelKey: SELF_CONTAINED_LABEL_KEYS[id],
+      ...(enabled ? { enabled } : {}),
+      ...(checked ? { checked } : {}),
+      run,
     });
   }
   return defs;

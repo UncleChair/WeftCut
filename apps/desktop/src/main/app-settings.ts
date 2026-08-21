@@ -95,6 +95,12 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.markers_visible === 'boolean'
           ? parsed.markers_visible
           : d.markers_visible,
+      // Additive boolean defaulting FALSE, so "absent" and "off" collapse
+      // harmlessly here — the opposite of the pair above.
+      safe_area_guides_visible:
+        typeof parsed.safe_area_guides_visible === 'boolean'
+          ? parsed.safe_area_guides_visible
+          : d.safe_area_guides_visible,
       // Optional path; a non-string, empty, or whitespace-only value degrades to
       // unset (undefined) so the resolver falls back to the default root. Kept
       // out of the on-disk file when unset (JSON.stringify drops undefined).
@@ -138,6 +144,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
       if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead
       if (patch.markers_visible !== undefined) current.markers_visible = patch.markers_visible
+      if (patch.safe_area_guides_visible !== undefined) current.safe_area_guides_visible = patch.safe_area_guides_visible
       // Empty / whitespace-only clears the field back to unset (→ default root);
       // any other value is stored verbatim. Storing undefined keeps it off disk.
       if (patch.data_root !== undefined) current.data_root = patch.data_root.trim() === '' ? undefined : patch.data_root
