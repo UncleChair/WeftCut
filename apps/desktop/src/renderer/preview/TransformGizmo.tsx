@@ -3,6 +3,14 @@
 // corners and edges, rotates it by the knob on a stalk above its top edge, and
 // moves its anchor by the target reticle at the pivot.
 //
+// One kind resizes differently: on a Text layer the eight handles write the
+// layout BOX (`box_w`/`box_h`) rather than `scale`, because a box lays glyphs out
+// while `scale` magnifies an already-rasterized atlas (ADR 0049). That branch
+// runs through the same solve, and the differences it does have — plain params
+// scalars instead of tracks, no position compensation, an override channel that
+// is absolute rather than additive, a double-click that steps back toward auto —
+// are each commented where they land.
+//
 // Screen-space by design — an SVG overlay, not Pixi children. The stage is
 // read back by the eyedropper and by the conformance capture hooks, so anything
 // drawn into it would poison those buffers; and a box drawn in composition
@@ -17,17 +25,20 @@ import { RotateCcwIcon } from "lucide-react";
 import { logMutationFailure } from "../errors/tryMutate";
 import { snapFrameRound } from "../frames";
 import {
+  updateLayerParams,
   updateLayerParamTracks,
   type AnimTrack,
   type CompositionSummary,
   type LayerSummary,
   type ProjectSummary,
+  type TextPatch,
 } from "../ipc";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { readParamTrack, readScaleLinked, scaleFanOutFor } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
 import { resolveAnimated } from "../render/animated";
 import { DEFAULT_ANCHOR } from "../render/anchorPivot";
+import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import {
   clearTransformOverride,
   setTransformOverride,
@@ -38,6 +49,7 @@ import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { usePrimaryLayerId } from "../state/selectionStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { layerFrameAt, TRANSFORMABLE_KINDS } from "./centerInFrame";
 import {
   anchorCompensation,
   angleAboutDeg,
@@ -64,7 +76,6 @@ import {
   type LayerQuadInput,
   type Pt,
   type ScaleHandleId,
-  type TransformOrigin,
 } from "./gizmoGeometry";
 import { getGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
 import {
@@ -141,60 +152,73 @@ const GUIDE_WIDTH_PX = 1;
 const GUIDE_UNDER_COLOR = "rgba(0, 0, 0, 0.55)";
 const GUIDE_UNDER_WIDTH_PX = 3;
 
-/// Color has no transform at all (it fills the composition) and Audio is not
-/// visual — neither gets a box.
-const TRANSFORM_KINDS = new Set(["VideoClip", "ImageOverlay", "Text", "Motif"]);
-
-/// The flattened transform fields every box needs. Read through one cast at the
-/// edge because `LayerParamsView` is a discriminated union and the gizmo is
-/// deliberately kind-agnostic past the `TRANSFORM_KINDS` gate.
-interface TransformFields {
-  kind: string;
-  x?: AnimTrack<number>;
-  y?: AnimTrack<number>;
-  scale_x?: AnimTrack<number>;
-  scale_y?: AnimTrack<number>;
-  rotation_deg?: AnimTrack<number>;
-  anchor_x?: AnimTrack<number>;
-  anchor_y?: AnimTrack<number>;
-}
-
-function transformFields(layer: LayerSummary): TransformFields {
-  return layer.params as unknown as TransformFields;
-}
-
-/// A layer's transform frame at an absolute time, with NO in-flight override
-/// folded in. One rule for two readers — the draw loop (which then adds the
-/// override on top) and the snap-target collector — so a layer's own box and the
-/// box other layers snap it against cannot be derived differently.
+/// The box stroke, by what the renderer did with the text INSIDE the box
+/// (`GizmoProbe.textFitOf`). Default is the selection's own ring; shrink-to-fit
+/// is the warning role — the feature working, but the glyphs are no longer the
+/// size the inspector authored — and text spilling out at the 8 px floor is the
+/// error role, because there the box has stopped being a promise the text fits.
 ///
-/// Deliberately reads the MIRROR only, never the commit ledger: what this
-/// returns plus the override has to equal what the Compositor draws, and the
-/// Compositor's own base is the mirror (`resolveView` + `withTransformOverride`).
-/// The unreflected commits reach here as the override's carry instead — see
-/// `mergedDelta`. Layering the ledger in on top of that would double-count it.
-function frameAt(
-  layer: LayerSummary,
-  tUs: number,
-  size: { w: number; h: number },
-): LayerQuadInput {
-  const p = transformFields(layer);
-  const tLocalUs = tUs - layer.t_start_us;
-  return {
-    x: resolveAnimated(p.x, tLocalUs, 0),
-    y: resolveAnimated(p.y, tLocalUs, 0),
-    // DEFAULT_ANCHOR and nothing else — the same constant the renderer resolves
-    // through (resolveView.ts). LANDMINE: a local fallback here makes the box
-    // pivot where the picture does not, and neither looks broken on its own.
-    anchorX: resolveAnimated(p.anchor_x, tLocalUs, DEFAULT_ANCHOR),
-    anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR),
-    naturalW: size.w,
-    naturalH: size.h,
-    scaleX: resolveAnimated(p.scale_x, tLocalUs, 1),
-    scaleY: resolveAnimated(p.scale_y, tLocalUs, 1),
-    rotationDeg: resolveAnimated(p.rotation_deg, tLocalUs, 0),
-    origin: originFor(p.kind),
-  };
+/// Tokens rather than literals, unlike the snap guides: these read against the
+/// app's own chrome, not against arbitrary footage, so the palette has a role
+/// for each of them.
+const BOX_STROKE = "var(--ring)";
+const BOX_STROKE_SHRUNK = "var(--warning)";
+const BOX_STROKE_OVERFLOW = "var(--destructive)";
+
+/// The one kind whose resize handles write a layout BOX instead of `scale`
+/// (ADR 0049). Named rather than inlined: several separate decisions here turn on
+/// it — handle visibility, uniformity, the commit surface, the stroke, the
+/// double-click — and a bare `"Text"` at each would read as coincidences.
+const TEXT_KIND = "Text";
+
+/// A text box, per axis, in composition pixels and local (pre-`scale`). `null`
+/// is Auto on that axis, and the nullability IS the resize mode — `(null, null)`
+/// auto width, `(set, null)` auto height, `(set, set)` fixed — so there is no
+/// mode field here to keep in step with it. `(null, set)` is not a mode; see
+/// `moveScale`'s backfill and `clearBoxAxis`'s ladder.
+interface TextBox {
+  w: number | null;
+  h: number | null;
+}
+
+/// The Text arm of `update_layer_params`, narrowed to the two fields this gizmo
+/// writes — so a patch built here cannot accidentally carry a font or a colour,
+/// and the box pair's types come from the boundary rather than from a copy of it.
+///
+/// LANDMINE: `null` is a VALUE on this pair — "back to auto" — not the "don't
+/// touch" that `undefined` means for every other field. That split is the whole
+/// wire contract (`main/state/mutations/params.ts`), so an axis that did not
+/// change must be left ABSENT rather than written as null.
+type TextBoxPatch = { kind: typeof TEXT_KIND } & Pick<TextPatch, "box_w" | "box_h">;
+
+/// The box a layer's params carry. Not a track read: `box_w`/`box_h` are plain
+/// scalars on purpose (ADR 0049 — a keyframed box would re-measure and rebuild
+/// the glyph atlas every frame), so none of `paramTrack`'s machinery applies.
+function textBoxOf(layer: LayerSummary): TextBox {
+  const p = layer.params as unknown as { box_w?: number | null; box_h?: number | null };
+  return { w: p.box_w ?? null, h: p.box_h ?? null };
+}
+
+/// A dragged box extent, floored. The floor is `TEXT_BOX_MIN_PX` — the same
+/// number shrink-to-fit stops at, because a box nobody can see is the same
+/// failure as text nobody can read.
+///
+/// It doubles as the guard against dragging a handle PAST the pivot: the solve
+/// hands back a negative factor there, and a box does not flip. Flipping is what
+/// `scale` is for, and `scale` is exactly what this gesture leaves alone.
+function clampBoxAxis(px: number): number {
+  return Number.isFinite(px) ? Math.max(TEXT_BOX_MIN_PX, px) : TEXT_BOX_MIN_PX;
+}
+
+/// `solved / base` — the ratio a resize solve implies on one axis, which is what
+/// a box drag reads out of it instead of writing the scale itself.
+///
+/// 1 when there is nothing to divide by: a layer someone set to `scale_x = 0`
+/// has no lever, and letting Infinity through would collapse the box to the drag
+/// floor on a gesture that asked for nothing.
+function factorOf(solved: number, base: number): number {
+  const f = solved / base;
+  return Number.isFinite(f) ? f : 1;
 }
 
 /// What a gesture snaps against, frozen at pointerdown. Null on a gesture
@@ -209,11 +233,17 @@ interface SnapContext {
 
 /// Every OTHER staged layer's bounding box, composition pixels.
 ///
-/// `TRANSFORM_KINDS` does the filtering that matters here for free: `Color`
+/// `TRANSFORMABLE_KINDS` does the filtering that matters here for free: `Color`
 /// fills the composition, so its edges ARE the composition's and would only add
 /// duplicate lines for the tie-break to sort out, and `Audio` has no footprint
 /// at all. A layer the compositor has not staged has no `naturalSizeOf`
 /// and is skipped — its size is unknowable, not zero.
+///
+/// `layerFrameAt` reads the MIRROR only, never this gizmo's ledgers, and that is
+/// right for both of its readers: another layer's geometry is nothing this gizmo
+/// has written, and the selected layer's unreflected commits reach the draw loop
+/// through the OVERRIDE instead — the transform channels as `mergedDelta`'s carry,
+/// the box as `boxChannels`. Layering either in here would double-count it.
 function otherLayerBoxes(
   summary: { tracks: readonly { layers: readonly LayerSummary[] }[] },
   selfId: string,
@@ -224,11 +254,11 @@ function otherLayerBoxes(
   for (const track of summary.tracks) {
     for (const other of track.layers) {
       if (other.id === selfId) continue;
-      if (!TRANSFORM_KINDS.has(other.params.kind)) continue;
+      if (!TRANSFORMABLE_KINDS.has(other.params.kind)) continue;
       if (tUs < other.t_start_us || tUs >= other.t_end_us) continue;
       const size = probe.naturalSizeOf(other.id);
       if (!size || size.w <= 0 || size.h <= 0) continue;
-      const box = quadAabb(layerQuad(frameAt(other, tUs, size)));
+      const box = quadAabb(layerQuad(layerFrameAt(other, tUs, size)));
       if (box) boxes.push(box);
     }
   }
@@ -245,7 +275,7 @@ export function TransformGizmoHost() {
       if (layer.id === primaryLayerId) found = layer;
     }
   }
-  if (!found || !TRANSFORM_KINDS.has(found.params.kind)) return null;
+  if (!found || !TRANSFORMABLE_KINDS.has(found.params.kind)) return null;
   // Keyed on the layer id so switching selection remounts with fresh drag
   // state instead of carrying a half-finished gesture across layers.
   return <TransformGizmo key={found.id} layer={found} summary={summary} />;
@@ -335,11 +365,30 @@ interface ScaleDrag extends DragBase {
   /// with the frame it comes from. Only the uniform branch uses it, but it is
   /// computed once here rather than per move.
   ray: Pt;
+  /// Non-null on a Text layer and null on every other kind — which is also what
+  /// routes the release: a box gesture writes params scalars through
+  /// `update_layer_params`, a scale gesture writes tracks (ADR 0049).
+  ///
+  /// `base` is the pair frozen at pointerdown: what an axis this handle does not
+  /// drive keeps, and what the commit diffs against so an unchanged axis is left
+  /// out of the patch. `live` is what the gesture is worth right now, already
+  /// floored and already carrying the `box_w` backfill a vertical-edge drag owes.
+  ///
+  /// The scale channels below stay at 0 for the whole gesture when this is set:
+  /// the box lays glyphs out, it does not magnify them.
+  box: { base: TextBox; live: TextBox } | null;
   dScaleX: number;
   dScaleY: number;
   /// The `x`/`y` that keeps the pivot still (`scaleCompensation`). Committed in
   /// the same batch for the same reason as the anchor gesture's: applying the
   /// scale without it is a visible jump.
+  ///
+  /// Always ZERO on a box gesture, and not by accident: `scaleCompensation`
+  /// returns `{0, 0}` whenever `origin === "anchor"`, `originFor` returns
+  /// `"anchor"` for Text, and a box resize does not move `x`/`y` in the first
+  /// place — Text's `x`/`y` IS the pivot, so there is nothing for a fix to pin.
+  /// LANDMINE: a reader who assumes symmetry with the media kinds' resize will
+  /// add a phantom `positionFix` here and slide the layer on every box drag.
   compDx: number;
   compDy: number;
 }
@@ -359,6 +408,12 @@ const NOISE = 1e-9;
 
 function moved(delta: number): boolean {
   return Math.abs(delta) > NOISE;
+}
+
+/// Whether two box axes say the same thing. Auto is only equal to Auto — a
+/// number can never stand in for it, because the mode is read off the null.
+function sameBoxAxis(a: number | null, b: number | null): boolean {
+  return a === null || b === null ? a === b : !moved(a - b);
 }
 
 /// Tracks this gizmo has COMMITTED but the project mirror may not carry yet:
@@ -463,6 +518,11 @@ function deltaOf(drag: Drag): TransformDelta {
         danchorY: drag.dAnchorY,
       };
     case "scale":
+      // A Text box drag moves none of these channels — the box lays glyphs out,
+      // it does not magnify them, and its own `boxW`/`boxH` channel is written by
+      // `boxChannels` rather than here, because it has a second source (the
+      // ledger) that this pure function cannot see.
+      if (drag.box) return { dx: 0, dy: 0 };
       return {
         dx: drag.compDx,
         dy: drag.compDy,
@@ -501,7 +561,23 @@ function mergedDelta(base: CommitBase, d: TransformDelta, tLocalUs: number): Tra
     danchorY: (d.danchorY ?? 0) + carry("anchor_y", DEFAULT_ANCHOR),
     dscaleX: (d.dscaleX ?? 0) + carry("scale_x", 1),
     dscaleY: (d.dscaleY ?? 0) + carry("scale_y", 1),
+    // Passed through, never carried. A carry is `resolve(written) −
+    // resolve(mirror)`, which only means something for a channel that ADDS to a
+    // track; the box is absolute, so what `boxChannels` produced already IS the
+    // value that should be on screen.
+    ...passBox(d),
   };
+}
+
+/// Re-emit `d`'s box channels, and ONLY if they are there. An explicit
+/// `boxW: undefined` is both a type error under `exactOptionalPropertyTypes` and
+/// a semantic one: absent and `null` say different things on this pair, so a
+/// pass-through has to preserve which of the two it was handed.
+function passBox(d: TransformDelta): Pick<TransformDelta, "boxW" | "boxH"> {
+  const out: { boxW?: number | null; boxH?: number | null } = {};
+  if (d.boxW !== undefined) out.boxW = d.boxW;
+  if (d.boxH !== undefined) out.boxH = d.boxH;
+  return out;
 }
 
 /// Nothing left to apply. `NOISE` rather than exact zero, because a carry can
@@ -510,6 +586,11 @@ function mergedDelta(base: CommitBase, d: TransformDelta, tLocalUs: number): Tra
 /// leave the layer permanently offset by a float ulp.
 function isNoDelta(d: TransformDelta): boolean {
   return (
+    // A box channel is a VALUE, not a magnitude, so PRESENCE disqualifies: `null`
+    // means "back to Auto", which is very much something to apply, and comparing
+    // it against zero would drop the one edit that has no number in it.
+    d.boxW === undefined &&
+    d.boxH === undefined &&
     !moved(d.dx) &&
     !moved(d.dy) &&
     !moved(d.drotDeg ?? 0) &&
@@ -584,9 +665,27 @@ function TransformGizmo({
   /// and the carry the override has to hold so the picture does not fall back to
   /// the stale mirror value mid-burst (`mergedDelta`).
   const pendingRef = useRef(new Map<string, AnimTrack<number>>());
-  /// Commits dispatched and not yet settled. The ledger is dropped on the first
-  /// summary that arrives with none outstanding, which is how an external writer
-  /// — undo, the inspector, an MCP agent — takes the authority back.
+  /// The Text box this gizmo has COMMITTED but the mirror does not carry yet, or
+  /// null when the mirror is the only authority. The box's answer to
+  /// `pendingRef`, retired by the same rule.
+  ///
+  /// It exists because `naturalSizeOf` can report the box's SIZE but never its
+  /// nullability, and the nullability is the resize mode (ADR 0049). Every
+  /// decision that needs the mode rather than the extent reads it here: which
+  /// axis a drag may leave alone, which rung a double-click steps down, and which
+  /// axes a patch may omit. A measured 640 px and a `box_w` of 640 are the same
+  /// number and different modes.
+  ///
+  /// Its second reader is `boxChannels`, which publishes it as the override until
+  /// the summary lands — the box's equivalent of `mergedDelta`'s carry.
+  const boxLedgerRef = useRef<TextBox | null>(null);
+  /// Last stroke written to the box, so the fit only costs a style write when it
+  /// actually changes — the same reason `handleCursors` exists.
+  const boxStrokeRef = useRef(BOX_STROKE);
+  /// Commits dispatched and not yet settled, of either kind. Both ledgers are
+  /// dropped on the first summary that arrives with none outstanding, which is how
+  /// an external writer — undo, the inspector, an MCP agent — takes the authority
+  /// back.
   ///
   /// LANDMINE: this counts the MUTATION, which resolves a beat before its own
   /// summary arrives. An unrelated refetch issued before our write landed can
@@ -603,18 +702,43 @@ function TransformGizmo({
     ledger: pendingRef.current,
   });
 
+  /// The box this gizmo believes the layer carries — LEDGER first, then the
+  /// mirror. The same "read what we wrote before what we were told" rule
+  /// `paramTrack` follows, against the same two-round-trip lag.
+  const boxState = (): TextBox => boxLedgerRef.current ?? textBoxOf(layerRef.current);
+
+  /// The box the override should publish right now: the live gesture's if one is
+  /// being dragged, else the LEDGER's — committed and not yet staged. Absent when
+  /// neither, which is every non-Text layer and every idle moment.
+  ///
+  /// The ledger arm is the box's answer to `mergedDelta`'s carry, and it is a
+  /// carry in the only sense that matters: it holds the picture at the value we
+  /// wrote until the summary reflecting it arrives, so the glyphs do not reflow
+  /// back to the pre-commit box for the two round trips in between. It
+  /// self-cancels identically — the ledger retires with that summary, and the
+  /// `applyOverride` in the same effect then publishes nothing.
+  ///
+  /// THE single writer of this channel: `deltaOf` cannot own it, because half its
+  /// input is a ref.
+  const boxChannels = (drag: Drag | null): Pick<TransformDelta, "boxW" | "boxH"> => {
+    const box = drag?.kind === "scale" && drag.box ? drag.box.live : boxLedgerRef.current;
+    return box ? { boxW: box.w, boxH: box.h } : {};
+  };
+
   /// Publish the override for the world as it stands: the live gesture's delta
   /// (none when `drag` is null) plus the carry. THE single writer — every
   /// pointermove, Escape, a settling commit and the summary-arrival effect all
   /// route here, so the box, the picture and the ledger cannot drift apart.
   const applyOverride = (drag: Drag | null): void => {
     const l = layerRef.current;
-    const d = drag ? deltaOf(drag) : NO_DELTA;
+    const d = { ...(drag ? deltaOf(drag) : NO_DELTA), ...boxChannels(drag) };
     // Nothing committed-but-unseen ⇒ the override IS the gesture. A separate
     // path so the common case writes only the channels its own gesture owns
     // rather than seven mostly-zero ones.
     if (pendingRef.current.size === 0) {
-      if (drag) setTransformOverride(l.id, d);
+      // `drag ||` keeps the delta gestures' rule exactly as it was; the box also
+      // has to survive PAST its gesture, until its summary retires the ledger.
+      if (drag || !isNoDelta(d)) setTransformOverride(l.id, d);
       else clearTransformOverride(l.id);
       return;
     }
@@ -654,10 +778,40 @@ function TransformGizmo({
       });
   };
 
+  /// Send one box gesture — one `update_layer_params`, one undo step.
+  ///
+  /// NOT `commitEntries`, and not because a patch is more convenient: `box_w` and
+  /// `box_h` are plain params scalars, not `Animated` tracks (ADR 0049), so there
+  /// is no track for `autoKeyTrack` to key and `update_layer_param_tracks` has
+  /// nothing it could write. `patch` carries only the axes that changed; `next`
+  /// is the whole resulting pair, because the ledger answers "what IS the box
+  /// now", not "what did I send".
+  ///
+  const commitBox = (layerId: string, next: TextBox, patch: TextBoxPatch): void => {
+    const prev = boxLedgerRef.current;
+    boxLedgerRef.current = next;
+    inFlightRef.current += 1;
+    updateLayerParams(layerId, patch)
+      .catch((err) => {
+        // Nothing landed, so the ledger entry is fiction and no summary is coming.
+        boxLedgerRef.current = prev;
+        logMutationFailure(err, "Transform gizmo text box");
+      })
+      .finally(() => {
+        inFlightRef.current -= 1;
+        // Re-derive rather than clear, exactly as `commitEntries` does: on failure
+        // this is what puts the picture back on the box that actually exists, and
+        // on success it is a no-op until the summary lands.
+        applyOverride(dragRef.current);
+      });
+  };
+
   /// A fresh summary has landed (a new summary IS a new `layer` object).
   ///
-  /// First the ledger is dropped if this gizmo has nothing outstanding — the
-  /// mirror is then as current as anything we know.
+  /// First BOTH ledgers are dropped if this gizmo has nothing outstanding — the
+  /// mirror is then as current as anything we know. They retire together on
+  /// purpose: one gesture can leave a track entry and the next a box entry, and
+  /// an external writer taking authority back has to take all of it.
   ///
   /// Then the override is re-derived. The carry zeroes exactly when the summary
   /// carrying our write lands, which is what lifts the override; clearing on the
@@ -666,7 +820,10 @@ function TransformGizmo({
   /// MID-gesture, where the gesture's delta has to be re-based onto the new
   /// value rather than dropped.
   useEffect(() => {
-    if (inFlightRef.current === 0 && !dragRef.current) pendingRef.current.clear();
+    if (inFlightRef.current === 0 && !dragRef.current) {
+      pendingRef.current.clear();
+      boxLedgerRef.current = null;
+    }
     applyOverride(dragRef.current);
   }, [layer]);
 
@@ -678,10 +835,12 @@ function TransformGizmo({
   useEffect(() => {
     let frame = 0;
     /// Position, show and cursor the eight resize handles for an already-mapped
-    /// box. A linked layer keeps its CORNERS only: one axis of it cannot move
-    /// without the other, so an edge handle would either lie about what it does
-    /// or silently unlink the layer.
-    const placeScaleHandles = (corners: Pt[], linked: boolean): void => {
+    /// box. `edges` decides whether the four midpoint handles exist at all: a
+    /// `scale_linked` layer keeps its CORNERS only, because one axis of it cannot
+    /// move without the other, so an edge handle would either lie about what it
+    /// does or silently unlink the layer. A Text box has no such coupling — see
+    /// the call site.
+    const placeScaleHandles = (corners: Pt[], edges: boolean): void => {
       const points = scaleHandlePoints(corners);
       if (!points) return;
       const [tl, tr, , bl] = corners as [Pt, Pt, Pt, Pt];
@@ -695,7 +854,7 @@ function TransformGizmo({
         const el = handleEls.current.get(id);
         if (!el) continue;
         const along = id === "t" || id === "b" ? edgeLen.x : edgeLen.y;
-        const on = isCornerHandle(id) || (!linked && along >= EDGE_HANDLE_MIN_PX);
+        const on = isCornerHandle(id) || (edges && along >= EDGE_HANDLE_MIN_PX);
         el.style.display = on ? "" : "none";
         if (!on) continue;
         el.setAttribute("transform", `translate(${at.x} ${at.y})`);
@@ -725,8 +884,9 @@ function TransformGizmo({
         anchor.style.display = display;
       };
       // The resize handles are NOT part of `show`: which of them exist depends
-      // on the layer (linked ⇒ corners only) and on the box's drawn size, so
-      // the visible path decides each one individually below.
+      // on the layer (linked ⇒ corners only, unless its axes are a box's) and on
+      // the box's drawn size, so the visible path decides each one individually
+      // below.
       const hideGuides = (): void => {
         if (guideXRef.current) guideXRef.current.style.display = "none";
         if (guideYRef.current) guideYRef.current.style.display = "none";
@@ -742,10 +902,15 @@ function TransformGizmo({
       const tUs = playheadTimeUs();
       if (tUs < l.t_start_us || tUs >= l.t_end_us) return hide();
       const rect = probe.canvasRect();
+      // For Text this is the BOX when one is set and the measured glyph bounds
+      // otherwise, so it needs no special case: the box IS the footprint, and it
+      // already carries the in-flight gesture, because the sprite it is measured
+      // off was staged through `withTextBoxOverride`.
       const size = probe.naturalSizeOf(l.id);
       if (!rect || !size) return hide();
       const fit = containFit(rect, comp.width, comp.height);
       if (!fit) return hide();
+      const boxed = l.params.kind === TEXT_KIND;
       // The in-flight gesture is read from the OVERRIDE map rather than from
       // `dragRef`, because that map is also what the Compositor folds into the
       // picture (`withTransformOverride`). Same source ⇒ the box and the
@@ -755,7 +920,7 @@ function TransformGizmo({
       // The box is the layer's footprint, so it reads the UNSIGNED scale: a
       // flip mirrors the content within the same box (anchorPivot.ts), so
       // folding `flip_h` in here would only reverse the vertex order.
-      const base = frameAt(l, tUs, size);
+      const base = layerFrameAt(l, tUs, size);
       const geom: LayerQuadInput = {
         ...base,
         x: base.x + (d?.dx ?? 0),
@@ -792,7 +957,28 @@ function TransformGizmo({
       // the box would leave it upside-down at 180°, which is the one thing an
       // icon must not do.
       knob.setAttribute("transform", `translate(${handle.knob.x} ${handle.knob.y})`);
-      placeScaleHandles(corners, readScaleLinked(l.params));
+      // A Text box's two axes are independent BY CONSTRUCTION — the modes are
+      // read off which of them is set (ADR 0049) — so `scale_linked` has no say
+      // over its handles and all eight stay grabbable on a fresh text layer,
+      // whose `scale_linked` is `true`. The flag keeps its other job untouched:
+      // one Scale lane vs two in the inspector.
+      placeScaleHandles(corners, boxed || !readScaleLinked(l.params));
+      // The stroke reports what the renderer did with the text INSIDE the box,
+      // which only a Text layer has an answer for. Shrink and overflow are
+      // deliberately different states: shrinking is the feature working, overflow
+      // is it having run out of room at the 8 px floor.
+      const textFit = boxed ? probe.textFitOf(l.id) : null;
+      const stroke = !textFit
+        ? BOX_STROKE
+        : textFit.overflowing
+          ? BOX_STROKE_OVERFLOW
+          : isShrunk(textFit)
+            ? BOX_STROKE_SHRUNK
+            : BOX_STROKE;
+      if (boxStrokeRef.current !== stroke) {
+        boxStrokeRef.current = stroke;
+        box.style.stroke = stroke;
+      }
       // Guides last: they are a statement about the gesture, drawn from the
       // frozen target the solver picked (composition space) rather than from the
       // box — so they stay put while the layer slides onto them.
@@ -1090,6 +1276,10 @@ function TransformGizmo({
     // gesture's arithmetic is self-consistent even if the layer is animating.
     const handleComp = scaleHandlePoints(layerQuad(frame))?.find((h) => h.id === id)?.at;
     if (!handleComp) return;
+    // Frozen with the frame, because the frame's `naturalW`/`naturalH` ARE this
+    // pair wherever it is set: reading the box again at release could straddle a
+    // summary and diff the gesture against a base it never measured.
+    const box = boxState();
     dragRef.current = {
       kind: "scale",
       id,
@@ -1102,6 +1292,7 @@ function TransformGizmo({
       linked: readScaleLinked(layerRef.current.params),
       snap: grabSnap(),
       ray: uniformScaleRay(frame, id),
+      box: layerRef.current.params.kind === TEXT_KIND ? { base: box, live: box } : null,
       dScaleX: 0,
       dScaleY: 0,
       compDx: 0,
@@ -1123,7 +1314,12 @@ function TransformGizmo({
     const rawTarget = { x: drag.handleComp.x + d.x, y: drag.handleComp.y + d.y };
     // A linked layer is uniform for the whole gesture; Shift is the usual
     // constrain-proportions modifier for an unlinked one.
-    const uniform = drag.linked || e.shiftKey;
+    //
+    // A BOX gesture takes its uniformity from the HANDLE instead: a corner
+    // resizes the box proportionally and an edge owns exactly one axis (ADR
+    // 0049), so neither `scale_linked` — whose remaining job is the inspector's
+    // one Scale lane vs two — nor Shift has anything left to say about it.
+    const uniform = drag.box ? isCornerHandle(drag.id) : drag.linked || e.shiftKey;
     const threshold = thresholdFor(drag.snap, fit, e.ctrlKey);
     // Straight off HANDLE_DIR, never re-derived: an axis this handle does not
     // drive is one `solveScale` would leave alone, so snapping there would draw
@@ -1171,12 +1367,69 @@ function TransformGizmo({
       guides = snapped?.guides ?? NO_GUIDES;
     }
     guidesRef.current = guides;
+    if (drag.box) {
+      // ADR 0049: for Text the handles lay glyphs OUT, they do not magnify them.
+      // The solve above already put the handle under the cursor with rotation,
+      // the corner's proportional constraint and `previewSnap`'s pull all folded
+      // in — so the box reads that solve as a FACTOR instead of writing it as a
+      // scale. `frame.naturalW` IS the current box (`Compositor.naturalSizeOf`
+      // reports the box when one is set, the measured glyph bounds when not), so
+      // `naturalW × solved/base` is exactly "resize the box by what the drag
+      // implies". `scale_x`/`scale_y` and `font_size_px` are never touched.
+      //
+      // Box edges therefore participate in snapping for free: the snapped target
+      // IS the box edge, because the box is the frame the solve runs in. The one
+      // place that stops being exact is the `TEXT_BOX_MIN_PX` floor, where the
+      // box stops but the cursor does not.
+      const fx = factorOf(next.scaleX, drag.frame.scaleX);
+      const fy = factorOf(next.scaleY, drag.frame.scaleY);
+      const base = drag.box.base;
+      // A vertical-edge drag does not own the width, but it still has to SEND
+      // one: `(null, set)` is not a resize mode, and the state layer has no
+      // canvas to measure a width with. So an Auto width is BACKFILLED from
+      // `frame.naturalW` — the measured glyph width, which is what `naturalSizeOf`
+      // reports with no box set — and rides the same commit, the way an anchor
+      // gesture writes its position compensation in its own batch. This is the
+      // gesture third of the triple defense; MCP refuses the pair and `TextSprite`
+      // coalesces it. A width already set is passed through UNTOUCHED, floor
+      // included: a vertical gesture must not edit the horizontal axis.
+      const backfillW = base.w ?? clampBoxAxis(drag.frame.naturalW);
+      drag.box.live = {
+        w: drives.x ? clampBoxAxis(drag.frame.naturalW * fx) : backfillW,
+        // The horizontal edges must NOT invent a height, by contrast: writing one
+        // would drag an Auto-height layer into Fixed — switching shrink-to-fit on
+        // — from a gesture that only asked for a wrap width.
+        h: drives.y ? clampBoxAxis(drag.frame.naturalH * fy) : base.h,
+      };
+      // Publishing it is what makes the gesture VISIBLE: the sprite re-wraps,
+      // re-runs the shrink search and re-reports its fit off this value, which is
+      // what the gizmo's own outline and stroke are then read back from.
+      applyOverride(drag);
+      return;
+    }
     drag.dScaleX = next.scaleX - drag.frame.scaleX;
     drag.dScaleY = next.scaleY - drag.frame.scaleY;
     const fix = scaleCompensation(drag.frame, next.scaleX, next.scaleY);
     drag.compDx = fix.x;
     drag.compDy = fix.y;
     applyOverride(drag);
+  };
+
+  /// One `update_layer_params` for the axes a box gesture actually changed, and
+  /// nothing at all when it changed neither — a handle grabbed and released,
+  /// which is also each half of a double-click.
+  ///
+  /// Diffed against `boxState()` and not against the gesture's frozen base, so a
+  /// summary that landed mid-gesture is respected rather than overwritten with
+  /// what the grab measured. An axis the diff drops is left ABSENT from the patch:
+  /// `null` there would mean "back to auto", which is a different edit.
+  const commitBoxDrag = (layerId: string, live: TextBox): void => {
+    const cur = boxState();
+    const patch: TextBoxPatch = { kind: TEXT_KIND };
+    if (!sameBoxAxis(live.w, cur.w)) patch.box_w = live.w;
+    if (!sameBoxAxis(live.h, cur.h)) patch.box_h = live.h;
+    if (patch.box_w === undefined && patch.box_h === undefined) return;
+    commitBox(layerId, live, patch);
   };
 
   const endScale = (e: React.PointerEvent<SVGGElement>): void => {
@@ -1187,6 +1440,18 @@ function TransformGizmo({
     if (drag?.kind !== "scale") return;
     const base = commitBase();
     const l = base.layer;
+    // Text branches out BEFORE the scale-delta check: a box gesture leaves both
+    // scale channels at exactly 0 by design, so that check would swallow it whole.
+    if (drag.box) {
+      commitBoxDrag(l.id, drag.box.live);
+      // Re-derive, never clear: the gesture is over but its box has to stay on
+      // screen until the summary carrying it arrives, and after `commitBoxDrag`
+      // that value lives in the ledger — which is what `boxChannels` republishes.
+      // Clearing here would reflow the glyphs back to the pre-commit box for the
+      // two round trips in between.
+      applyOverride(null);
+      return;
+    }
     if (!moved(drag.dScaleX) && !moved(drag.dScaleY)) {
       applyOverride(null);
       return;
@@ -1218,6 +1483,55 @@ function TransformGizmo({
     // where the media kinds needed no fix and Text always did.
     entries.push(...positionFix(base, drag.tInLayerUs, drag.compDx, drag.compDy));
     commitEntries(l.id, entries, "scale");
+  };
+
+  /// The box a double-click on `id` should leave behind, or null when there is
+  /// nothing to release. Text only — the only route back toward auto in this
+  /// slice (the inspector's mode control is its own).
+  ///
+  /// The three modes form a LADDER, because `(null, set)` is not a mode:
+  ///
+  ///   Fixed (set, set) → Auto height (set, null) → Auto width (null, null)
+  ///
+  /// A CORNER owns both axes, so it drops straight to Auto width in one step.
+  /// A VERTICAL edge (`t`/`b`) owns `box_h`, and releasing a height is always
+  /// legal — on Auto height there is simply nothing left for it to release.
+  /// A HORIZONTAL edge (`l`/`r`) owns `box_w`, and releasing that while a height
+  /// is set would leave the illegal pair — so on Fixed it takes the rung above
+  /// instead and drops the HEIGHT (Fixed → Auto height); a second double-click
+  /// then releases the width (Auto height → Auto width). One gesture, one rung,
+  /// rather than a horizontal double-click silently discarding a height the user
+  /// set.
+  ///
+  /// A hand-edited `(null, set)` layer is repaired by any of the three, since
+  /// every rung of the ladder below it is legal.
+  const clearBoxAxis = (id: ScaleHandleId, cur: TextBox): TextBox | null => {
+    if (cur.w === null && cur.h === null) return null;
+    if (isCornerHandle(id)) return { w: null, h: null };
+    if (id === "t" || id === "b") return cur.h === null ? null : { w: cur.w, h: null };
+    return cur.h !== null ? { w: cur.w, h: null } : { w: null, h: null };
+  };
+
+  /// Double-click a handle to step the box back toward auto. Silent on every
+  /// other kind: `scale` has no "auto", so there is nothing for the gesture to
+  /// mean there.
+  ///
+  /// The two press/release pairs that precede this each run `beginScale` →
+  /// `endScale` and commit nothing, because neither moved the box.
+  const dblClickScale = (e: React.MouseEvent<SVGGElement>, id: ScaleHandleId): void => {
+    const l = layerRef.current;
+    if (l.params.kind !== TEXT_KIND) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cur = boxState();
+    const next = clearBoxAxis(id, cur);
+    if (!next) return;
+    const patch: TextBoxPatch = { kind: TEXT_KIND };
+    // `null` is the payload here rather than "don't touch", which is exactly the
+    // edit being made — so an axis that was ALREADY auto is still left absent.
+    if (!sameBoxAxis(next.w, cur.w)) patch.box_w = next.w;
+    if (!sameBoxAxis(next.h, cur.h)) patch.box_h = next.h;
+    commitBox(l.id, next, patch);
   };
 
   return (
@@ -1295,6 +1609,7 @@ function TransformGizmo({
           onPointerMove={moveScale}
           onPointerUp={endScale}
           onPointerCancel={endScale}
+          onDoubleClick={(e) => dblClickScale(e, id)}
           style={{
             pointerEvents: "all",
             // Replaced per frame with the handle's true screen direction, so a
@@ -1420,9 +1735,4 @@ function TransformGizmo({
       </g>
     </svg>
   );
-}
-
-function originFor(kind: string): TransformOrigin {
-  // docs/data-model.md#transform: only Text stores the anchor point as x/y.
-  return kind === "Text" ? "anchor" : "top-left";
 }

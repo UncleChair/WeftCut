@@ -12,7 +12,7 @@ import { Application, Container, Texture } from "pixi.js";
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { anchorPivot } from "./anchorPivot";
-import { withTransformOverride } from "./transformOverrides";
+import { withTextBoxOverride, withTransformOverride } from "./transformOverrides";
 import { AudioGraph } from "./audio/AudioGraph";
 import { AudioMixer } from "./audio/AudioMixer";
 import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./audio/roleGate";
@@ -2462,8 +2462,15 @@ export class Compositor {
   private updateText(text: ActiveText, layer: LayerSummary, z: number, tUs: number): void {
     if (layer.params.kind !== "Text") return;
     const tInLayerUs = tUs - layer.t_start_us;
+    // Two overrides, one map: the transform channels compose additively with the
+    // tracks, while the layout box replaces them outright because it has no track
+    // to compose with (ADR 0049). Both are read here so an in-flight gizmo
+    // gesture lands every field it touches on the same frame.
     text.sprite.update(
-      withTransformOverride(layer.id, resolveTextView(layer.params, tInLayerUs)),
+      withTextBoxOverride(
+        layer.id,
+        withTransformOverride(layer.id, resolveTextView(layer.params, tInLayerUs)),
+      ),
     );
     text.sprite.text.zIndex = z;
   }

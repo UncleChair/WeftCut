@@ -6,11 +6,12 @@
 //
 // Why a DELTA and not an absolute position: a keyframed layer must keep
 // animating while it is being dragged, so the offset has to compose with
-// whatever the tracks resolve to at the current playhead.
+// whatever the tracks resolve to at the current playhead. The Text box pair is
+// the one exception, and `boxW` names why the rule does not reach it.
 //
 // Realm note: the export Worker builds its own Compositor in its own realm, so
-// this map is always empty there — `withTransformOverride` is the identity for
-// export by construction, no mode check needed.
+// this map is always empty there — both `with…Override` functions are the
+// identity for export by construction, no mode check needed.
 // Spec: docs/features.md#on-canvas-transform-gizmo
 
 export interface TransformDelta {
@@ -34,6 +35,18 @@ export interface TransformDelta {
   /// about the anchor moves `x`/`y`.
   dscaleX?: number;
   dscaleY?: number;
+  /// The Text layout box, ABSOLUTE composition pixels — the only channel here
+  /// that is not a delta, and the only one where `null` is a value ("Auto on that
+  /// axis"), so absent / null / number are three distinct states.
+  ///
+  /// It breaks this module's additive convention because the convention's reason
+  /// does not reach it: every other channel adds to a track so a keyframed layer
+  /// keeps animating mid-drag, and `box_w`/`box_h` are deliberately NOT
+  /// `Animated` (ADR 0049 — a keyframed box would rebuild the glyph atlas every
+  /// frame). With no track to add to, the only thing an override can carry is the
+  /// value itself.
+  boxW?: number | null;
+  boxH?: number | null;
 }
 
 const deltas = new Map<string, TransformDelta>();
@@ -51,9 +64,13 @@ export function setTransformOverride(layerId: string, delta: TransformDelta): vo
 }
 
 /// Field-wise equality, so a pointermove that moved nothing costs no
-/// re-composite. Every optional channel is compared through `?? 0` — a channel
-/// left out of this check would make its own drag emit exactly once and then go
-/// silent for the rest of the gesture.
+/// re-composite. Every optional DELTA channel is compared through `?? 0` — a
+/// channel left out of this check would make its own drag emit exactly once and
+/// then go silent for the rest of the gesture.
+///
+/// The box pair is compared RAW, because `?? 0` would fold its two distinct
+/// "no box" states — absent and `null` — onto a 0 px box and make the step out of
+/// Fixed invisible to this check.
 function sameDelta(a: TransformDelta, b: TransformDelta): boolean {
   return (
     a.dx === b.dx &&
@@ -62,7 +79,9 @@ function sameDelta(a: TransformDelta, b: TransformDelta): boolean {
     (a.danchorX ?? 0) === (b.danchorX ?? 0) &&
     (a.danchorY ?? 0) === (b.danchorY ?? 0) &&
     (a.dscaleX ?? 0) === (b.dscaleX ?? 0) &&
-    (a.dscaleY ?? 0) === (b.dscaleY ?? 0)
+    (a.dscaleY ?? 0) === (b.dscaleY ?? 0) &&
+    a.boxW === b.boxW &&
+    a.boxH === b.boxH
   );
 }
 
@@ -98,6 +117,35 @@ export function withTransformOverride<
     rotation_deg: view.rotation_deg + (d.drotDeg ?? 0),
     anchor_x: view.anchor_x + (d.danchorX ?? 0),
     anchor_y: view.anchor_y + (d.danchorY ?? 0),
+  };
+}
+
+/// The Text half of the same map, applied on top of `withTransformOverride` so
+/// the box and the transform channels reach the sprite on ONE frame — the same
+/// reason the anchor pair and its compensation share a single delta. A channel
+/// left absent leaves the layer's own box alone, which is every other kind and
+/// every gesture that is not a box resize.
+///
+/// COST, so nobody has to rediscover it with a profiler: a box that changes
+/// invalidates `TextSprite.appliedSig`, so the shrink-to-fit binary search re-runs
+/// and Pixi re-rasterizes the glyph atlas — once per pointermove that moves the
+/// box. Deliberately accepted; it is what makes wrapping, shrink-to-fit and the
+/// gizmo's shrink/overflow stroke visible DURING the gesture they are meant to
+/// guide, and it is what Figma does. Bounded on both sides: Pixi's
+/// `CanvasTextMetrics` measurement cache is capped at 1000 entries, and the
+/// discarded atlases are reclaimed by `TextureGCSystem`.
+export function withTextBoxOverride<T extends { box_w: number | null; box_h: number | null }>(
+  layerId: string,
+  view: T,
+): T {
+  const d = deltas.get(layerId);
+  if (!d || (d.boxW === undefined && d.boxH === undefined)) return view;
+  return {
+    ...view,
+    // Not `??` — `null` is the payload for "back to Auto", and `??` would read it
+    // as "absent" and hand back the layer's old box instead.
+    box_w: d.boxW !== undefined ? d.boxW : view.box_w,
+    box_h: d.boxH !== undefined ? d.boxH : view.box_h,
   };
 }
 

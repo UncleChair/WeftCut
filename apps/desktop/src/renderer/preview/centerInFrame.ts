@@ -4,11 +4,12 @@
 // `commands/appCommands.ts` supply the layer, the probe's natural size and the
 // commit.
 //
-// LANDMINE: `transformOriginFor` and `layerFrameAt` are twins of
-// `TransformGizmo.tsx`'s private `originFor` / `frameAt`, and nothing enforces
-// the agreement. If they drift, the gizmo draws a box around one rectangle while
-// "Center horizontally" centres another. Change one, change both — or better,
-// collapse the gizmo onto this module.
+// `TransformGizmo.tsx` reads `TRANSFORMABLE_KINDS`, `transformOriginFor` and
+// `layerFrameAt` from here rather than keeping its own copies, so the rectangle
+// the gizmo draws a box around and the rectangle "Center horizontally" centres
+// are the same rectangle by construction. Anything else that needs a layer's
+// footprint belongs here too — the two used to be twins with nothing enforcing
+// the agreement, and a drift between them looks broken on neither side alone.
 
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { resolveAnimated } from "../render/animated";
@@ -47,11 +48,15 @@ interface TransformFields {
 }
 
 /// A layer's transform frame at an ABSOLUTE time, given the untransformed
-/// content size the compositor reports for it (`GizmoProbe.naturalSizeOf`).
+/// content size the compositor reports for it (`GizmoProbe.naturalSizeOf`) — for
+/// a Text layer that is its box when one is set and its measured glyph bounds
+/// when not (ADR 0049), which is why the size is a parameter and not something
+/// this module could read off the params.
 ///
 /// `DEFAULT_ANCHOR` and nothing else for the anchor fallback — the same constant
 /// the renderer resolves through, so this frame and the picture cannot pivot
-/// about different points.
+/// about different points. LANDMINE: a local fallback here makes a box pivot
+/// where the picture does not, and neither looks broken on its own.
 export function layerFrameAt(
   layer: LayerSummary,
   tUs: number,

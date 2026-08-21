@@ -412,7 +412,8 @@ dragging inside the box moves it, handles on its corners and edges resize it, a
 knob on a stalk above its top edge rotates it, and a target reticle at the pivot
 moves its anchor. Only the four transform-bearing visual kinds get one (Color
 fills the composition, Audio is not visual), and only while the playhead is
-inside the layer's span.
+inside the layer's span. Resize means `scale` on three of those kinds and the
+layout **box** on Text — see below.
 
 **Why the box is an SVG overlay and not Pixi children:** `app.stage` is a
 read-back surface — the eyedropper's `extract.pixels`, the e2e
@@ -427,8 +428,9 @@ also v7-only — it peer-depends on the `@pixi/*` sub-packages v8 removed.)
 full renderer→main→`project:changed`→refetch round trip and would pile up undo
 steps. The gesture instead sets a transient delta in `transformOverrides` (same
 idiom as `effectOverrides`: consulted after `resolveView`, never recorded, never
-in React state), and commits once on release through `updateLayerParamTracks` —
-one batch, one undo. The override is held until the new summary arrives, so the
+in React state), and commits once on release through `updateLayerParamTracks`
+(`update_layer_params` for a text box, which is a scalar and not a track) — one
+batch, one undo. The override is held until the new summary arrives, so the
 layer never snaps back for a frame between commit and refetch. The box itself
 reads that same override map rather than the in-flight gesture's own state, so
 the outline and the footprint it outlines cannot drift apart mid-drag whichever
@@ -482,6 +484,64 @@ projection on a corner, the plain axis ratio on an edge. Which axes a handle
 drives comes from its identity and never from "its offset from the pivot is
 zero": an off-centre anchor puts the top edge's midpoint off the pivot's column,
 and inferring the mask there would let a horizontal drag scale it sideways.
+
+**Why a Text layer's handles write a box instead of a scale:** a box lays glyphs
+out, while `scale` magnifies an already-rasterized atlas — so a handle writing
+`scale` would enlarge a title's *letters* and leave the inspector's font size
+advisory (ADR 0049). The eight handles write `box_w`/`box_h` for Text instead, and
+the font size stays what reaches the frame at any box size. It is the *same* solve
+— the one that puts the handle under the cursor through rotation, the corner's
+proportional constraint and the snap pull — read as a **factor** rather than
+written as a scale:
+`naturalSizeOf` reports a Text layer's box when one is set, so
+`natural × solved/base` is exactly "resize the box by what the drag implies".
+Box edges consequently snap with no extra machinery, since the box *is* the frame
+the solve runs in. `scale_x`/`scale_y` keep their meaning and stay reachable from
+the inspector and the keyframe lanes, so all eight handles are offered regardless
+of `scale_linked` — a box's two axes are independent by construction, and the flag
+keeps only its other job (one Scale lane vs two).
+
+Three differences follow from the box being a plain params scalar rather than an
+`Animated` track. It commits through `update_layer_params`, not
+`updateLayerParamTracks` — there is no track to auto-key. It writes **no position
+compensation**: `scaleCompensation` is zero whenever the origin is the anchor, and
+Text's `x`/`y` *is* the anchor, so a box resize cannot walk the pivot the way a
+media resize does. And its `transformOverrides` channel is **absolute**, the only
+one in that map that is not a delta: every other channel adds to a track so a
+keyframed layer keeps animating mid-drag, and with no track to add to the only
+thing an override can carry is the value itself. That channel is what makes the
+gesture legible — the sprite re-wraps, re-runs its shrink search and re-reports
+its fit on every pointermove, so the wrap, the compression and the box stroke's
+shrink/overflow colours all move under the cursor instead of arriving after the
+commit. The cost is a glyph-atlas re-raster per gesture frame, deliberately
+accepted and bounded on both sides (Pixi's measurement cache is capped;
+`TextureGCSystem` reclaims the atlases).
+
+Because the fold happens in the Compositor, the gizmo's outline and the picture
+come from one source again — `naturalSizeOf` measures the *overridden* sprite —
+so the box the handles sit on is the box being rendered, mid-drag included. The
+gizmo still keeps a **box ledger** beside the track one, retired by the same rule,
+for the thing a measured size can never report: the box's **nullability**, which
+is the resize mode. A measured 640 px and a `box_w` of 640 are the same number and
+different modes, so which axis a drag may leave alone, which rung a double-click
+steps down, and which axes a patch may omit all read the ledger. Its second job is
+to keep publishing the override until the summary lands, so the glyphs do not
+reflow back to the pre-commit box in between.
+
+The three resize modes are read off which box fields are set — `(null, null)` auto
+width, `(set, null)` auto height, `(set, set)` fixed — so `(null, set)` is no mode
+at all, and the gesture is one of the three places that prevents it: a top or
+bottom edge drag **backfills `box_w`** from the width it measured in the same
+commit (MCP refuses the pair, `TextSprite` coalesces it). A horizontal edge, by
+contrast, never invents a height — that would drag an auto-height layer into fixed
+and switch shrink-to-fit on. `box_w` floors at the 8 px shrink floor, which also
+stops a drag past the pivot from flipping the box; flipping is what `scale` is
+for. Double-clicking a handle steps back down the ladder — fixed → auto height →
+auto width — which is why a *horizontal* edge double-click on a fixed layer drops
+the height: releasing its own axis there would leave the illegal pair, so it takes
+the rung above and a second double-click releases the width. The box stroke turns
+`--warning` while shrink-to-fit is active and `--destructive` once the text
+overflows at the floor, read back through `GizmoProbe.textFitOf`.
 
 The handles are **round** so they carry no orientation to keep in sync with the
 box: a square would have to be re-rotated every frame to match it, and on a
@@ -547,14 +607,16 @@ mid-gesture just moves the carry into the base. The ledger is dropped on the fir
 summary that arrives with no commit still in flight, which is how undo, the
 inspector or an MCP agent takes the authority back.
 
-**Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect` +
-`naturalSizeOf`; the gizmo never imports Pixi. `gizmoGeometry.ts` — pure
-composition-space quad, pivot, handle placement and the `object-fit: contain`
-mapping, so the geometry is unit-tested without a renderer (and shares
-`anchorPivot.ts` with the renderer, which is what keeps box and picture aligned).
-`autoKeyTrack` — the shared commit rule: a Static track takes a value, a
-Keyframed one gets a key at the frame-snapped playhead, exactly like the
-inspector.
+**Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect`,
+`naturalSizeOf` and `textFitOf`; the gizmo never imports Pixi. `gizmoGeometry.ts`
+— pure composition-space quad, pivot, handle placement and the
+`object-fit: contain` mapping, so the geometry is unit-tested without a renderer
+(and shares `anchorPivot.ts` with the renderer, which is what keeps box and
+picture aligned). `centerInFrame.ts` — the layer-frame rule itself, shared with
+the centering commands so the rectangle the gizmo outlines and the one "Center
+horizontally" centres cannot be derived differently. `autoKeyTrack` — the shared
+commit rule: a Static track takes a value, a Keyframed one gets a key at the
+frame-snapped playhead, exactly like the inspector.
 
 **Limits:** move, resize, rotate and anchor — no crop, no corner-pin. Single
 selection only. The box follows animated values during playback via rAF; it is
@@ -565,7 +627,9 @@ the real clip bound — a layer flush against the top of a panel-filling
 composition has no room for its knob. An edge handle whose edge is under 24
 screen px is hidden, since it would sit under the two corners it lives between; a
 box small enough for its corners to overlap keeps them all, and the interior left
-for the move drag shrinks with it. The commit ledger is renderer-local, so it
+for the move drag shrinks with it. A Text box drag re-lays the glyphs out on every
+pointermove that moves the box, which is a re-measure and a glyph-atlas re-raster
+per gesture frame. The commit ledger is renderer-local, so it
 composes a burst of gestures from this gizmo and nothing else: a *concurrent*
 writer editing the same tracks mid-burst — an MCP agent, say — would need the
 base resolved on the main side instead.

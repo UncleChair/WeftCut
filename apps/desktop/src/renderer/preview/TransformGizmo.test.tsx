@@ -10,6 +10,7 @@ import {
   resetTransformOverrides,
   transformOverrideFor,
 } from "../render/transformOverrides";
+import { TEXT_BOX_MIN_PX, type TextFit } from "../render/textBox";
 import { clearGizmoProbe, registerGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { TransformGizmoHost } from "./TransformGizmo";
@@ -22,9 +23,18 @@ if (typeof window !== "undefined" && !window.PointerEvent) {
 }
 
 const commit = vi.fn(async () => {});
+/// The OTHER commit surface. A text box is a plain params scalar, not an
+/// `AnimTrack` (ADR 0049), so a box gesture lands here and a scale gesture lands
+/// in `commit` — which makes "did this drag write the box or the scale?" a
+/// question about which mock was called.
+const patchCommit = vi.fn(async () => {});
 vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();
-  return { ...actual, updateLayerParamTracks: (...args: unknown[]) => commit(...(args as [])) };
+  return {
+    ...actual,
+    updateLayerParamTracks: (...args: unknown[]) => commit(...(args as [])),
+    updateLayerParams: (...args: unknown[]) => patchCommit(...(args as [])),
+  };
 });
 
 const stat = (value: number): AnimTrack<number> => ({ mode: "Static", value });
@@ -103,6 +113,31 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
   } as unknown as ProjectSummary;
 }
 
+/// What the layer's params + tracks alone would measure to. Null models a layer
+/// the compositor has not staged.
+let stagedSize: { w: number; h: number } | null = { w: 640, h: 360 };
+/// The fit to report when no shrink model is installed.
+let stagedFit: TextFit | null = null;
+/// Optional stand-in for `TextSprite`'s shrink search, asked about the box the
+/// sprite would ACTUALLY have. Installed only by the tests that care.
+let fitOfBox: ((box: { w: number; h: number }) => TextFit) | null = null;
+
+/// The box the staged sprite would report — `stagedSize` with the transform
+/// override applied, which is what the real Compositor hands `TextSprite`
+/// (`withTextBoxOverride` after `withTransformOverride`). Modelling that here is
+/// load-bearing, not convenience: a probe that ignored the override would report
+/// a box no renderer can produce, and would hide the whole coupling this slice
+/// depends on — that a box changed mid-drag reaches the sprite, and therefore the
+/// natural size and the fit, before anything is committed.
+///
+/// `??` on each axis because `null` in the override means "Auto on that axis",
+/// which sends the sprite back to measuring its glyphs.
+function stagedBox(layerId: string): { w: number; h: number } | null {
+  if (!stagedSize) return null;
+  const d = transformOverrideFor(layerId);
+  return { w: d?.boxW ?? stagedSize.w, h: d?.boxH ?? stagedSize.h };
+}
+
 /// Canvas box is HALF the composition, so every client delta doubles in
 /// composition pixels — the conversion the commit assertions turn on. It also
 /// DOUBLES the snap radius: 12 screen px is 24 composition px here, which is why
@@ -110,8 +145,11 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
 const probe: GizmoProbe = {
   canvasRect: () =>
     ({ left: 0, top: 0, width: 640, height: 360, right: 640, bottom: 360 }) as DOMRect,
-  naturalSizeOf: () => ({ w: 640, h: 360 }),
-  textFitOf: () => null,
+  naturalSizeOf: stagedBox,
+  textFitOf: (id) => {
+    const box = stagedBox(id);
+    return fitOfBox && box ? fitOfBox(box) : stagedFit;
+  },
 };
 
 /// This fixture's layer fills half the composition, so almost any tidy drag
@@ -127,6 +165,10 @@ function setSnap(enabled: boolean, strengthPx = 12): void {
 
 beforeEach(() => {
   commit.mockClear();
+  patchCommit.mockClear();
+  stagedSize = { w: 640, h: 360 };
+  stagedFit = null;
+  fitOfBox = null;
   registerGizmoProbe(probe);
   useProjectStore.getState().apply(fixture());
   setLayerSelection("l1", ["l1"]);
@@ -746,12 +788,6 @@ async function handle(id: string): Promise<[HTMLElement, { clientX: number; clie
   return [el, placedAt(el)];
 }
 
-/// The commit's entry keys, in order.
-function committedKeys(): string[] {
-  const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
-  return entries.map(([k]) => k);
-}
-
 describe("TransformGizmo scale handles", () => {
   it("shows only the four corners on a scale-linked layer", async () => {
     render(<TransformGizmoHost />);
@@ -848,6 +884,9 @@ describe("TransformGizmo scale handles", () => {
       ["x", -160],
       ["y", -90],
     ]);
+    // Tracks, not a params patch: only Text routes a resize through
+    // `update_layer_params` (ADR 0049).
+    expect(patchCommit).not.toHaveBeenCalled();
   });
 
   it("hands the hidden twin a COPY of the authored track, not its own history", async () => {
@@ -950,17 +989,6 @@ describe("TransformGizmo scale handles", () => {
     expect(entries[1]![1]).toBeCloseTo(320 * (1 - 500 / 320), 9);
   });
 
-  it("writes no position fix for Text, whose x/y IS the pivot", async () => {
-    useProjectStore.getState().apply(fixture({ scale_linked: false }, "Text"));
-    render(<TransformGizmoHost />);
-    await box();
-    const [br, at] = await handle("br");
-    fireEvent.pointerDown(br, { button: 0, ...at });
-    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
-    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
-    expect(committedKeys()).toEqual(["scale_x", "scale_y"]);
-  });
-
   it("keys a keyframed scale at the frame-snapped playhead", async () => {
     useProjectStore.getState().apply(
       fixture({
@@ -998,6 +1026,290 @@ describe("TransformGizmo scale handles", () => {
     fireEvent.pointerUp(br, { ...at });
     expect(commit).not.toHaveBeenCalled();
     expect(transformOverrideFor("l1")).toBeUndefined();
+  });
+});
+
+/// A Text layer whose box is `box`, with the probe reporting the box as the
+/// staged size — which is what `Compositor.naturalSizeOf` does for Text
+/// (ADR 0049), so a fixture whose probe disagreed with its params would be a
+/// state no renderer can produce. An Auto axis falls back to the fixture's
+/// 640×360, standing in for the measured glyph bounds.
+function textLayer(box: { w: number | null; h: number | null }, params = {}): void {
+  stagedSize = { w: box.w ?? 640, h: box.h ?? 360 };
+  useProjectStore
+    .getState()
+    .apply(fixture({ box_w: box.w, box_h: box.h, ...params }, "Text"));
+}
+
+/// The single params patch this gizmo sent, whole. Asserting the WHOLE object is
+/// the point: it is what proves `font_size_px` and the scale pair are absent.
+function patchedBox(n = 0): Record<string, unknown> {
+  const [, patch] = patchCommit.mock.calls[n] as unknown as [string, Record<string, unknown>];
+  return patch;
+}
+
+// Text's `x`/`y` is the anchor point, so a 640×360 box at (0,0) with a centred
+// anchor straddles the composition origin: comp (−320,−180)…(320,180), which the
+// half-scale canvas draws at client (−160,−90)…(160,90). The pivot is client
+// (0,0) and every handle is placed off that box.
+describe("TransformGizmo Text box handles", () => {
+  it("offers all eight handles on a fresh text layer, whose scale_linked is true", async () => {
+    textLayer({ w: null, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    await handle("br");
+    // A box's two axes are independent by construction, so `scale_linked` — still
+    // `true` here, as on every new text layer — has no say. The media path's
+    // corners-only rule is asserted separately and is unchanged.
+    for (const id of ["t", "r", "b", "l", "tl", "tr", "br", "bl"]) {
+      expect(screen.getByTestId(`transform-gizmo-scale-${id}`).style.display).not.toBe("none");
+    }
+  });
+
+  it("resizes the BOX from a corner and leaves scale and font size untouched", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    await box();
+    const br = screen.getByTestId("transform-gizmo-scale-br");
+    // +80/+45 client ⇒ +160/+90 comp: the br handle goes from (320,180) to
+    // (480,270), i.e. 1.5× its offset from the centred pivot.
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 80, clientY: 45 });
+    fireEvent.pointerUp(br, { clientX: 80, clientY: 45 });
+    expect(patchCommit).toHaveBeenCalledTimes(1);
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: 960, box_h: 540 });
+    // No track write at all: the glyphs stay the size the inspector reports.
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("previews the box as an ABSOLUTE override, moving no delta channel", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const br = screen.getByTestId("transform-gizmo-scale-br");
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 80, clientY: 45 });
+    // The box channels carry the VALUE, not a difference — there is no track for
+    // them to compose with. Every delta channel stays absent; a `dscaleX` here
+    // would be the bug this whole slice exists to remove.
+    expect(transformOverrideFor("l1")).toEqual({ dx: 0, dy: 0, boxW: 960, boxH: 540 });
+    expect(patchCommit).not.toHaveBeenCalled();
+    // The 960×540 box grows about the anchor, so it stays centred on the pivot —
+    // which is also why the commit carries no `x`/`y` fix.
+    await waitFor(() =>
+      expect(el.getAttribute("points")).toBe("-240,-135 240,-135 240,135 -240,135"),
+    );
+    fireEvent.pointerUp(br, { clientX: 80, clientY: 45 });
+    // And it SURVIVES the release, republished from the box ledger: clearing here
+    // would reflow the glyphs back to 640×360 for the two round trips until the
+    // summary lands.
+    expect(transformOverrideFor("l1")).toEqual({ dx: 0, dy: 0, boxW: 960, boxH: 540 });
+  });
+
+  it("colours the stroke from the box being dragged, before anything is committed", async () => {
+    textLayer({ w: 640, h: 360 });
+    // Stand-in for `TextSprite`'s shrink search: this block wants 360 px of height
+    // at its authored size and shrinks proportionally below that. The search
+    // itself is tested where it lives; what matters here is that the box it is
+    // asked about is the one under the cursor.
+    fitOfBox = (b) => {
+      const px = Math.max(TEXT_BOX_MIN_PX, 72 * Math.min(1, b.h / 360));
+      return { authoredPx: 72, effectivePx: px, overflowing: px <= TEXT_BOX_MIN_PX };
+    };
+    render(<TransformGizmoHost />);
+    const el = await box();
+    expect(el.style.stroke).toBe("var(--ring)");
+    const b = screen.getByTestId("transform-gizmo-scale-b");
+    // Bottom edge UP: 360 → 180, so the text has to shrink to fit. The feedback
+    // has to arrive on THIS pointermove — it exists to guide the gesture, so
+    // waiting for the commit would be waiting until it is useless.
+    fireEvent.pointerDown(b, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(b, { clientX: 0, clientY: -45 });
+    expect(patchCommit).not.toHaveBeenCalled();
+    await waitFor(() => expect(el.style.stroke).toBe("var(--warning)"));
+    // Further still: the search bottoms out at the 8 px floor and the text starts
+    // spilling out of its box, which is a different state and a stronger colour.
+    fireEvent.pointerMove(b, { clientX: 0, clientY: -89 });
+    await waitFor(() => expect(el.style.stroke).toBe("var(--destructive)"));
+    // Escape returns the layer to its own box, so the warning goes with it.
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(el.style.stroke).toBe("var(--ring)"));
+    expect(patchCommit).not.toHaveBeenCalled();
+  });
+
+  it("sends box_h and the backfilled box_w in ONE commit from a bottom edge", async () => {
+    textLayer({ w: null, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    const b = screen.getByTestId("transform-gizmo-scale-b");
+    // +45 client ⇒ +90 comp: the b handle goes from (0,180) to (0,270), 1.5×.
+    fireEvent.pointerDown(b, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(b, { clientX: 0, clientY: 45 });
+    fireEvent.pointerUp(b, { clientX: 0, clientY: 45 });
+    // ONE call, both axes. `(null, set)` is not a mode and the state layer cannot
+    // measure, so the width the drag saw has to ride the same patch — and the
+    // count is the assertion, not just the resulting pair.
+    expect(patchCommit).toHaveBeenCalledTimes(1);
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: 640, box_h: 540 });
+  });
+
+  it("leaves an already-set width out of a vertical drag's patch", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    await box();
+    const b = screen.getByTestId("transform-gizmo-scale-b");
+    fireEvent.pointerDown(b, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(b, { clientX: 0, clientY: 45 });
+    fireEvent.pointerUp(b, { clientX: 0, clientY: 45 });
+    // The backfill exists to make `(null, set)` unreachable, not to re-write a
+    // width the layer already has — a vertical gesture must not edit the
+    // horizontal axis.
+    expect(patchedBox()).toEqual({ kind: "Text", box_h: 540 });
+  });
+
+  it("leaves the height Auto from a right edge, rather than inventing one", async () => {
+    textLayer({ w: null, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    const r = screen.getByTestId("transform-gizmo-scale-r");
+    // The vertical component is ignored, as on any edge — and no `box_h` appears,
+    // which is what keeps this Auto height instead of switching shrink-to-fit on.
+    fireEvent.pointerDown(r, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(r, { clientX: 80, clientY: -200 });
+    fireEvent.pointerUp(r, { clientX: 80, clientY: -200 });
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: 960 });
+  });
+
+  it("floors a drag past the pivot at the 8 px minimum instead of flipping the box", async () => {
+    textLayer({ w: null, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    const r = screen.getByTestId("transform-gizmo-scale-r");
+    // −660 client ⇒ −1320 comp puts the target at x = −1000, well past the pivot:
+    // the solve hands back a NEGATIVE factor, and a box does not flip.
+    fireEvent.pointerDown(r, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(r, { clientX: -660, clientY: 0 });
+    fireEvent.pointerUp(r, { clientX: -660, clientY: 0 });
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: 8 });
+  });
+
+  it("pulls a box edge onto a snap line, and names it with a guide", async () => {
+    setSnap(true);
+    textLayer({ w: null, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    const r = screen.getByTestId("transform-gizmo-scale-r");
+    // +300 comp puts the right edge at 620, twenty short of the composition's
+    // right edge at 640 — inside the 24 comp px radius. The box IS the frame the
+    // solve runs in, so snapping the handle target snaps the box edge.
+    fireEvent.pointerDown(r, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(r, { clientX: 150, clientY: 0 });
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
+    expect(guideLine("x").getAttribute("x1")).toBe("320");
+    fireEvent.pointerUp(r, { clientX: 150, clientY: 0 });
+    // 640 / 320 of lever ⇒ 2× the measured 640 px width.
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: 1280 });
+  });
+
+  it("colours the stroke while shrink is active, and again once the text overflows", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    expect(el.style.stroke).toBe("var(--ring)");
+    stagedFit = { authoredPx: 72, effectivePx: 31, overflowing: false };
+    await waitFor(() => expect(el.style.stroke).toBe("var(--warning)"));
+    // Distinct states: shrinking is the feature working, overflow is it having
+    // run out of room at the floor.
+    stagedFit = { authoredPx: 72, effectivePx: 8, overflowing: true };
+    await waitFor(() => expect(el.style.stroke).toBe("var(--destructive)"));
+    stagedFit = { authoredPx: 72, effectivePx: 72, overflowing: false };
+    await waitFor(() => expect(el.style.stroke).toBe("var(--ring)"));
+  });
+
+  it("ignores a fit reported for a kind that has no box", async () => {
+    stagedFit = { authoredPx: 72, effectivePx: 31, overflowing: true };
+    render(<TransformGizmoHost />);
+    const el = await box();
+    await handle("br");
+    expect(el.style.stroke).toBe("var(--ring)");
+  });
+});
+
+// The three modes are a ladder — Fixed → Auto height → Auto width — because
+// `(null, set)` is not a mode. A double-click steps down one rung.
+describe("TransformGizmo Text box double-click", () => {
+  it("takes a Fixed layer to Auto height from the right edge", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    await box();
+    const [r] = await handle("r");
+    fireEvent.doubleClick(r);
+    // The horizontal edge owns `box_w`, but clearing it here would leave the
+    // illegal `(null, set)` — so it drops the HEIGHT and lands on Auto height.
+    // `box_w` is left absent, not written back: absent means "don't touch".
+    expect(patchCommit).toHaveBeenCalledTimes(1);
+    expect(patchedBox()).toEqual({ kind: "Text", box_h: null });
+  });
+
+  it("releases the width on the SECOND right-edge double-click", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    await box();
+    const [r] = await handle("r");
+    fireEvent.doubleClick(r);
+    // No summary arrives between the two (the patch is mocked), so the second
+    // click reads the box ledger — the mirror still says Fixed.
+    fireEvent.doubleClick(r);
+    expect(patchCommit).toHaveBeenCalledTimes(2);
+    expect(patchedBox(1)).toEqual({ kind: "Text", box_w: null });
+  });
+
+  it("takes a corner straight to Auto width", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    await box();
+    const [tl] = await handle("tl");
+    fireEvent.doubleClick(tl);
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: null, box_h: null });
+  });
+
+  it("clears the height alone from a vertical edge", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    await box();
+    const [b] = await handle("b");
+    fireEvent.doubleClick(b);
+    expect(patchedBox()).toEqual({ kind: "Text", box_h: null });
+  });
+
+  it("does nothing on Auto width, where there is no box left to release", async () => {
+    textLayer({ w: null, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    const [b] = await handle("b");
+    fireEvent.doubleClick(b);
+    fireEvent.doubleClick(screen.getByTestId("transform-gizmo-scale-tl"));
+    expect(patchCommit).not.toHaveBeenCalled();
+  });
+
+  it("does nothing from a vertical edge on Auto height, which has no height set", async () => {
+    textLayer({ w: 640, h: null });
+    render(<TransformGizmoHost />);
+    await box();
+    const [t] = await handle("t");
+    fireEvent.doubleClick(t);
+    // The vertical edges own `box_h` and only `box_h` — releasing the WIDTH from
+    // one would be a horizontal edit made by a vertical gesture.
+    expect(patchCommit).not.toHaveBeenCalled();
+  });
+
+  it("is silent on a kind whose handles write scale", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const [br] = await handle("br");
+    fireEvent.doubleClick(br);
+    expect(patchCommit).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
   });
 });
 
@@ -1102,6 +1414,71 @@ describe("a second gesture inside the commit round trip", () => {
     expect(committedValue(1, "scale_y")).toBeCloseTo(2.25, 6);
     expect(committedValue(1, "x")).toBeCloseTo(-400, 6);
     expect(committedValue(1, "y")).toBeCloseTo(-225, 6);
+  });
+
+  it("compounds a second box resize instead of re-measuring the staged box", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const br = screen.getByTestId("transform-gizmo-scale-br");
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 80, clientY: 45 });
+    fireEvent.pointerUp(br, { clientX: 80, clientY: 45 });
+    expect(patchedBox()).toEqual({ kind: "Text", box_w: 960, box_h: 540 });
+    // The box ledger has to reach the DRAWN rectangle too, not just the next
+    // commit's base: `beginScale` freezes the handle's start off the last drawn
+    // frame, so a rectangle still at 640×360 would be dragged against a 960 base.
+    // `stagedSize` is deliberately left at 640×360 — the compositor has not
+    // re-staged, which is the whole window under test.
+    await waitFor(() =>
+      expect(el.getAttribute("points")).toBe("-240,-135 240,-135 240,135 -240,135"),
+    );
+
+    // Another +240/+135 comp along the same diagonal: 1.5× of 960, not of 640.
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 120, clientY: 67.5 });
+    fireEvent.pointerUp(br, { clientX: 120, clientY: 67.5 });
+    expect(patchCommit).toHaveBeenCalledTimes(2);
+    expect(patchedBox(1)).toEqual({ kind: "Text", box_w: 1440, box_h: 810 });
+  });
+
+  it("keeps the committed box on screen through a following move drag", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const br = screen.getByTestId("transform-gizmo-scale-br");
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 80, clientY: 45 });
+    fireEvent.pointerUp(br, { clientX: 80, clientY: 45 });
+    await waitFor(() =>
+      expect(el.getAttribute("points")).toBe("-240,-135 240,-135 240,135 -240,135"),
+    );
+    // A different gesture entirely, and `setTransformOverride` REPLACES rather
+    // than merges — so the move has to republish the held box alongside its own
+    // delta, or the glyphs reflow back to 640×360 on its first pointermove.
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 10, clientY: 0 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 20, dy: 0, boxW: 960, boxH: 540 });
+  });
+
+  it("hands the box back to an external writer once nothing is outstanding", async () => {
+    textLayer({ w: 640, h: 360 });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const br = screen.getByTestId("transform-gizmo-scale-br");
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 80, clientY: 45 });
+    fireEvent.pointerUp(br, { clientX: 80, clientY: 45 });
+    await settleCommit();
+    // An undo (or the inspector, or an MCP agent) publishes a box that is neither
+    // ours nor the one we wrote over. With nothing in flight the box ledger is
+    // retired, so the drawn rectangle follows the newcomer rather than resurrecting
+    // the drag — the same rule `pendingRef` follows, and they retire together.
+    act(() => {
+      stagedSize = { w: 200, h: 100 };
+      useProjectStore.getState().apply(fixture({ box_w: 200, box_h: 100 }, "Text"));
+    });
+    await waitFor(() => expect(el.getAttribute("points")).toBe("-50,-25 50,-25 50,25 -50,25"));
   });
 
   it("lifts the override when the summary carrying the commit lands", async () => {
