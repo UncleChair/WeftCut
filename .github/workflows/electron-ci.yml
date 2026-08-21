@@ -46,7 +46,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  e2e:
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default. Sized to
     # the `all` e2e slice, NOT to the four split ones: a scoped dispatch can
@@ -56,19 +56,20 @@ jobs:
     # and hides which specs actually failed. Coverage cuts belong in the @matrix
     # tier (apps/desktop/e2e/README.md), not here.
     timeout-minutes: 90
-    # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
-    env:
-      CARGO_TERM_COLOR: always
-      RUST_BACKTRACE: '1'
+    # CONCURRENCY BUDGET — a push creates 17 jobs: 1 `checks` + 3 `rust-test` +
+    # this matrix's 12 + 1 `compare`. GitHub Free allows 20 concurrent, of which
+    # 5 may be macOS, counted per billing entity across ALL repositories. macOS
+    # is the binding constraint and is already at it: 4 legs here + 1
+    # `rust-test`. Widening this matrix has to buy its macOS legs from somewhere.
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
         # Which slice of the e2e suite this runner takes (see the E2E step for
-        # the split and its measured cost). Every slice repeats the ~10 min
-        # build above it, which is free here — public repo, and the rebuilds run
-        # concurrently, so a build-once-then-fan-out job would only lengthen the
-        # critical path by making that build serial.
+        # the split and its measured cost). Every slice repeats the build above
+        # it, which is free here — public repo, and the rebuilds run concurrently,
+        # so a build-once-then-fan-out job would only lengthen the critical path
+        # by making that build serial.
         #
         # A scoped dispatch collapses to the single `all` slice: `e2e_args` names
         # its own specs, and running those args four times over is not a split.
@@ -95,10 +96,10 @@ jobs:
           cache-dependency-path: package-lock.json
 
       # xvfb: the Electron app needs a display for offscreen CDP capture (no real
-      # display on GitHub runners). libclang-dev: every bindgen build of
-      # native-decode's ffmpeg-next needs libclang.so, and the `Rust tests` step
-      # below runs one on every leg whatever the artifact cache did (clang-sys
-      # auto-discovers it on Linux; only Windows hard-sets LIBCLANG_PATH).
+      # display on GitHub runners). libclang-dev: only the artifact-cache MISS
+      # path needs it, where the rust-artifacts action runs native-decode's
+      # ffmpeg-next bindgen build (clang-sys auto-discovers it on Linux; only
+      # Windows hard-sets LIBCLANG_PATH).
       - name: Linux deps (xvfb, libclang)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libclang-dev
@@ -140,8 +141,8 @@ jobs:
         run: npm run ffmpeg:fetch
 
       - name: Put bundled ffmpeg on PATH
-        # CI runners have no system ffmpeg; the Rust integration tests + the
-        # e2e app resolve "ffmpeg" via PATH. ffmpeg:fetch put it in resources/.
+        # CI runners have no system ffmpeg; the e2e app resolves "ffmpeg" via
+        # PATH. ffmpeg:fetch put it in resources/.
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -192,40 +193,26 @@ jobs:
         shell: bash
         run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
 
-      # Typecheck + unit tests are OS-independent, so run them once, on the
-      # Windows leg (it builds BOTH addons — native-decode's generated
-      # index.d.ts is a typecheck input; the Linux leg builds decode too now, but
-      # a single leg suffices). Neither was gated by CI before — the
-      # esbuild build does no type-checking and vitest wasn't run at all — so
-      # TS-type and unit regressions could slip through green. Placed after
-      # both napi:build and napi:build:decode (needs their generated
-      # .d.ts/.node) and before the heavier build/e2e/package so a failure
-      # fails fast.
+      # FAIL-FAST TRIPWIRE. These two are the only checks that stay inline: ~5 s
+      # and ~1 s against an 18-minute run is 200:1 leverage against the most
+      # common class of red, and nothing else here is worth booting a Playwright
+      # worker behind. The expensive OS-independent work — vitest, the
+      # build-script suite, cargo test — lives in `checks` / `rust-test`, which
+      # do NOT gate this job.
+      #
+      # Every leg, not just Windows: the artifact cache delivers native-decode's
+      # generated index.d.ts (a typecheck input) everywhere, so the single-leg
+      # restriction that used to be necessary no longer is. Placed after the
+      # artifacts and before the heavier build/e2e/package.
       - name: Typecheck (tsc -b)
-        if: runner.os == 'Windows'
         run: npm run typecheck
-
-      - name: Unit tests (vitest)
-        if: runner.os == 'Windows'
-        run: npm test
-
-      # The build scripts' own node:test suite. Separate from `npm test` because
-      # Vitest's `include` is pinned to the three src/ roots — these live in
-      # apps/desktop/scripts/ and are a different runner, so nothing else picks
-      # them up. They gate pure argv/env planning (E2E gate-flag splitting,
-      # preflight wiring): fast, no build artifacts, OS-independent.
-      - name: Build-script tests (node:test)
-        if: runner.os == 'Windows'
-        run: npm run test:scripts
 
       # The committed rust-native MCP catalog snapshot must equal what the addon
       # advertises. The bijection gate reconstructs the live catalog from this
       # fixture, so a stale fixture is the one drift the suite can't catch itself —
-      # regenerate and diff. Needs only the napi addon (built above); the fixture is
-      # pinned to LF via .gitattributes, so the diff is byte-clean on every leg. Run
-      # once on the Windows leg alongside the other OS-independent checks.
+      # regenerate and diff. Needs only the napi addon (restored above); the fixture
+      # is pinned to LF via .gitattributes, so the diff is byte-clean on every leg.
       - name: MCP catalog snapshot up to date
-        if: runner.os == 'Windows'
         shell: bash
         run: npm run mcp:catalog:check
 
@@ -258,53 +245,6 @@ jobs:
       - name: Generate software-lane family fixtures (e2e)
         working-directory: apps/desktop/e2e
         run: node scripts/gen-decode-bench-fixtures.mjs --only dnxhr-1080,mpeg2-1080
-
-      # Rust unit tests.  No xvfb needed (headless library tests, no display).
-      # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
-      # otherwise leave unresolved `napi_*` symbols in a standalone `cargo test`
-      # binary (fatal on Linux, whose loader resolves imports at startup); the
-      # `test-noop` feature — NAPI-RS's official Cargo-test mode — stubs those
-      # wrappers so the domain logic links and runs identically on every runner.
-      # This replaced the old Linux skip + macOS `-undefined dynamic_lookup` link
-      # hack. test-noop is TEST-ONLY and must never enter napi:build's feature set.
-      # See docs/notes/napi-rs-multiplatform-testing.md.
-      - name: Rust tests
-        shell: bash
-        run: |
-          # weftcut-eval is the shared-math leaf; the snap cross-language golden
-          # lives here now (it moved off the napi crate). Pure Rust, no napi
-          # linkage, so it tests standalone. (Its wasm build is gated separately
-          # via the Linux `npm test` TS goldens, which run the same fixtures.)
-          cargo test -p weftcut-eval --manifest-path native/Cargo.toml
-          # The production feature union is the crate `default` (jobs/export/mcp/
-          # speech — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
-          # feature). Features are additive, so `--features test-noop` = defaults +
-          # test-noop, compiling every #[cfg(feature)] module PLUS the standalone-
-          # binary symbol-resolution shim. No hand-kept feature list here — it
-          # tracks Cargo.toml's default automatically. test-noop is test-only.
-          cargo test --manifest-path native/Cargo.toml --lib --features test-noop
-          # Component crate (native-decode): the repo's only ffmpeg-next consumer.
-          # It needs FFMPEG_DIR + libclang to build and the bundled libav*.so/DLL
-          # on the loader path at run (Windows: DLLs already on PATH above; Linux:
-          # LD_LIBRARY_PATH below; macOS: DYLD_FALLBACK_LIBRARY_PATH — SIP strips
-          # DYLD_* only for system-protected binaries, not user test binaries).
-          # Its test-noop is ONLY napi/noop, NOT
-          # napi-derive/noop (see decode/Cargo.toml) — enough to resolve the
-          # standalone binary's napi_* symbols while keeping the ToNapiValue
-          # derives its ThreadsafeFunction<ExportSwMsg> params require.
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \
-            LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin" \
-            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
-            LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
-            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac" \
-            DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
-            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
-          fi
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
@@ -446,12 +386,265 @@ jobs:
           retention-days: 5
           path: apps/desktop/release/*
 
-  # Cross-OS SSIM comparison.  Runs after every build job finishes — one per
+  # The OS-independent TS test work: the unit suite, the build-script suite, and
+  # the two cheap gates the e2e legs also run.
+  #
+  # Deliberately NO `needs:` relationship with `e2e` in either direction — this
+  # job and the matrix start together. Wall clock is the objective, and gating
+  # would put these ~4 min in front of every leg's 18. The accepted cost: a red
+  # unit test here does not stop the e2e matrix, it only reddens the run. The
+  # failure class that WOULD waste the whole matrix is covered instead by the
+  # typecheck tripwire each leg still runs inline.
+  #
+  # Windows rather than Linux: off the critical path either way, and the unit
+  # suite carries Windows path-handling coverage a Linux-only run would drop.
+  # `typecheck` and `mcp:catalog:check` appear here as well as inline in every
+  # e2e leg; the duplication is concurrent, so it costs nothing.
+  checks:
+    # ~4 min warm. The cap covers a cold rust-artifacts miss, which adds the
+    # whole addon + analyzer build on top.
+    timeout-minutes: 20
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Root lockfile, as in the e2e job. No electron:install: the vitest suite
+      # never loads Electron (vitest.config.ts).
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      # Nothing here shells out to ffmpeg, but the unit suite does dlopen it:
+      # src/main/export-decode-native.integration.test.ts loads the decode addon,
+      # which resolves the libav family through resources/ffmpeg-lgpl/win/bin.
+      # That loader degrades to `mod = null` on any failure and the suite SKIPS,
+      # so without this tree those tests disappear silently instead of reddening.
+      # Restore + fetch only, no save: the e2e legs own this key (see there for
+      # the split restore/save rationale) and one fewer racer on it is free.
+      - name: Restore ffmpeg-lgpl cache
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
+
+      - name: Fetch LGPL ffmpeg (native-decode)
+        run: npm run ffmpeg:fetch-lgpl
+
+      # LANDMINE — must stay AFTER the LGPL fetch above: the decode addon's build
+      # reads FFMPEG_DIR from resources/ffmpeg-lgpl/<os>. Saving is left on: this
+      # job builds the whole set on a miss, so it is a legitimate publisher and
+      # may even warm the key for the e2e legs.
+      - uses: ./.github/actions/rust-artifacts
+
+      - name: Put LGPL DLLs on PATH (native-decode runtime)
+        shell: bash
+        run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
+
+      - name: Typecheck (tsc -b)
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      # The build scripts' own node:test suite. Separate from `npm test` because
+      # Vitest's `include` is pinned to the three src/ roots — these live in
+      # apps/desktop/scripts/ and e2e/ and are a different runner, so nothing
+      # else picks them up. They gate pure argv/env planning (E2E gate-flag
+      # splitting, preflight wiring, fixture recipe identity): fast, no build
+      # artifacts, OS-independent.
+      - name: Build-script tests (node:test)
+        run: npm run test:scripts
+
+      - name: MCP catalog snapshot up to date
+        shell: bash
+        run: npm run mcp:catalog:check
+
+  # `cargo test` for all three OSes, and the only remaining consumer of
+  # Swatinem/rust-cache: these tests need `target/`, which the rust-artifacts
+  # OUTPUT cache does not carry. Giving them their own job is what decouples that
+  # 537 MB compilation cache from every e2e leg. Concurrent with the e2e matrix,
+  # for the reason spelled out on `checks`.
+  rust-test:
+    # ~3.5 min warm. The cap covers the two cold paths that dwarf that: macOS
+    # compiling ffmpeg-lgpl from source (~10 min) and a cold rust-cache
+    # compiling the whole workspace.
+    timeout-minutes: 30
+    # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Root lockfile, as in the e2e job. Nothing in this job imports a workspace
+      # dependency — the cargo tests and both fetch scripts below use node
+      # builtins only — so this is uniformity with the other jobs, not a need.
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      # libclang-dev is what native-decode's ffmpeg-next bindgen build needs
+      # (clang-sys auto-discovers it on Linux; only Windows hard-sets
+      # LIBCLANG_PATH, in the tests below).
+      - name: Linux deps (libclang)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      # Same key as the e2e job's, which owns the keying rationale.
+      - name: Cache ffmpeg
+        uses: actions/cache@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
+
+      - name: Fetch ffmpeg
+        run: npm run ffmpeg:fetch
+
+      - name: Put bundled ffmpeg on PATH
+        # The export / probe / jobs tests shell out to "ffmpeg" and SELF-SKIP
+        # when it is absent, so a runner without it loses coverage silently
+        # rather than going red. ffmpeg:fetch put it in resources/.
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cygpath -w "$PWD/resources/ffmpeg/win" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            echo "$PWD/resources/ffmpeg/linux" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
+          fi
+
+      # The decode crate needs this tree twice over: FFMPEG_DIR to build it and
+      # the bundled libav* on the loader path to run its tests. Split
+      # restore/save rather than the combined actions/cache — the e2e job owns
+      # why that split is load-bearing, and it matters most here, where a red
+      # cargo test would otherwise discard macOS's from-source ffmpeg build.
+      - name: Restore ffmpeg-lgpl cache
+        id: cache-ffmpeg-lgpl
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
+
+      - name: Fetch LGPL ffmpeg (native-decode)
+        run: npm run ffmpeg:fetch-lgpl
+
+      - name: Save ffmpeg-lgpl cache
+        if: steps.cache-ffmpeg-lgpl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ${{ steps.cache-ffmpeg-lgpl.outputs.cache-primary-key }}
+
+      - name: Put LGPL DLLs on PATH (native-decode runtime)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
+
+      # The COMPILATION cache and the toolchain that fills it, rather than
+      # ./.github/actions/rust-artifacts: that action restores build OUTPUTS, and
+      # `cargo test` needs `target/`.
+      #
+      # Third-party actions pinned to immutable commit SHAs (supply-chain
+      # hardening); version in the trailing comment. Bump deliberately at a
+      # checkpoint, not automatically — and in lockstep with the same pins in
+      # .github/actions/rust-artifacts. GitHub-owned actions/* stay on their
+      # major tag.
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
+        with:
+          # Once pinned to a SHA the @<ref> name no longer signals the channel
+          # (that was the magic of @stable), so name the toolchain explicitly.
+          # No wasm32 target: nothing here builds the wasm leaf.
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # One workspace covers every crate under test (native/Cargo.toml
+          # members: eval, decode).
+          workspaces: apps/desktop/native
+
+      # Rust unit tests.  No xvfb needed (headless library tests, no display).
+      # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
+      # otherwise leave unresolved `napi_*` symbols in a standalone `cargo test`
+      # binary (fatal on Linux, whose loader resolves imports at startup); the
+      # `test-noop` feature — NAPI-RS's official Cargo-test mode — stubs those
+      # wrappers so the domain logic links and runs identically on every runner.
+      # This replaced the old Linux skip + macOS `-undefined dynamic_lookup` link
+      # hack. test-noop is TEST-ONLY and must never enter napi:build's feature set.
+      # See docs/notes/napi-rs-multiplatform-testing.md.
+      - name: Rust tests
+        shell: bash
+        run: |
+          # weftcut-eval is the shared-math leaf; the snap cross-language golden
+          # lives here now (it moved off the napi crate). Pure Rust, no napi
+          # linkage, so it tests standalone. (Its wasm build is gated separately
+          # via the Linux `npm test` TS goldens, which run the same fixtures.)
+          cargo test -p weftcut-eval --manifest-path native/Cargo.toml
+          # The production feature union is the crate `default` (jobs/export/mcp/
+          # speech — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
+          # feature). Features are additive, so `--features test-noop` = defaults +
+          # test-noop, compiling every #[cfg(feature)] module PLUS the standalone-
+          # binary symbol-resolution shim. No hand-kept feature list here — it
+          # tracks Cargo.toml's default automatically. test-noop is test-only.
+          cargo test --manifest-path native/Cargo.toml --lib --features test-noop
+          # Component crate (native-decode): the repo's only ffmpeg-next consumer.
+          # It needs FFMPEG_DIR + libclang to build and the bundled libav*.so/DLL
+          # on the loader path at run (Windows: DLLs already on PATH above; Linux:
+          # LD_LIBRARY_PATH below; macOS: DYLD_FALLBACK_LIBRARY_PATH — SIP strips
+          # DYLD_* only for system-protected binaries, not user test binaries).
+          # Its test-noop is ONLY napi/noop, NOT
+          # napi-derive/noop (see decode/Cargo.toml) — enough to resolve the
+          # standalone binary's napi_* symbols while keeping the ToNapiValue
+          # derives its ThreadsafeFunction<ExportSwMsg> params require.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \
+            LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin" \
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
+            LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac" \
+            DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+          fi
+
+  # Cross-OS SSIM comparison.  Runs after every e2e leg finishes — one per
   # (os, e2e slice) pair — but only the slice carrying the serial project
   # publishes a determinism-* artifact for it to read (fail-fast: false means
   # they all attempt even if one fails).
   compare:
-    needs: build
+    needs: e2e
     # A partial dispatch (one OS or a scoped suite) cannot feed a 3-way compare.
     if: github.event_name != 'workflow_dispatch' || (inputs.os == 'all' && inputs.e2e_args == '')
     timeout-minutes: 15
