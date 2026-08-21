@@ -51,6 +51,7 @@ describe("resolveView", () => {
       scale_linked: true,
       rotation_deg: stat(0), opacity: stat(1),
       outline: null, shadow: null,
+      box_w: null, box_h: null, valign: "Middle", line_height: 0, letter_spacing: 0,
     };
     expect(resolveTextView(raw, 0).color).toEqual(white);
   });
@@ -77,7 +78,7 @@ describe("resolveView", () => {
     expect(resolved.color.b).toBeLessThanOrEqual(1);
     expect(resolved.color.a).toBe(255);
   });
-  it("passes weight/italic/align/anchor/outline/shadow through", () => {
+  it("passes weight/italic/align/anchor/outline/shadow and the layout box through", () => {
     const v = resolveTextView(
       {
         content: "x",
@@ -98,6 +99,11 @@ describe("resolveView", () => {
         opacity: { mode: "Static", value: 1 },
         outline: { color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 },
         shadow: { color: { r: 0, g: 0, b: 0, a: 255 }, offset_x: 2, offset_y: 2, blur: 2 },
+        box_w: 640,
+        box_h: 300,
+        valign: "Bottom",
+        line_height: 72,
+        letter_spacing: 4,
       },
       0,
     );
@@ -106,6 +112,14 @@ describe("resolveView", () => {
     expect(v.anchor_y).toBe(1.0);
     expect(v.outline?.width).toBe(3);
     expect(v.shadow?.blur).toBe(2);
+    // The box fields are plain scalars, so `ResolvedTextView` inherits them and
+    // the `...v` spread carries them — this asserts that, so nobody adds a
+    // pass-through branch that already exists.
+    expect(v.box_w).toBe(640);
+    expect(v.box_h).toBe(300);
+    expect(v.valign).toBe("Bottom");
+    expect(v.line_height).toBe(72);
+    expect(v.letter_spacing).toBe(4);
   });
   it("resolves the anchor pair over time, and coalesces an absent track to DEFAULT_ANCHOR", () => {
     // The anchor is keyframeable, so this IS the one place it becomes a scalar —

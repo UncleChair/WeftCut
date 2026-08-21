@@ -54,6 +54,11 @@ function textLayer(id: string, startUs: number, content: string, size = 54) {
       opacity: { mode: "Static" as const, value: 1 },
       outline: null,
       shadow: null,
+      box_w: null,
+      box_h: null,
+      valign: "Middle" as const,
+      line_height: 0,
+      letter_spacing: 0,
     },
     effects: [],
   };

@@ -59,6 +59,11 @@ function textLayer(content: string, label: string | null = null): LayerSummary {
       opacity: num(1),
       outline: null,
       shadow: null,
+      box_w: null,
+      box_h: null,
+      valign: "Middle",
+      line_height: 0,
+      letter_spacing: 0,
     },
     effects: [],
   };

@@ -66,6 +66,7 @@ function fixtureSummary(): ProjectSummary {
               rotation_deg: { mode: "Static", value: 0 },
               opacity: { mode: "Static", value: 1 },
               outline: null, shadow: null,
+              box_w: null, box_h: null, valign: "Middle", line_height: 0, letter_spacing: 0,
             },
           },
           {
@@ -83,6 +84,7 @@ function fixtureSummary(): ProjectSummary {
               rotation_deg: { mode: "Static", value: 0 },
               opacity: { mode: "Static", value: 1 },
               outline: null, shadow: null,
+              box_w: null, box_h: null, valign: "Middle", line_height: 0, letter_spacing: 0,
             },
           },
         ],

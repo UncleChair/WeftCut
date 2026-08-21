@@ -311,6 +311,18 @@ export interface TextView {
   opacity: AnimTrack<number>;
   outline: { color: Rgba; width: number } | null;
   shadow: { color: Rgba; offset_x: number; offset_y: number; blur: number } | null;
+  /// Layout box in composition px, LOCAL (pre-`scale`). Which fields are set IS
+  /// the resize mode: (null, null) auto width, (set, null) auto height, (set,
+  /// set) fixed. Plain scalars, never `AnimTrack` — a keyframed box would
+  /// re-measure and rebuild the glyph atlas every frame (ADR 0049).
+  box_w: number | null;
+  box_h: number | null;
+  /// The text block's placement INSIDE the box — orthogonal to `anchor_y`,
+  /// which places the box against `x`/`y`.
+  valign: "Top" | "Middle" | "Bottom";
+  /// Line leading; 0 = auto (the font's own metrics).
+  line_height: number;
+  letter_spacing: number;
 }
 
 export interface ColorView {

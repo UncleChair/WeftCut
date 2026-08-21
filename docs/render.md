@@ -47,6 +47,10 @@ apps/desktop/src/renderer/render/
     TextSprite.ts
     MotifSprite.ts           — binds a Motif's captured PNG frame as a texture
     ColorSprite.ts
+  fonts/
+    registry.ts              — THE font authority: bundled bytes + OS resolution
+    loadFontsIntoFaceSet.ts  — FontFace registration (document.fonts / self.fonts)
+    lineBreak.ts             — realm-global CJK break hook (see Text layout below)
   motifs/                    — Motif raster cache + frame descriptor helpers
                                (capture/cache pipeline covered in motifs.md)
   worker/
@@ -349,9 +353,59 @@ loop, the playhead store, or anything that subscribes per frame.
 |---|---|---|
 | `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` (WebCodecs preview, native GPU lane) and `VideoFrame` (export) are snapshotted into a sprite-owned canvas before upload (see the snapshot rule below); CPU-plane kinds (`NativeNv12Frame`, `TenBitFrame`) bypass the snapshot entirely — `updateFrame` accepts only the `BrowserConvertibleFrame` subset, and the Compositor routes CPU-plane kinds through their owned ingest shaders to `bindExternalTexture` (ADR 0032). |
 | `ImageOverlaySprite` | `createImageBitmap` / `ImageDecoder` → `Texture` | Two branches. **Still images:** one-shot `createImageBitmap` at sprite spawn; texture cached for the layer's lifetime. **Animated images (GIF, animated WebP, APNG, animated AVIF):** `decodeAnimatedImage` decodes all frames once via WebCodecs `ImageDecoder` (downscaled to composition size) and caches the resulting `DecodedAnimation` per `mediaId`. Each `render(tUs)` call selects the frame whose cumulative native delay covers `tInLayerUs mod totalDuration` (via `gifFrameIndexAt`) — looping at native speed to fill the layer. The same sprite class and the same `Compositor` run inside the export Worker, so export animation is inherent; the Worker awaits `preloadImages()` before starting the encode loop. |
-| `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. Caption cues imported from SRT/VTT/ASS files are ordinary `Text` layers and render through this same sprite — no separate subtitle path exists (see [`captions.md`](captions.md)). Bundled fonts (Liberation Sans, Noto Sans SC) are loaded into the export Worker before the encode loop so burned-in captions never tofu. |
+| `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. Wrap width and the block's placement inside the layout box are the sprite's own — see [Text layout](#text-layout-the-box) below. Caption cues imported from SRT/VTT/ASS files are ordinary `Text` layers and render through this same sprite — no separate subtitle path exists (see [`captions.md`](captions.md)). Bundled fonts (Liberation Sans, Noto Sans SC) are loaded into the export Worker before the encode loop so burned-in captions never tofu. |
 | `MotifSprite` | CDP-captured PNG frame → `Texture` | Binds the Motif's frame for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG); frames come from the webcap CDP capture path, not an in-process raster; see [`motifs.md`](motifs.md). |
 | `ColorSprite` | PixiJS `Graphics` rect | Animated fill color. |
+
+### Text layout: the box
+
+Text is the only visual kind with no intrinsic size, so `TextParams` carries a
+layout box — `box_w`, `box_h`, in composition pixels, local (pre-`scale`).
+Which fields are set *is* the resize mode; there is no enum to contradict them
+(ADR 0049):
+
+| `(box_w, box_h)` | Mode | `wordWrap` |
+|---|---|---|
+| `(null, null)` | Auto width | off |
+| `(set, null)` | Auto height | on |
+| `(set, set)` | Fixed | on |
+
+`(null, set)` is not a mode. `TextSprite` coalesces it to Auto width — the
+renderer half of a pair whose other half is a structured refusal in
+`main/state/mutations/params.ts`, so a hand-edited project cannot blank the
+frame mid-render. Bogus `align`/`valign` values and non-finite box, leading or
+tracking numbers are coalesced the same way, because the failure they produce
+is a NaN transform, i.e. a layer that vanishes rather than one that looks
+wrong.
+
+**The block is placed inside the box, and that is not what `align` alone
+does.** Pixi's rendered block is `maxLineWidth` wide (plus stroke and shadow) —
+never `wordWrapWidth` — so `TextStyle.align` only distributes lines *within*
+the block. `TextSprite.blockAnchorInBox` supplies the missing half: it offsets
+the block inside the box from `align` (horizontal) and `valign` (vertical), and
+expresses the result as a Pixi `anchor` renormalized over the block. `anchor`
+rather than `pivot` on purpose — a pivot would also move the point rotation and
+scale turn about, which stays `(x, y)`. With no box the box *is* the block, the
+offset is zero, and the anchor is returned unchanged, so Auto width renders
+bit-for-bit what it did before the box existed.
+
+`Compositor.naturalSizeOf` asks the sprite for that same rectangle, so the
+on-canvas gizmo draws the box being dragged rather than the glyphs inside it.
+
+**CJK breaking is realm-global, and that makes it half a contract.** Pixi's
+wrap unit is a space-delimited token and `CanvasTextMetrics.canBreakWords`
+returns the style's `breakWords` (false), so an unspaced Chinese sentence is
+one token that never wraps at any width — the box is inert in Chinese.
+`fonts/lineBreak.ts` overrides that static: breakable if the style says so *or*
+the token contains CJK, which wraps Chinese per character and English per word.
+`breakWords: true` is not the alternative; it splits Latin words. Because the
+hook is a class static, it must be installed in **both** realms — the
+`Compositor` constructor and `worker/exportWorker.ts`, each beside that realm's
+`loadFontsIntoFaceSet` — or preview wraps where export does not. It is
+installed unconditionally in the Compositor, not inside the preview-only font
+branch: the hook needs neither `document` nor a `FontFaceSet`.
+
+Shrink-to-fit is a separate concern: Fixed text that exceeds its box overflows.
 
 ### Frame upload: the snapshot rule
 

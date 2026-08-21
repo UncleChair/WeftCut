@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid } from './model'
+import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
 import type { DecodeRoute } from '../../shared/decode-route'
 
@@ -21,6 +21,12 @@ export interface TextView {
   kind: 'Text'; content: string; font_family: string; font_size_px: number; weight: number; italic: boolean
   color: Animated<Rgba>; align: TextAlign; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number>
   opacity: Animated<number>; shadow: Shadow | null; outline: Outline | null
+  /** Layout box, plain scalars (never `Animated` — see `TextParams.box_w`).
+   *  Which fields are set IS the resize mode, so both nulls must survive the
+   *  projection: coalescing either to a number here would invent a Fixed box
+   *  the user never drew. */
+  box_w: number | null; box_h: number | null
+  valign: VAlign; line_height: number; letter_spacing: number
 }
 export interface ColorView { kind: 'Color'; color: Animated<Rgba>; width: number; height: number }
 export interface AudioView {
@@ -135,7 +141,9 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
         weight: params.font.weight, italic: params.font.italic, color: params.color, align: params.align,
         x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y, opacity: params.opacity,
-        shadow: params.shadow, outline: params.outline }
+        shadow: params.shadow, outline: params.outline,
+        box_w: params.box_w, box_h: params.box_h, valign: params.valign,
+        line_height: params.line_height, letter_spacing: params.letter_spacing }
     }
     case 'Color':
       return { kind: 'Color', color: params.color, width: params.width, height: params.height }

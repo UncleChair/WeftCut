@@ -124,6 +124,11 @@ const textLayer: LayerSummary = {
     opacity: staticNum(1),
     outline: null,
     shadow: null,
+    box_w: null,
+    box_h: null,
+    valign: "Middle",
+    line_height: 0,
+    letter_spacing: 0,
   },
   effects: [],
 };

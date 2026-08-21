@@ -88,6 +88,23 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
     expect(v.outline).not.toBeNull()
     expect(v.shadow).not.toBeNull()
   })
+
+  it('forwards the layout box, both nulls included', () => {
+    // Which box fields are set IS the resize mode, so this projection is the
+    // one place a dropped field would read as a different mode downstream —
+    // Fixed arriving as Auto width wraps and places the block differently.
+    const tp = (box: { box_w: number | null; box_h: number | null }): LayerParams => ({
+      kind: 'Text', ...textParamsLite(), ...box, valign: 'Bottom', line_height: 72, letter_spacing: 4,
+    })
+    const fixed = layerParamsView(tp({ box_w: 640, box_h: 300 }), {})
+    if (fixed.kind !== 'Text') throw new Error('unreachable')
+    expect([fixed.box_w, fixed.box_h]).toEqual([640, 300])
+    expect([fixed.valign, fixed.line_height, fixed.letter_spacing]).toEqual(['Bottom', 72, 4])
+
+    const auto = layerParamsView(tp({ box_w: null, box_h: null }), {})
+    if (auto.kind !== 'Text') throw new Error('unreachable')
+    expect([auto.box_w, auto.box_h]).toEqual([null, null])
+  })
 })
 
 describe('layerParamsView carries the transform anchor on every visual kind', () => {

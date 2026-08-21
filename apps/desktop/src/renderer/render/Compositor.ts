@@ -63,6 +63,7 @@ import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
+import { installCjkLineBreaking } from "./fonts/lineBreak";
 import { EffectChain } from "./effects/EffectChain";
 import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
@@ -677,6 +678,14 @@ export class Compositor {
     this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
+    // Half of the two-realm text contract; the other half is the same call in
+    // `worker/exportWorker.ts`, beside its own `loadFontsIntoFaceSet`. Install
+    // one and not the other and preview wraps CJK where export does not.
+    // OUTSIDE the preview branch below on purpose: the hook needs no
+    // `document` and no FontFaceSet, so gating it on the branch's conditions
+    // would leave any main-thread export-mode Compositor wrapping differently
+    // from the preview it is supposed to match.
+    installCjkLineBreaking();
     // Preview + real DOM only — the export Worker has neither `document`
     // nor preview audio.
     if (this.mode === "preview" && typeof document !== "undefined") {
@@ -1479,8 +1488,11 @@ export class Compositor {
   /// VideoClip's scale is source-corrected (`media/texture`, so proxies preview
   /// at original size), which makes the MEDIA dimensions its natural size;
   /// Image/Motif scale their decoded raster directly; Text has no intrinsic
-  /// size at all, only measured bounds. `getBounds()` would also fold in
-  /// filter padding and draw an oversized box on a blurred layer.
+  /// size at all, so `TextSprite.naturalSize` answers with its layout box when
+  /// one is set and the measured glyph bounds otherwise — the sprite owns that
+  /// choice so the rectangle drawn is the rectangle being dragged.
+  /// `getBounds()` would also fold in filter padding and draw an oversized box
+  /// on a blurred layer.
   naturalSizeOf(layerId: string): { w: number; h: number } | null {
     const clip = this.clips.get(layerId);
     if (clip) {
@@ -1493,10 +1505,7 @@ export class Compositor {
     const motif = this.activeMotifs.get(layerId);
     if (motif) return textureSize(motif.sprite.sprite.texture);
     const text = this.texts.get(layerId);
-    if (text) {
-      const b = text.sprite.text.getLocalBounds();
-      return b.width > 0 && b.height > 0 ? { w: b.width, h: b.height } : null;
-    }
+    if (text) return text.sprite.naturalSize();
     return null;
   }
 
