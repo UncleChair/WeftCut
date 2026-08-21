@@ -175,6 +175,54 @@ the single most expensive spec.
 
 Deliberately not Playwright's `--shard`; `playwright.config.ts` carries why.
 
+### Re-measuring the split
+
+Two earlier descriptions of this split rotted into folklore — the per-slice
+minutes, and which slice was cheapest enough to host the packaging step. Both
+were true when written and neither said how to check, so nobody did. The recipe
+is therefore part of the split's documentation:
+
+```bash
+gh run download <run-id> --pattern 'e2e-timings-windows-latest-*' --dir /tmp/t
+node -e '
+const fs = require("fs")
+const cost = {}
+const walk = (s) => {
+  for (const sp of s.specs ?? [])
+    for (const t of sp.tests) for (const r of t.results)
+      cost[sp.file] = (cost[sp.file] ?? 0) + r.duration
+  for (const c of s.suites ?? []) walk(c)
+}
+for (const f of process.argv.slice(1))
+  for (const s of JSON.parse(fs.readFileSync(f)).suites) walk(s)
+for (const [f, ms] of Object.entries(cost).sort((a, b) => b[1] - a[1]))
+  console.log((ms / 60000).toFixed(2).padStart(6), f)
+' /tmp/t/*/*.json
+```
+
+Read it on **Windows**: it is the binding OS, and its parallel project runs at
+`workers: 1`, so summed test time there *is* leg wall clock. The whole set of
+slices is needed, because a file's cost is spread across whichever leg owns it.
+
+The shape those numbers currently describe — the pack `slices.mjs` is balanced
+against, plus the two once-per-OS lumps the slice flags place:
+
+| spec file | min |
+|---|---|
+| `export_overlap_same_source.spec.ts` | 8.35 |
+| `export-range-audio.spec.ts` | 5.83 |
+| `audio.spec.ts` | 5.15 |
+| `export_codecs.spec.ts` | 4.20 |
+| `export_eos_tail.spec.ts` | 2.42 |
+| `conformance.spec.ts` | 1.45 |
+| the catch-all's remaining files, together | 9.35 |
+| the `serial` project, whole | 3.05 |
+| `Package (unsigned)` | 2.1 |
+
+The largest single file is the floor for every leg, which is why five slices is
+the useful maximum and why lowering the ceiling further is test-content work
+rather than CI work.
+
 ## Tiers: the `@matrix` sweep
 
 Both projects also drop titles tagged `@matrix` unless `WEFTCUT_E2E_FULL=1` is
