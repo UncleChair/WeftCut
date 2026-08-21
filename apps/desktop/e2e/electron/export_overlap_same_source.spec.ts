@@ -63,22 +63,6 @@ function assertIdentityAligned(report: any): void {
 test.describe('same-source overlapping clips export (Electron)', () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
 
-  test('baseline: a single clip exports clean', async () => {
-    test.setTimeout(220000)
-    const { app, page } = await launchApp()
-    try {
-      const out = path.join(tmpDir('weftcut-e2e-overlap-'), 'baseline.mp4')
-      await bootProject(page, tmpDir('weftcut-e2e-overlap-proj-'), 'e2e-overlap-base')
-      await placeSameSourceClips(page, [])
-      const perf = await runTimelineExport(page, out)
-      expect(perf.totalFrames, '6s @ 30fps = 180 frames').toBe(180)
-      const report = analyze({ output: out, source: SOURCE, samples: [30, 90, 170], ssimMin: SSIM_FLOOR })
-      assertIdentityAligned(report)
-    } finally {
-      await app.close()
-    }
-  })
-
   test('two stacked enabled clips export without wedging or extra decode', async () => {
     test.setTimeout(220000)
     const { app, page } = await launchApp()

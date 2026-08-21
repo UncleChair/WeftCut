@@ -212,15 +212,15 @@ against, plus the two once-per-OS lumps the slice flags place:
 
 | spec file | min |
 |---|---|
-| `export_overlap_same_source.spec.ts` | 8.35 |
-| `export-range-audio.spec.ts` | 5.83 |
-| `audio.spec.ts` | 5.15 |
-| `export_codecs.spec.ts` | 4.20 |
-| `export_eos_tail.spec.ts` | 2.42 |
-| `conformance.spec.ts` | 1.45 |
-| the catch-all's remaining files, together | 9.35 |
-| the `serial` project, whole | 3.05 |
-| `Package (unsigned)` | 2.1 |
+| `audio.spec.ts` | 8.29 |
+| `export_overlap_same_source.spec.ts` | 7.70 |
+| `export-range-audio.spec.ts` | 6.59 |
+| `export_codecs.spec.ts` | 5.97 |
+| `export_eos_tail.spec.ts` | 2.89 |
+| `conformance.spec.ts` | 2.08 |
+| the catch-all's remaining files, together | 9.70 |
+| the `serial` project, whole | 3.02 |
+| `Package (unsigned)` | 2.17 |
 
 The largest single file is the floor for every leg, which is why five slices is
 the useful maximum and why lowering the ceiling further is test-content work

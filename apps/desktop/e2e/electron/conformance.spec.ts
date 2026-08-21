@@ -25,6 +25,15 @@ test('H.264 import -> export stays frame-aligned with low loss (Electron)', asyn
     const r = await driveExport(page, { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT })
     if (!r.done.ok) throw new Error('exportClip failed: ' + r.done.error)
 
+    // Completeness, which the SSIM samples below cannot see: an export that
+    // truncates past its last sample still renders every frame it did write
+    // correctly, so alignment alone passes on a short file.
+    const perf = (await page.evaluate(() => (window as any).__weftcutExportPerf ?? null)) as
+      | { totalFrames: number }
+      | null
+    if (!perf) throw new Error('export settled but __weftcutExportPerf is missing')
+    expect(perf.totalFrames, '6s @ 30fps = 180 frames').toBe(180)
+
     // Frame alignment (strict) + app-only loss (loose 0.80 floor) at interior
     // frames — one sample per 2s GOP of the 6s fixture, the last 30 frames
     // before EOS (the analyzer's ±2 match window needs center+2 <= 179).
