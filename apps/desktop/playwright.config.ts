@@ -11,8 +11,33 @@ import { defineConfig } from '@playwright/test'
 /// with the serial/parallel split below instead of overwriting it.
 const MATRIX_EXCLUDED = process.env.WEFTCUT_E2E_FULL ? [] : [/@matrix/]
 
+/// The two halves of how electron-ci splits one e2e run across runners: a leg
+/// either OWNS a named set of spec files (`WEFTCUT_E2E_ONLY`) or takes
+/// everything the owning legs did not (`WEFTCUT_E2E_IGNORE`). Only the heavy
+/// names are maintained, in that one workflow step; a new spec joins the
+/// catch-all leg on its own.
+///
+/// Deliberately not Playwright's `--shard`: it balances by TEST COUNT, and this
+/// suite's cost distribution defeats that. One file is a quarter of the run and
+/// dozens are under a minute, so the measured 3-way split left a runner idle at
+/// 4 minutes while another ran 32 — 1.7x for three machines.
+///
+/// LANDMINE — globs, never Playwright's positional file filter. That filter is a
+/// REGEX over the path, so `audio.spec.ts` also selects
+/// `export-range-audio.spec.ts` and the two legs silently run it twice. A
+/// `**/name` glob matches the one file it names.
+const globs = (names: string | undefined) =>
+  (names ?? '')
+    .split(',')
+    .filter(Boolean)
+    .map((name) => `**/${name}`)
+const OWNED = globs(process.env.WEFTCUT_E2E_ONLY)
+const IGNORED = globs(process.env.WEFTCUT_E2E_IGNORE)
+
 export default defineConfig({
   testDir: 'e2e/electron',
+  testMatch: OWNED.length ? OWNED : undefined,
+  testIgnore: IGNORED,
   timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
   /// A JSON report rides alongside the console reporter because it is the only

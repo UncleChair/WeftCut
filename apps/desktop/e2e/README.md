@@ -131,8 +131,9 @@ to `launchApp` twice, as dock-workspace's restart test does). Set
 - **`serial`** — the specs whose titles carry the `@serial` tag: GPU/HW-lane,
   perf-measurement, and determinism-capture gates that must own the machine.
   Runs FIRST, alone, with `workers: 1`, while the machine is quiet.
-- **`parallel`** — everything else. `workers` is `2` on CI and `50%` of cores
-  locally.
+- **`parallel`** — everything else. `workers` is `2` on the macOS CI leg, `1` on
+  the GPU-less ones (one export pipeline saturates their vCPUs, so a second
+  worker starves both into the export timeout) and `50%` of cores locally.
 
 The package script goes through `scripts/run-e2e.mjs` because Playwright runs
 independent projects concurrently by default. Unscoped runs are split into two
@@ -142,6 +143,24 @@ an explicit `--project=...` remains a single targeted invocation.
 Tag a new spec `@serial` in its test title whenever it measures time, drives
 the GPU/HW lane, or captures determinism reference output; untagged specs must
 tolerate running alongside other app instances.
+
+### How CI spreads one run across runners
+
+Because the GPU-less legs cannot use a second worker, electron-ci buys its
+parallelism across machines instead: each OS runs the suite as four concurrent
+slices. A slice either **owns** named spec files (`WEFTCUT_E2E_ONLY`) or takes
+**everything the owning slices did not** (`WEFTCUT_E2E_IGNORE`), so a new spec
+joins the catch-all on its own and only the heavy names are maintained. The
+`serial` project and the packaging step each ride one designated slice, keeping
+either from landing on whichever slice is already the worst case.
+
+Those names and their measured balance live in the workflow's E2E step, the one
+home for them. `scripts/e2e-split.test.mjs` fails if the owned and ignored sets
+ever disagree — a file in neither runs on no runner while every slice still
+reports green, which nothing else would catch. Rebalance from the
+`e2e-timings-<os>-<slice>` artifacts.
+
+Deliberately not Playwright's `--shard`; `playwright.config.ts` carries why.
 
 ## Tiers: the `@matrix` sweep
 

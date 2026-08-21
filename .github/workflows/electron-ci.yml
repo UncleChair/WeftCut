@@ -49,11 +49,12 @@ jobs:
   build:
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default. Sized to
-    # the windows leg — the slowest, since its media stack skips the fewest
-    # specs — with headroom: a leg that hits the cap reports only "exceeded the
-    # maximum execution time" and hides which specs actually failed, so the cap
-    # must stay comfortably above a green run's worst case. Coverage cuts
-    # belong in the @matrix tier (apps/desktop/e2e/README.md), not here.
+    # the `all` e2e slice, NOT to the four split ones: a scoped dispatch can
+    # still put the whole suite (`--full` included) on a single runner, and that
+    # is the longest a green job can legitimately be. Headroom matters because a
+    # leg that hits the cap reports only "exceeded the maximum execution time"
+    # and hides which specs actually failed. Coverage cuts belong in the @matrix
+    # tier (apps/desktop/e2e/README.md), not here.
     timeout-minutes: 90
     # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
     env:
@@ -63,6 +64,15 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
+        # Which slice of the e2e suite this runner takes (see the E2E step for
+        # the split and its measured cost). Every slice repeats the ~10 min
+        # build above it, which is free here — public repo, and the rebuilds run
+        # concurrently, so a build-once-then-fan-out job would only lengthen the
+        # critical path by making that build serial.
+        #
+        # A scoped dispatch collapses to the single `all` slice: `e2e_args` names
+        # its own specs, and running those args four times over is not a split.
+        part: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.e2e_args != '' && '["all"]' || '["audio", "codecs", "overlap", "rest"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -362,18 +372,50 @@ jobs:
           WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os != 'macos-latest' && '0.62' || '' }}
           WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
           E2E_ARGS: ${{ inputs.e2e_args }}
+          PART: ${{ matrix.part }}
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run e2e -- $E2E_ARGS
+          # THE SPLIT. Four slices, named by the files whose cost is structural
+          # (the export matrices); `rest` takes everything the other three do
+          # not, so a new spec needs no entry here. Balanced from the
+          # e2e-timings-* artifacts against the windows leg — the binding one,
+          # nearest the cap: 14.6 / 18.7 / 13.6 / 14.4 min out of 61 min serial.
+          # Rebalance from those same artifacts when a slice drifts;
+          # playwright.config.ts (§WEFTCUT_E2E_ONLY) carries why this is not
+          # Playwright's own --shard.
+          HEAVY='audio.spec.ts,export_codecs.spec.ts,export_overlap_same_source.spec.ts,export-range-audio.spec.ts'
+          case "$PART" in
+            audio)   export WEFTCUT_E2E_ONLY='audio.spec.ts' ;;
+            codecs)  export WEFTCUT_E2E_ONLY='export_codecs.spec.ts' ;;
+            overlap) export WEFTCUT_E2E_ONLY='export_overlap_same_source.spec.ts,export-range-audio.spec.ts' ;;
+            rest)    export WEFTCUT_E2E_IGNORE="$HEAVY" ;;
+          esac
+          e2e() {
+            if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run e2e -- "$@"; else npm run e2e -- "$@"; fi
+          }
+          # `all` is the scoped-dispatch path: unsplit, and run-e2e.mjs's own
+          # serial-then-parallel plan rather than this step's, with e2e_args
+          # forwarded verbatim (unquoted — it is a word list, not one argument).
+          if [ "$PART" = "all" ]; then
+            e2e $E2E_ARGS
           else
-            npm run e2e -- $E2E_ARGS
+            # The serial project owns the machine and captures the determinism
+            # PNGs, so it runs on exactly ONE slice. `codecs` because it is the
+            # lightest: anywhere else and the serial project's minutes land on
+            # top of an already-heavier slice and become the new worst case.
+            if [ "$PART" = "codecs" ]; then e2e --project=serial; fi
+            e2e --project=parallel
           fi
 
       # Upload determinism PNGs so the compare job can fetch all three OSes.
       # if: always() so a partial capture or test failure still uploads whatever
       # PNGs were written — essential for diagnosing the first run.
+      #
+      # Gated to the slice that runs the serial project, and the NAME stays
+      # unsliced: the compare job reads `determinism-<os>` by literal path. Two
+      # slices uploading under one name is a hard artifact conflict, so this
+      # condition and the serial project's slice above must name the same one.
       - name: Upload determinism artifacts
-        if: always()
+        if: always() && (matrix.part == 'codecs' || matrix.part == 'all')
         uses: actions/upload-artifact@v7
         with:
           name: determinism-${{ matrix.os }}
@@ -386,7 +428,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.os }}
+          name: test-results-${{ matrix.os }}-${{ matrix.part }}
           retention-days: 14
           path: apps/desktop/test-results/**
 
@@ -395,11 +437,14 @@ jobs:
       # above: that one is empty on a green run, and a green run is exactly when
       # these timings are worth reading. if: always() so a red or timed-out leg —
       # the case that motivates looking at cost at all — still publishes them.
+      #
+      # One per slice, and the whole set is what rebalances the split: the E2E
+      # step's slice boundaries were measured from exactly these files.
       - name: Upload e2e timings
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-timings-${{ matrix.os }}
+          name: e2e-timings-${{ matrix.os }}-${{ matrix.part }}
           retention-days: 14
           path: apps/desktop/e2e-report/**
 
@@ -409,8 +454,12 @@ jobs:
       # node_modules/@weftcut/{core,native-decode}). Run the two remaining
       # halves directly — `build` for a clean non-E2E renderer bundle (no
       # VITE_WEFTCUT_E2E), then electron-builder.
+      #
+      # Once per OS, not once per e2e slice — and on `overlap`, the lightest
+      # slice, for the same reason the serial project rides `codecs`: neither
+      # extra should land on whichever slice is already the worst case.
       - name: Package (unsigned)
-        if: github.event_name != 'workflow_dispatch' || inputs.package
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'overlap' || matrix.part == 'all')
         run: npm run build && npx electron-builder --publish never
 
       # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
@@ -422,15 +471,17 @@ jobs:
       # installer when explicitly wanted — a tag build or a manual dispatch —
       # with short retention on top.
       - name: Upload installer
-        if: success() && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
+        if: success() && (matrix.part == 'overlap' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
           retention-days: 5
           path: apps/desktop/release/*
 
-  # Cross-OS SSIM comparison.  Runs after all three build jobs finish
-  # (needs: build + fail-fast: false means all three attempt even if one fails).
+  # Cross-OS SSIM comparison.  Runs after every build job finishes — one per
+  # (os, e2e slice) pair — but only the slice carrying the serial project
+  # publishes a determinism-* artifact for it to read (fail-fast: false means
+  # they all attempt even if one fails).
   compare:
     needs: build
     # A partial dispatch (one OS or a scoped suite) cannot feed a 3-way compare.
