@@ -47,12 +47,18 @@ export const SLICES = [
 ];
 
 /// Which slices an OS runs, keyed by its `os:` matrix label. Sized per OS rather
-/// than uniformly: macOS's whole suite is a third shorter than the other two and
-/// playwright.config.ts gives its parallel project 2 workers where the GPU-less
-/// legs get 1, so three slices already put its longest leg under the single-file
-/// floor the Windows legs cannot beat. A fourth would spend macOS concurrency —
-/// capped account-wide, and the binding constraint on this matrix — to shorten a
-/// leg that is not on the critical path.
+/// than uniformly: macOS runs each spec at roughly half the cost of the other
+/// two, so it needs fewer legs for the same wall clock — but not arbitrarily
+/// fewer, because a slice it skips does not vanish, it lands on the catch-all.
+/// The catch-all is the one slice that cannot be named out, so with n slices an
+/// OS's longest leg is bounded below by "everything except the n-1 heaviest
+/// named files", and for macOS that bound only drops under the Windows legs at
+/// FOUR. macOS skips the cheapest named slice for that reason.
+///
+/// This is the trade the account-wide macOS concurrency cap buys: at four the
+/// matrix sits exactly on it. Re-measure before changing the count — the
+/// per-slice costs, and how to derive them, are e2e/README.md
+/// §Re-measuring the split.
 ///
 /// LANDMINE — this map, not SLICES alone, is what an ignore set must be computed
 /// from. Union the whole table instead and macOS's catch-all ignores the files of
@@ -63,7 +69,7 @@ export const SLICES = [
 export const OS_SLICES = {
   "windows-latest": sliceNames(),
   "ubuntu-latest": sliceNames(),
-  "macos-latest": ["audio", "codecs", "rest"],
+  "macos-latest": ["audio", "codecs", "range", "rest"],
 };
 
 /// `process.platform` to the `os:` matrix label, so a local replay resolves to the

@@ -157,8 +157,11 @@ designated slice, keeping any of them off whichever slice is already the worst
 case — so each has to ride one that every OS runs.
 
 How many slices is per OS rather than uniform: it follows that OS's own suite
-total and its worker count, which is why macOS runs fewer of them and its
-catch-all is its biggest leg without being on the critical path. That makes the
+total and its worker count, which is why macOS runs fewer of them. Not
+arbitrarily fewer, though — a slice an OS skips does not vanish, it lands on the
+catch-all, and the catch-all is the one slice that cannot be named out. So an
+OS's longest leg is bounded below by everything except its heaviest named files,
+and dropping a slice too far makes the cheapest OS the critical path. That makes the
 catch-all's ignore set per OS too, and it is the load-bearing part: computed over
 slices an OS does not run, it hides those files from the one leg that should have
 absorbed them, and they run on **no** runner of that OS while every leg reports

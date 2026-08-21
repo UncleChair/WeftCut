@@ -56,12 +56,14 @@ jobs:
     # and hides which specs actually failed. Coverage cuts belong in the @matrix
     # tier (apps/desktop/e2e/README.md), not here.
     timeout-minutes: 90
-    # CONCURRENCY BUDGET — a push creates 18 jobs: 1 `checks` + 3 `rust-test` +
-    # this matrix's 13 + 1 `compare`. GitHub Free allows 20 concurrent, of which
+    # CONCURRENCY BUDGET — a push creates 19 jobs: 1 `checks` + 3 `rust-test` +
+    # this matrix's 14 + 1 `compare`. GitHub Free allows 20 concurrent, of which
     # 5 may be macOS, counted per billing entity across ALL repositories. macOS
-    # is the binding constraint — 3 legs here + 1 `rust-test` against its 5 — so
-    # widening this matrix on macOS has to buy those legs from somewhere, and
-    # e2e/slices.mjs (OS_SLICES) is where that trade is made.
+    # is the binding constraint and this matrix sits ON it: 4 legs here + 1
+    # `rust-test`. That is deliberate — measured, macOS needs its fourth leg to
+    # stay off the critical path (e2e/slices.mjs §OS_SLICES) — so another macOS
+    # job anywhere in the account now queues behind this run rather than beside
+    # it. Widening further means buying legs back from somewhere.
     strategy:
       fail-fast: false
       matrix:
@@ -87,8 +89,6 @@ jobs:
         exclude:
           - os: macos-latest
             part: overlap
-          - os: macos-latest
-            part: range
     runs-on: ${{ matrix.os }}
     defaults:
       run:
