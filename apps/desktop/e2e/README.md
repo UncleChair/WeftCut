@@ -83,6 +83,7 @@ npm run e2e -- --full                            # + the @matrix cells
 npm run e2e -- color-conformance.spec.ts         # one file
 npm run e2e -- -g "role"                         # by title grep
 npm run e2e -- --project=serial                  # only the @serial gates
+npm run e2e -- --slice=overlap                   # one CI runner's share (slices.mjs)
 ```
 
 The preflight always prints which tier it is running, so a smaller-than-expected
@@ -154,10 +155,12 @@ joins the catch-all on its own and only the heavy names are maintained. The
 `serial` project and the packaging step each ride one designated slice, keeping
 either from landing on whichever slice is already the worst case.
 
-Those names and their measured balance live in the workflow's E2E step, the one
-home for them. `scripts/e2e-split.test.mjs` fails if the owned and ignored sets
-ever disagree — a file in neither runs on no runner while every slice still
-reports green, which nothing else would catch. Rebalance from the
+The table — which slices exist, what each owns, and which ones carry those two
+extras — lives in `slices.mjs`, the one home for it: the workflow's E2E step reads
+it per runner, `npm run e2e -- --slice=<name>` replays one runner's share
+locally, and `scripts/e2e-split.test.mjs` asserts its invariants. That gate is
+what fails if a file ends up owned by no slice — it runs on no runner while every
+slice still reports green, which nothing else would catch. Rebalance from the
 `e2e-timings-<os>-<slice>` artifacts.
 
 Deliberately not Playwright's `--shard`; `playwright.config.ts` carries why.

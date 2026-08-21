@@ -4,6 +4,8 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { SLICES, sliceEnv } from '../e2e/slices.mjs'
+
 const require = createRequire(import.meta.url)
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url))) // apps/desktop
 
@@ -38,6 +40,18 @@ export function splitFullFlag(args) {
   return { full: args.includes('--full'), args: args.filter((arg) => arg !== '--full') }
 }
 
+/** `--slice=<name>` reproduces one electron-ci runner's share of the suite (the
+ * table is e2e/slices.mjs), so a red CI slice is debuggable locally. It selects
+ * a set of spec files rather than naming a Playwright option, so like the flags
+ * above it has to leave the argv; last one wins. */
+export function splitSliceFlag(args) {
+  const requested = args.filter((arg) => arg.startsWith('--slice='))
+  return {
+    slice: requested.length ? requested.at(-1).slice('--slice='.length) : null,
+    args: args.filter((arg) => !arg.startsWith('--slice=')),
+  }
+}
+
 /** Fold the planned runs' exit statuses into one process status: 0 only when
  * every run passed, otherwise the EARLIEST non-zero — the first project to fail
  * is the most diagnostic, and a later project's red is often downstream of it.
@@ -63,6 +77,34 @@ export function planE2ERuns(args) {
   ]
 }
 
+/** The Playwright project a planned run targets, in either `--project=x` or
+ * `--project x` spelling; null when the argv names none. */
+function projectForRun(args) {
+  const separate = args.indexOf('--project')
+  return (
+    args.find((arg) => arg.startsWith('--project='))?.slice('--project='.length) ||
+    (separate === -1 ? null : args[separate + 1]) ||
+    null
+  )
+}
+
+/** Narrow the planned runs to one CI slice, returning each run with the env it
+ * needs. Mirrors electron-ci's E2E step: the serial project runs only on the
+ * slice that owns it, and the file restriction rides the other run.
+ *
+ * LANDMINE — that restriction must never reach the serial project. It narrows
+ * that project to the sliced files as well; no @serial test lives in any of
+ * them, and Playwright kills the run with "No tests found". The workflow keeps
+ * the same separation with a subshell. */
+export function planSlicedRuns(runs, slice) {
+  if (!slice) return runs.map((args) => ({ args, env: {} }))
+  const env = sliceEnv(slice)
+  const ownsSerial = Boolean(SLICES.find((s) => s.name === slice).serial)
+  return runs
+    .filter((args) => ownsSerial || projectForRun(args) !== 'serial')
+    .map((args) => ({ args, env: projectForRun(args) === 'serial' ? {} : env }))
+}
+
 const REPORT_DIR = 'e2e-report'
 
 /** Per-invocation destination for the JSON timing report, named after the
@@ -76,12 +118,7 @@ const REPORT_DIR = 'e2e-report'
  * readable from the file, and a `--project=`-scoped run does not destroy the
  * other half's timings. */
 export function reportFileForRun(args, root = ROOT) {
-  const separate = args.indexOf('--project')
-  const project =
-    args.find((arg) => arg.startsWith('--project='))?.slice('--project='.length) ||
-    (separate === -1 ? null : args[separate + 1]) ||
-    'e2e'
-  return path.join(root, REPORT_DIR, `${project}.json`)
+  return path.join(root, REPORT_DIR, `${projectForRun(args) ?? 'e2e'}.json`)
 }
 
 // Same per-OS tables the fetch script (resources/ffmpeg/<os>/) and the specs'
@@ -193,6 +230,20 @@ function noteMatrixTier(env, notes) {
   )
 }
 
+/** Name the slice and what it leaves out. Same reason as the tier note above: a
+ * scoped run drops most of the suite, and unannounced that reads as tests having
+ * gone missing. */
+function noteSlice(slice) {
+  const { WEFTCUT_E2E_ONLY, WEFTCUT_E2E_IGNORE } = sliceEnv(slice)
+  const scope = WEFTCUT_E2E_ONLY
+    ? `only ${WEFTCUT_E2E_ONLY}`
+    : `everything except ${WEFTCUT_E2E_IGNORE}`
+  const serial = SLICES.find((s) => s.name === slice).serial
+    ? 'plus the serial project, which this slice owns'
+    : 'without the serial project, which another slice owns'
+  return `--slice=${slice} — the parallel project runs ${scope}, ${serial}`
+}
+
 /** Wire the per-platform real-run config into a copy of the environment and
  * collect fatal preflight errors. Pure apart from fs reads — exported for the
  * node:test suite, which points `root` at a fixture tree. */
@@ -218,11 +269,27 @@ export function prepareE2EEnv(
 
 export function runE2E(argv = process.argv.slice(2)) {
   const { gates, args: afterGates } = splitGateFlags(argv)
-  const { full, args } = splitFullFlag(afterGates)
+  const { full, args: afterFull } = splitFullFlag(afterGates)
+  const { slice, args } = splitSliceFlag(afterFull)
+  let plan
+  try {
+    plan = planSlicedRuns(planE2ERuns(args), slice)
+  } catch (error) {
+    console.error(`[e2e preflight] ${error.message}; the table is e2e/slices.mjs`)
+    return 1
+  }
   const { env, errors, notes } = prepareE2EEnv({
     ...process.env,
     ...(full ? { WEFTCUT_E2E_FULL: '1' } : {}),
   })
+  if (slice) notes.unshift(noteSlice(slice))
+  // An explicit `--project=serial` under a slice that does not own it: running
+  // nothing and exiting 0 is the one outcome a caller cannot distinguish from a
+  // green suite.
+  if (!plan.length)
+    errors.push(
+      `--slice=${slice} owns no serial project, so the requested projects select no run at all`,
+    )
   for (const note of notes) console.log(`[e2e preflight] ${note}`)
   for (const [flag, gate] of Object.entries(EXTRA_GATES))
     if (!gates.includes(flag))
@@ -238,13 +305,17 @@ export function runE2E(argv = process.argv.slice(2)) {
   // known-red spec. A project that fails now costs the rest of the suite's
   // time; being able to see the rest is the point.
   const statuses = []
-  for (const runArgs of planE2ERuns(args)) {
+  for (const { args: runArgs, env: runEnv } of plan) {
     const reportFile = reportFileForRun(runArgs)
     console.log(`[e2e preflight] JSON timing report → ${path.relative(ROOT, reportFile)}`)
     const result = spawnSync(
       process.execPath,
       [cli, 'test', '-c', 'playwright.config.ts', ...runArgs],
-      { cwd: ROOT, env: { ...env, PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile }, stdio: 'inherit' },
+      {
+        cwd: ROOT,
+        env: { ...env, ...runEnv, PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile },
+        stdio: 'inherit',
+      },
     )
     // A spawn error (no binary, EAGAIN) is not a test result — fail loudly
     // rather than folding it into a status the caller reads as "tests ran".

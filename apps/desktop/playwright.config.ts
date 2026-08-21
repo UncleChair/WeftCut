@@ -14,8 +14,8 @@ const MATRIX_EXCLUDED = process.env.WEFTCUT_E2E_FULL ? [] : [/@matrix/]
 /// The two halves of how electron-ci splits one e2e run across runners: a leg
 /// either OWNS a named set of spec files (`WEFTCUT_E2E_ONLY`) or takes
 /// everything the owning legs did not (`WEFTCUT_E2E_IGNORE`). Only the heavy
-/// names are maintained, in that one workflow step; a new spec joins the
-/// catch-all leg on its own.
+/// names are maintained, in `e2e/slices.mjs`; a new spec joins the catch-all leg
+/// on its own.
 ///
 /// Deliberately not Playwright's `--shard`: it balances by TEST COUNT, and this
 /// suite's cost distribution defeats that. One file is a quarter of the run and
