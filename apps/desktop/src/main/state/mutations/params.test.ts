@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Layer, type LayerParams, type MotifParams, type Project } from '../model'
+import { blankProject, type Layer, type LayerParams, type MotifParams, type Project, type TextParams } from '../model'
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
-import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64 } from './params'
+import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64, type LayerParamsPatch } from './params'
 // Reaching across into the renderer is deliberate and is the POINT of the gate at
 // the bottom of this file: the two lists have to agree, and only a test that sees
 // both can prove it. `descriptors.ts` is pure data with type-only imports, so it
@@ -71,6 +71,111 @@ describe('applyUpdateLayerParams (field merge)', () => {
     p.tracks[0].locked = true
     expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Color', width: 1 }, new MotifCatalog()), 'TrackLocked')
     expectCmd(() => applyUpdateLayerParams(p, 'ghost', { kind: 'Color', width: 1 }, new MotifCatalog()), 'LayerNotFound')
+  })
+})
+
+// ── The text box: the resize mode IS the nullability (ADR 0049) ───────────────
+// Which box fields are set is the mode, so `null` is a VALUE here (back to auto)
+// and absent is "don't touch" — the one place in this patch where the difference
+// is load-bearing rather than incidental. (null, set) is no mode at all, and this
+// layer has no canvas to backfill a width from, so it refuses (ADR 0048's
+// no-silent-clamping red line).
+describe('Text box patch', () => {
+  function textLayer(): { p: Project; id: string } {
+    const g = seededGen(); const p = blankProject(g, 'box')
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('hi', p.composition), 0, 1_000_000)
+    return { p, id }
+  }
+  const boxOf = (p: Project, id: string) => {
+    const t = layerOf(p, id).params as TextParams
+    return [t.box_w, t.box_h]
+  }
+
+  it('a width alone lands in auto height; an explicit null returns to auto width', () => {
+    const { p, id } = textLayer()
+    expect(boxOf(p, id)).toEqual([null, null]) // born in auto width
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800 }, new MotifCatalog())
+    expect(boxOf(p, id)).toEqual([800, null])
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null }, new MotifCatalog())
+    expect(boxOf(p, id)).toEqual([null, null])
+  })
+
+  it('both axes in one patch land in fixed', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, box_h: 200 }, new MotifCatalog())
+    expect(boxOf(p, id)).toEqual([800, 200])
+  })
+
+  it('a height on a layer that already has a width succeeds', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_h: 200 }, new MotifCatalog())
+    expect(boxOf(p, id)).toEqual([800, 200])
+  })
+
+  it('a height with no width refuses naming box_h and leaves the project byte-identical', () => {
+    const { p, id } = textLayer()
+    const before = JSON.stringify(p)
+    // The refusal must precede the merge: `content` rides along precisely so a
+    // half-applied patch would be visible in the snapshot compare below.
+    let err: unknown
+    try { applyUpdateLayerParams(p, id, { kind: 'Text', box_h: 200, content: 'never lands' }, new MotifCatalog()) } catch (e) { err = e }
+    expect(isCommandFailure(err) && err.err).toMatchObject({ error: 'InvalidArgument', field: 'box_h' })
+    expect(JSON.stringify(p)).toBe(before)
+  })
+
+  it('clearing the width out from under a height refuses too — fixed exits through both fields', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, box_h: 200 }, new MotifCatalog())
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null }, new MotifCatalog()), 'InvalidArgument')
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null, box_h: null }, new MotifCatalog())
+    expect(boxOf(p, id)).toEqual([null, null])
+  })
+
+  it('a patch touching neither box field passes through an already-illegal layer', () => {
+    // Only a hand-edited file reaches (null, set); the renderer coalesces it to
+    // auto width. Refusing every unrelated edit would make that file unfixable.
+    const { p, id } = textLayer()
+    ;(layerOf(p, id).params as TextParams).box_h = 200
+    applyUpdateLayerParams(p, id, { kind: 'Text', content: 'still editable' }, new MotifCatalog())
+    expect((layerOf(p, id).params as TextParams).content).toBe('still editable')
+  })
+
+  it('align/valign/line_height/letter_spacing all merge on a boxed layer', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, align: 'Left', valign: 'Top', line_height: 1.4, letter_spacing: 2 }, new MotifCatalog())
+    const t = layerOf(p, id).params as TextParams
+    expect([t.align, t.valign, t.line_height, t.letter_spacing]).toEqual(['Left', 'Top', 1.4, 2])
+  })
+
+  // MCP hands the patch over as untyped JSON, so these are the values the TYPES
+  // reject and the wire does not. Each would survive into state and reach the
+  // sprite: an unknown valign indexes its fraction table to `undefined` and lands
+  // a NaN anchor, which is a vanished layer.
+  it.each([
+    ['align', { align: 'Middle' }],
+    ['valign', { valign: 'Center' }],
+    ['box_w', { box_w: 0 }],
+    ['box_w', { box_w: -100 }],
+    ['box_w', { box_w: Number.NaN }],
+    ['box_h', { box_w: 800, box_h: 0 }],
+    ['line_height', { line_height: Number.NaN }],
+    ['letter_spacing', { letter_spacing: Number.POSITIVE_INFINITY }],
+  ] as Array<[string, Record<string, unknown>]>)('refuses a bogus %s from the wire', (field, bad) => {
+    const { p, id } = textLayer()
+    const before = JSON.stringify(p)
+    let err: unknown
+    try {
+      applyUpdateLayerParams(p, id, { kind: 'Text', ...bad } as LayerParamsPatch, new MotifCatalog())
+    } catch (e) { err = e }
+    expect(isCommandFailure(err) && err.err).toMatchObject({ error: 'InvalidArgument', field })
+    expect(JSON.stringify(p)).toBe(before)
+  })
+
+  it('a null box axis is still accepted — null is auto, not a bad number', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null, box_h: null }, new MotifCatalog())
+    expect(boxOf(p, id)).toEqual([null, null])
   })
 })
 

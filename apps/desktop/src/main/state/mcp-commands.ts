@@ -573,7 +573,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseObj(a.patch, 'patch') } }) },
   { name: 'update_layer_params', exec: 'table',
-    description: "Update a layer's kind-specific params. The patch is tagged with `kind` ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio') and must match the layer's kind. Audio fields take real effect in both preview and export: `gain_db` (dB; this patch sets a STATIC value, replacing any existing keyframes on the track), `pan` (-1..1 equal-power, same static-replace semantics), `fade_in_us`/`fade_out_us` (linear edge fades), `mute`, and `role` (one of dialogue/music/sfx/voiceover) to reassign the clip's mixing role. On a scale-linked layer (`scale_linked` in the layer view), a patch leaving scale_x ≠ scale_y auto-clears the link in the same commit; patch both axes to the same value to keep it.",
+    description: "Update a layer's kind-specific params. The patch is tagged with `kind` ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio') and must match the layer's kind. Audio fields take real effect in both preview and export: `gain_db` (dB; this patch sets a STATIC value, replacing any existing keyframes on the track), `pan` (-1..1 equal-power, same static-replace semantics), `fade_in_us`/`fade_out_us` (linear edge fades), `mute`, and `role` (one of dialogue/music/sfx/voiceover) to reassign the clip's mixing role. A Text layer is laid out by its BOX, not by scale: `box_w`/`box_h` are the layout box in composition pixels, local (before `scale`), and which of the two are set IS the resize mode — (null, null) auto width (never wraps), (set, null) auto height (wraps), (set, set) fixed (wraps, and shrinks the rendered glyphs to fit). Send an explicit `null` to put an axis back to auto; omit the field to leave it alone. A `box_h` with no `box_w` — neither stored nor in the same patch — is REFUSED rather than measured by guess, so pass both for fixed. `align` places the text block horizontally inside the box and `valign` (Top | Middle | Bottom) vertically; `line_height` (0 = the font's own metrics) and `letter_spacing` are pixels. Text deliberately has no scale fields here: a bigger title is a bigger box, and the `font_size_px` you set is what reaches the frame at any box size. On a scale-linked layer (`scale_linked` in the layer view), a patch leaving scale_x ≠ scale_y auto-clears the link in the same commit; patch both axes to the same value to keep it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, patch: {
       type: 'object',
       description: "Kind-tagged params patch. Must include `kind` matching the layer's kind ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio'). Only fields you include are applied.",
@@ -602,10 +602,22 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         color: RGBA_SCHEMA,
         width: { type: 'integer' },
         height: { type: 'integer' },
-        // Text patch
+        // Text patch. `['number', 'null']` on the box pair is the wire contract,
+        // not laxness: null is "back to auto", and a bare 'number' would make the
+        // one transition the resize modes have no other way to state unsendable.
         content: { type: 'string' },
         font_family: { type: 'string' },
         font_size_px: { type: 'number' },
+        align: { type: 'string', enum: ['Left', 'Center', 'Right'] },
+        valign: { type: 'string', enum: ['Top', 'Middle', 'Bottom'] },
+        // `exclusiveMinimum` applies only to numbers, so it constrains a real
+        // extent without contradicting the `null` arm above. A non-positive box
+        // is not a narrow box but a broken mode: the renderer reads it as "no
+        // box" and would draw auto width while state claimed fixed.
+        box_w: { type: ['number', 'null'], exclusiveMinimum: 0, description: 'Layout box width in composition px, local (before `scale`). null = auto width.' },
+        box_h: { type: ['number', 'null'], exclusiveMinimum: 0, description: 'Layout box height in composition px, local (before `scale`). null = auto height. Refused when the layer has no box_w and the patch does not supply one.' },
+        line_height: { type: 'number' },
+        letter_spacing: { type: 'number' },
         // Motif patch
         motif_id: { type: 'string' },
         motif_version: { type: 'integer' },

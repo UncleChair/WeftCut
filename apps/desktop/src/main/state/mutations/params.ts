@@ -1,4 +1,4 @@
-import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextParams, Uuid, VideoClipParams } from '../model'
+import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
@@ -7,9 +7,14 @@ import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
 /** Internally-tagged ("kind") param patch. Every field optional bar kind;
- *  absent = "don't touch". */
+ *  absent = "don't touch".
+ *
+ *  Text carries no `scale_x`/`scale_y` on purpose: an agent asking for a bigger
+ *  title gets a bigger BOX, because the box lays glyphs out and scale magnifies
+ *  the rendered result (ADR 0049). `box_w`/`box_h` are the one pair where
+ *  `null` is a value distinct from absent — see the `case 'Text'` merge. */
 export type LayerParamsPatch =
-  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number }
+  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number }
   | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
@@ -17,6 +22,12 @@ export type LayerParamsPatch =
   | { kind: 'Audio'; src_in_us?: number; src_out_us?: number; gain_db?: number; pan?: number; fade_in_us?: number; fade_out_us?: number; mute?: boolean; role?: AudioRole }
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
+
+/** The Text enums, as values — the patch arrives from MCP as untyped JSON, so the
+ *  types alone guard nothing at runtime. Listed here and not in `model.ts` because
+ *  this is the only site that needs them as data. */
+const TEXT_ALIGNS: readonly TextAlign[] = ['Left', 'Center', 'Right']
+const VALIGNS: readonly VAlign[] = ['Top', 'Middle', 'Bottom']
 
 /** apply_params_patch — kind-matched field merge; a discriminant
  *  mismatch is the only error. Animated fields collapse to Static(v) (MVP: this
@@ -29,6 +40,54 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   switch (patch.kind) {
     case 'Text': {
       const t = p as TextParams
+      // MCP hands this layer untyped JSON (`parseObj` + a cast), so the Text arm's
+      // enums and box numbers are checked here rather than trusted. It is the edge
+      // half of ADR 0049's pair — refuse at the edge, never blank the screen
+      // mid-render — and the renderer's coalescing is the other half. Unchecked,
+      // `valign: 'Center'` reaches `VALIGN_FRAC[valign]` as `undefined` and lands a
+      // NaN anchor on the sprite, which is a VANISHED layer rather than a
+      // misplaced one.
+      if (patch.align !== undefined && !TEXT_ALIGNS.includes(patch.align)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'align', detail: `align must be one of ${TEXT_ALIGNS.join(' | ')}` })
+      }
+      if (patch.valign !== undefined && !VALIGNS.includes(patch.valign)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'valign', detail: `valign must be one of ${VALIGNS.join(' | ')}` })
+      }
+      // A box axis is either null (auto) or a real positive extent. Zero and
+      // negative are refused because they are not a narrow box, they are a broken
+      // mode: the renderer reads a non-positive width as "no box" and would render
+      // Auto width while state claimed Fixed. Deliberately NOT the gesture's 8 px
+      // floor — that one is a drag ergonomic, and a 4 px box an agent asks for on
+      // purpose is legal, just silly.
+      for (const field of ['box_w', 'box_h'] as const) {
+        const v = patch[field]
+        if (v !== undefined && v !== null && !(Number.isFinite(v) && v > 0)) {
+          throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} must be a positive number of composition pixels, or null for auto` })
+        }
+      }
+      for (const field of ['line_height', 'letter_spacing'] as const) {
+        const v = patch[field]
+        if (v !== undefined && !Number.isFinite(v)) {
+          throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} must be a finite number` })
+        }
+      }
+      // The resize mode IS the box nullability — (null, null) auto width,
+      // (set, null) auto height, (set, set) fixed — so (null, set) is no mode at
+      // all. A gesture reaching that pair backfills the width it measured in the
+      // same commit; this layer has no canvas, and inventing a width would be the
+      // silent clamp ADR 0048 rules out, so MCP's route to it refuses. Refusing
+      // BEFORE the first write is load-bearing: a rejected patch must leave the
+      // project byte-identical. A patch touching NEITHER box field still passes
+      // through an already-illegal (hand-edited) layer, which the renderer
+      // coalesces to auto width — refusing there would make the file unfixable.
+      if (patch.box_w !== undefined || patch.box_h !== undefined) {
+        const w = patch.box_w !== undefined ? patch.box_w : t.box_w
+        const h = patch.box_h !== undefined ? patch.box_h : t.box_h
+        if (w === null && h !== null) {
+          throw new CommandFailure({ error: 'InvalidArgument', field: 'box_h',
+            detail: 'a text box height with no width is not a resize mode: send box_w in the same patch for fixed, or leave box_h null — the modes are (null, null) auto width, (set, null) auto height, (set, set) fixed' })
+        }
+      }
       if (patch.content !== undefined) t.content = patch.content
       if (patch.font_family !== undefined) t.font.family = patch.font_family
       if (patch.font_size_px !== undefined) t.font.size_px = patch.font_size_px
@@ -36,6 +95,15 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.x !== undefined) t.transform.x = stat(patch.x)
       if (patch.y !== undefined) t.transform.y = stat(patch.y)
       if (patch.opacity !== undefined) t.opacity = stat(patch.opacity)
+      if (patch.align !== undefined) t.align = patch.align
+      if (patch.valign !== undefined) t.valign = patch.valign
+      // On the box pair the absent/null split is LOAD-BEARING, not the incidental
+      // "don't touch" it is everywhere else: null is the only way to say "back to
+      // auto", so an `=== undefined` guard here is the whole wire contract.
+      if (patch.box_w !== undefined) t.box_w = patch.box_w
+      if (patch.box_h !== undefined) t.box_h = patch.box_h
+      if (patch.line_height !== undefined) t.line_height = patch.line_height
+      if (patch.letter_spacing !== undefined) t.letter_spacing = patch.letter_spacing
       return
     }
     case 'VideoClip': {
